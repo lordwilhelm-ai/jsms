@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 export default function ProtectedRoute({
@@ -10,45 +10,19 @@ export default function ProtectedRoute({
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const pathname = usePathname();
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
+    let active = true;
+
     async function checkSession() {
       const {
         data: { session },
       } = await supabase.auth.getSession();
 
-      if (!session?.user?.id) {
-        router.replace("/");
-        return;
-      }
+      if (!active) return;
 
-      const { data: teacher } = await supabase
-        .from("teachers")
-        .select("role")
-        .eq("auth_user_id", session.user.id)
-        .limit(1)
-        .single();
-
-      if (!teacher?.role) {
-        router.replace("/");
-        return;
-      }
-
-      const role = teacher.role;
-
-      if (pathname.startsWith("/dashboard/teacher") && role !== "teacher") {
-        router.replace("/");
-        return;
-      }
-
-      if (pathname.startsWith("/dashboard/admin") && role !== "admin" && role !== "super_admin") {
-        router.replace("/");
-        return;
-      }
-
-      if (pathname.startsWith("/dashboard/headmaster") && role !== "headmaster") {
+      if (!session) {
         router.replace("/");
         return;
       }
@@ -57,21 +31,35 @@ export default function ProtectedRoute({
     }
 
     checkSession();
-  }, [pathname, router]);
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session) {
+        router.replace("/");
+      }
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, [router]);
 
   if (checking) {
     return (
-      <main
+      <div
         style={{
           minHeight: "100vh",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          background: "#fffdf2",
           fontFamily: "Arial, sans-serif",
         }}
       >
         Checking access...
-      </main>
+      </div>
     );
   }
 
