@@ -11,6 +11,7 @@ type ClassRow = Record<string, any>;
 type EntryRow = Record<string, any>;
 type ReceivedRow = Record<string, any>;
 type SettingsRow = Record<string, any>;
+type ClosureRow = Record<string, any>;
 
 const COLORS = {
   background:
@@ -38,21 +39,23 @@ function getTeacherName(row: TeacherRow) {
   ).trim();
 }
 
+function getClassName(row: Record<string, any>) {
+  return String(row.class_name || row.className || "").trim();
+}
+
 function getStudentName(row: StudentRow) {
   const fullName = String(row.full_name || "").trim();
   if (fullName) return fullName;
 
   const first = String(row.first_name || "").trim();
+  const other = String(row.other_name || "").trim();
   const last = String(row.last_name || "").trim();
-  return `${first} ${last}`.trim();
+
+  return `${first} ${other} ${last}`.replace(/\s+/g, " ").trim();
 }
 
 function getStudentIdValue(row: StudentRow) {
   return String(row.student_id || row.studentId || row.id || "").trim();
-}
-
-function getClassName(row: Record<string, any>) {
-  return String(row.class_name || row.className || "").trim();
 }
 
 function getAssignedClasses(row: TeacherRow): string[] {
@@ -93,6 +96,34 @@ function isTeacherActive(row: TeacherRow) {
   return true;
 }
 
+function isWeekend(dateString: string) {
+  const day = new Date(`${dateString}T12:00:00`).getDay();
+  return day === 0 || day === 6;
+}
+
+function dateRange(start: string, end: string) {
+  const rows: string[] = [];
+  const current = new Date(`${start}T12:00:00`);
+  const endDate = new Date(`${end}T12:00:00`);
+
+  while (current <= endDate) {
+    rows.push(current.toISOString().split("T")[0]);
+    current.setDate(current.getDate() + 1);
+  }
+
+  return rows;
+}
+
+function isHoliday(date: string, closures: ClosureRow[]) {
+  return closures.some((row) => {
+    if (!Boolean(row.active ?? true)) return false;
+    const start = String(row.start_date || row.startDate || "");
+    const end = String(row.end_date || row.endDate || "");
+    if (!start || !end) return false;
+    return date >= start && date <= end;
+  });
+}
+
 export default function FeedingAdminPage() {
   const router = useRouter();
 
@@ -106,8 +137,10 @@ export default function FeedingAdminPage() {
   const [todayEntries, setTodayEntries] = useState<EntryRow[]>([]);
   const [receivedRecords, setReceivedRecords] = useState<ReceivedRow[]>([]);
   const [settingsRow, setSettingsRow] = useState<SettingsRow | null>(null);
+  const [closures, setClosures] = useState<ClosureRow[]>([]);
 
   const [receivingClass, setReceivingClass] = useState("");
+  const [syncingAttendance, setSyncingAttendance] = useState(false);
 
   const now = new Date();
   const today = now.toISOString().split("T")[0];
@@ -167,7 +200,7 @@ export default function FeedingAdminPage() {
       setCheckingUser(false);
     }
 
-    checkUser();
+    void checkUser();
 
     return () => {
       active = false;
@@ -191,6 +224,7 @@ export default function FeedingAdminPage() {
         entriesRes,
         receivedRes,
         settingsRes,
+        closuresRes,
       ] = await Promise.all([
         supabase.from("classes").select("*").order("class_order", { ascending: true }),
         supabase.from("students").select("*"),
@@ -198,6 +232,7 @@ export default function FeedingAdminPage() {
         supabase.from("daily_entries").select("*").eq("date", today),
         supabase.from("received_money").select("*").eq("date", today),
         supabase.from("school_settings").select("*").limit(1).maybeSingle(),
+        supabase.from("school_closures").select("*").order("start_date", { ascending: true }),
       ]);
 
       setClasses(classesRes.data || []);
@@ -206,17 +241,13 @@ export default function FeedingAdminPage() {
       setTodayEntries(entriesRes.data || []);
       setReceivedRecords(receivedRes.data || []);
       setSettingsRow(settingsRes.data || null);
+      setClosures(closuresRes.data || []);
     } catch (error) {
       console.error(error);
       alert("Failed to load feeding admin data.");
     } finally {
       setLoading(false);
     }
-  }
-
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    router.replace("/");
   }
 
   async function markClassAsReceived(
@@ -246,9 +277,7 @@ export default function FeedingAdminPage() {
         },
       ]);
 
-      if (error) {
-        throw error;
-      }
+      if (error) throw error;
 
       await loadDashboardData();
       alert(`${className} money marked as received.`);
@@ -260,9 +289,89 @@ export default function FeedingAdminPage() {
     }
   }
 
+  async function handleSyncTermAttendance() {
+    const termBegins = String(settingsRow?.term_begins || "");
+    const termEnds = String(settingsRow?.term_ends || "");
+    const academicYear = String(settingsRow?.academic_year || "");
+    const currentTerm = String(settingsRow?.current_term || "");
+
+    if (!termBegins || !termEnds || !academicYear || !currentTerm) {
+      alert("Set academic year, current term, term begins, and term ends in JSMS settings first.");
+      return;
+    }
+
+    try {
+      setSyncingAttendance(true);
+
+      const allDates = dateRange(termBegins, termEnds);
+      const schoolDays = allDates.filter(
+        (date) => !isWeekend(date) && !isHoliday(date, closures)
+      );
+
+      const { data: termEntries, error: entriesError } = await supabase
+        .from("daily_entries")
+        .select("*")
+        .gte("date", termBegins)
+        .lte("date", termEnds);
+
+      if (entriesError) throw entriesError;
+
+      const payload = students.map((student) => {
+        const studentId = getStudentIdValue(student);
+        const className = getClassName(student);
+        const studentName = getStudentName(student);
+
+        const presentCount = (termEntries || []).filter(
+          (entry) =>
+            String(entry.student_id || entry.studentId || "") === studentId &&
+            String(entry.attendance || "").toLowerCase() === "present"
+        ).length;
+
+        return {
+          academic_year: academicYear,
+          term: currentTerm,
+          student_id: studentId,
+          student_name: studentName,
+          class_name: className,
+          attendance_present: presentCount,
+          total_school_days: schoolDays.length,
+          updated_at: new Date().toISOString(),
+        };
+      });
+
+      const { error: upsertError } = await supabase
+        .from("report_card_attendance_summary")
+        .upsert(payload, {
+          onConflict: "academic_year,term,student_id",
+        });
+
+      if (upsertError) throw upsertError;
+
+      alert("Term attendance synced successfully.");
+    } catch (error) {
+      console.error(error);
+      alert("Failed to sync term attendance.");
+    } finally {
+      setSyncingAttendance(false);
+    }
+  }
+
   const schoolName = String(settingsRow?.school_name || "JEFSEM VISION SCHOOL");
   const motto = String(settingsRow?.motto || "Success in Excellence");
+  const academicYear = String(settingsRow?.academic_year || "-");
+  const currentTerm = String(settingsRow?.current_term || "-");
+  const termBegins = String(settingsRow?.term_begins || "");
+  const termEnds = String(settingsRow?.term_ends || "");
+  const feedingFee = Number(settingsRow?.feeding_fee || 6);
+  const minimumToEat = Number(settingsRow?.minimum_to_eat || 5);
   const systemName = "JVS Feeding";
+
+  const totalSchoolDays = useMemo(() => {
+    if (!termBegins || !termEnds) return 0;
+    return dateRange(termBegins, termEnds).filter(
+      (date) => !isWeekend(date) && !isHoliday(date, closures)
+    ).length;
+  }, [termBegins, termEnds, closures]);
 
   const dashboardSummary = useMemo(() => {
     const moneyToday = todayEntries.reduce(
@@ -382,10 +491,6 @@ export default function FeedingAdminPage() {
     );
   }, [todayEntries]);
 
-  const feedingFee = Number(
-    settingsRow?.feeding_fee || settingsRow?.feedingFee || settingsRow?.default_feeding_fee || 6
-  );
-
   const advanceRows = useMemo(() => {
     return todayEntries
       .filter((entry) => Number(entry.new_balance ?? entry.newBalance ?? 0) > 0)
@@ -444,9 +549,9 @@ export default function FeedingAdminPage() {
       note: "Feeding class summary",
     },
     {
-      title: "Classes Submitted",
-      value: `${dashboardSummary.classesSubmitted}/${classSummary.length}`,
-      note: "Today only",
+      title: "School Days This Term",
+      value: totalSchoolDays,
+      note: `${currentTerm} attendance base`,
     },
   ];
 
@@ -488,18 +593,18 @@ export default function FeedingAdminPage() {
             <p style={{ margin: "8px 0 0", fontSize: "14px" }}>
               <strong>{dayName}</strong>, {prettyDate}
             </p>
+            <p style={{ margin: "6px 0 0", fontSize: "14px" }}>
+              <strong>{academicYear}</strong> • <strong>{currentTerm}</strong>
+            </p>
+            <p style={{ margin: "4px 0 0", fontSize: "13px", opacity: 0.9 }}>
+              {termBegins || "-"} to {termEnds || "-"}
+            </p>
           </div>
 
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-            <Link href="/feeding" style={topButtonStyle(false)}>
-              Feeding Home
-            </Link>
-            <Link href="/dashboard/admin" style={topButtonStyle(false)}>
+            <Link href="/dashboard/admin" style={topButtonStyle()}>
               JSMS Dashboard
             </Link>
-            <button onClick={handleLogout} style={topButtonStyle(true)}>
-              Logout
-            </button>
           </div>
         </div>
       </div>
@@ -559,24 +664,75 @@ export default function FeedingAdminPage() {
             <h3 style={{ marginTop: 0, color: COLORS.secondary }}>Quick Actions</h3>
 
             <div style={{ display: "grid", gap: "10px" }}>
-              <Link href="/students" style={quickLinkStyle}>
-                Students
+              <Link href="/feeding/admin/reports" style={quickLinkStyle}>
+                Reports
               </Link>
-              <Link href="/teachers" style={quickLinkStyle}>
-                Teachers
+              <Link href="/feeding/admin/fill-class" style={quickLinkStyle}>
+                Fill for Class
               </Link>
-              <Link href="/classes" style={quickLinkStyle}>
-                Classes
+              <Link href="/feeding/admin/student-ledger" style={quickLinkStyle}>
+                Student Ledger
               </Link>
-              <Link href="/subjects" style={quickLinkStyle}>
-                Subjects
+              <Link href="/feeding/admin/debtors" style={quickLinkStyle}>
+                Debtors
               </Link>
-              <Link href="/settings" style={quickLinkStyle}>
-                School Settings
+              <Link href="/feeding/admin/holidays" style={quickLinkStyle}>
+                Holidays
               </Link>
-              <Link href="/feeding/teacher" style={quickLinkStyle}>
-                Open Teacher Side
+              <Link href="/feeding/admin/control" style={quickLinkStyle}>
+                Feeding Control
               </Link>
+            </div>
+
+            <div
+              style={{
+                marginTop: "18px",
+                background: "#f9fafb",
+                border: "1px solid #e5e7eb",
+                borderRadius: "14px",
+                padding: "14px",
+              }}
+            >
+              <p style={{ margin: "0 0 6px", fontWeight: 800, color: COLORS.secondary }}>
+                Feeding Setup
+              </p>
+              <p style={{ margin: "0 0 4px", fontSize: "13px" }}>
+                Fee: <strong>GHS {feedingFee}</strong>
+              </p>
+              <p style={{ margin: "0", fontSize: "13px" }}>
+                Minimum To Eat: <strong>GHS {minimumToEat}</strong>
+              </p>
+            </div>
+
+            <div
+              style={{
+                marginTop: "18px",
+                background: "#f9fafb",
+                border: "1px solid #e5e7eb",
+                borderRadius: "14px",
+                padding: "14px",
+              }}
+            >
+              <p style={{ margin: "0 0 8px", fontWeight: 800, color: COLORS.secondary }}>
+                Report Card Attendance
+              </p>
+              <p style={{ margin: "0 0 6px", fontSize: "13px" }}>
+                Term: <strong>{currentTerm}</strong>
+              </p>
+              <p style={{ margin: "0 0 6px", fontSize: "13px" }}>
+                School Days: <strong>{totalSchoolDays}</strong>
+              </p>
+              <button
+                onClick={handleSyncTermAttendance}
+                disabled={syncingAttendance}
+                style={{
+                  ...receiveButtonStyle,
+                  width: "100%",
+                  marginTop: "8px",
+                }}
+              >
+                {syncingAttendance ? "Syncing..." : "Sync Attendance To Report Card"}
+              </button>
             </div>
           </div>
 
@@ -726,7 +882,7 @@ export default function FeedingAdminPage() {
             loading={loading}
             emptyText="No students marked to eat today."
             headers={["Student", "ID", "Class", "Teacher", "Paid", "Balance"]}
-            rows={eatingRows.slice(0, 8).map((row) => [
+            rows={eatingRows.slice(0, 8).map((row: any) => [
               String(row.student_name || row.studentName || "-"),
               String(row.student_id || row.studentId || "-"),
               getClassName(row),
@@ -741,7 +897,7 @@ export default function FeedingAdminPage() {
             loading={loading}
             emptyText="No absent records today."
             headers={["Student", "ID", "Class", "Teacher"]}
-            rows={absentRows.slice(0, 8).map((row) => [
+            rows={absentRows.slice(0, 8).map((row: any) => [
               String(row.student_name || row.studentName || "-"),
               String(row.student_id || row.studentId || "-"),
               getClassName(row),
@@ -763,7 +919,7 @@ export default function FeedingAdminPage() {
             loading={loading}
             emptyText="No students owing today."
             headers={["Student", "ID", "Class", "Teacher", "Debt"]}
-            rows={owingRows.slice(0, 8).map((row) => [
+            rows={owingRows.slice(0, 8).map((row: any) => [
               String(row.student_name || row.studentName || "-"),
               String(row.student_id || row.studentId || "-"),
               getClassName(row),
@@ -777,7 +933,7 @@ export default function FeedingAdminPage() {
             loading={loading}
             emptyText="No advance balances today."
             headers={["Student", "ID", "Class", "Teacher", "Advance", "Days Left"]}
-            rows={advanceRows.slice(0, 8).map((row) => [
+            rows={advanceRows.slice(0, 8).map((row: any) => [
               String(row.student_name || row.studentName || "-"),
               String(row.student_id || row.studentId || "-"),
               getClassName(row),
@@ -903,13 +1059,13 @@ function DashboardSection({
   );
 }
 
-function topButtonStyle(isDanger: boolean): React.CSSProperties {
+function topButtonStyle(): React.CSSProperties {
   return {
     border: "none",
     borderRadius: "8px",
     padding: "10px 12px",
-    background: isDanger ? COLORS.primary : "#1f2937",
-    color: isDanger ? COLORS.secondary : COLORS.white,
+    background: "#1f2937",
+    color: COLORS.white,
     textDecoration: "none",
     cursor: "pointer",
     fontWeight: "bold",

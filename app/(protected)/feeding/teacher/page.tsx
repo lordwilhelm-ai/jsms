@@ -29,12 +29,6 @@ function getRole(row: TeacherRow | null) {
   return "teacher";
 }
 
-function getTeacherName(row: TeacherRow) {
-  return String(
-    row.full_name || row.name || row.teacher_name || row.username || "Teacher"
-  ).trim();
-}
-
 function getAssignedClasses(row: TeacherRow): string[] {
   if (Array.isArray(row.assigned_classes)) {
     return row.assigned_classes.map((item: unknown) => String(item).trim()).filter(Boolean);
@@ -69,8 +63,10 @@ function getStudentName(row: StudentRow) {
   if (fullName) return fullName;
 
   const first = String(row.first_name || "").trim();
+  const other = String(row.other_name || "").trim();
   const last = String(row.last_name || "").trim();
-  return `${first} ${last}`.trim();
+
+  return `${first} ${other} ${last}`.replace(/\s+/g, " ").trim();
 }
 
 function getStudentIdValue(row: StudentRow) {
@@ -81,15 +77,9 @@ function getClassName(row: Record<string, any>) {
   return String(row.class_name || row.className || "").trim();
 }
 
-function isWeekendFromDateString(dateString: string) {
-  const localDate = new Date(`${dateString}T12:00:00`);
-  const day = localDate.getDay();
+function isWeekend(dateString: string) {
+  const day = new Date(`${dateString}T12:00:00`).getDay();
   return day === 0 || day === 6;
-}
-
-function getWeekendName(dateString: string) {
-  const localDate = new Date(`${dateString}T12:00:00`);
-  return localDate.toLocaleDateString(undefined, { weekday: "long" });
 }
 
 function isDateWithinRange(dateString: string, startDate: string, endDate: string) {
@@ -215,7 +205,7 @@ export default function FeedingTeacherPage() {
       setCheckingUser(false);
     }
 
-    checkUser();
+    void checkUser();
 
     return () => {
       active = false;
@@ -227,10 +217,9 @@ export default function FeedingTeacherPage() {
       try {
         setCheckingCalendar(true);
 
-        if (isWeekendFromDateString(today)) {
-          const weekendName = getWeekendName(today);
+        if (isWeekend(today)) {
           setEntryBlocked(true);
-          setBlockedReason(`School is closed today. ${weekendName} is a weekend.`);
+          setBlockedReason("School is closed today because it is a weekend.");
           return;
         }
 
@@ -239,23 +228,19 @@ export default function FeedingTeacherPage() {
           .select("*")
           .eq("active", true);
 
-        if (error) {
-          throw error;
-        }
+        if (error) throw error;
 
-        const closures = data || [];
-        const matchedClosure = closures.find((closure: ClosureRow) => {
-          const startDate = String(closure.start_date || closure.startDate || "");
-          const endDate = String(closure.end_date || closure.endDate || "");
-          if (!startDate || !endDate) return false;
-          return isDateWithinRange(today, startDate, endDate);
+        const matched = (data || []).find((row: ClosureRow) => {
+          const start = String(row.start_date || row.startDate || "");
+          const end = String(row.end_date || row.endDate || "");
+          if (!start || !end) return false;
+          return isDateWithinRange(today, start, end);
         });
 
-        if (matchedClosure) {
-          const name = String(matchedClosure.name || "Closure");
-          const type = String(matchedClosure.type || "holiday");
+        if (matched) {
+          const name = String(matched.name || "Holiday");
           setEntryBlocked(true);
-          setBlockedReason(`School is closed today due to ${name} (${type}).`);
+          setBlockedReason(`School is closed today due to ${name}.`);
           return;
         }
 
@@ -292,9 +277,7 @@ export default function FeedingTeacherPage() {
           .eq("class_name", selectedClass)
           .order("first_name", { ascending: true });
 
-        if (error) {
-          throw error;
-        }
+        if (error) throw error;
 
         const rows = (data || [])
           .filter((row) => row.active !== false)
@@ -324,19 +307,12 @@ export default function FeedingTeacherPage() {
 
         const ids = students.map((student) => getStudentIdValue(student)).filter(Boolean);
 
-        if (!ids.length) {
-          setBalances({});
-          return;
-        }
-
         const { data, error } = await supabase
           .from("student_balances")
           .select("*")
           .in("student_id", ids);
 
-        if (error) {
-          throw error;
-        }
+        if (error) throw error;
 
         const map: BalanceMap = {};
         (data || []).forEach((row) => {
@@ -355,20 +331,12 @@ export default function FeedingTeacherPage() {
     void loadBalances();
   }, [students, entryBlocked]);
 
-  const feedingFee = Number(
-    settingsRow?.feeding_fee || settingsRow?.feedingFee || settingsRow?.default_feeding_fee || 6
-  );
-
-  const minimumToEat = Number(
-    settingsRow?.minimum_to_eat || settingsRow?.minimumToEat || 5
-  );
-
+  const feedingFee = Number(settingsRow?.feeding_fee || 6);
+  const minimumToEat = Number(settingsRow?.minimum_to_eat || 5);
   const schoolName = String(settingsRow?.school_name || "JEFSEM VISION SCHOOL");
   const motto = String(settingsRow?.motto || "Success in Excellence");
   const systemName = "JVS Feeding";
-  const academicYear = String(
-    settingsRow?.academic_year || settingsRow?.current_academic_year || "2026/2027"
-  );
+  const academicYear = String(settingsRow?.academic_year || "2026/2027");
 
   const previewRows = students.map((student) => {
     const studentId = getStudentIdValue(student);
@@ -424,11 +392,6 @@ export default function FeedingTeacherPage() {
     setAttendance((prev) => ({ ...prev, [studentId]: value }));
   }
 
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    router.replace("/");
-  }
-
   async function handleSubmit() {
     if (!teacher) return;
 
@@ -453,9 +416,7 @@ export default function FeedingTeacherPage() {
         .eq("entered_by_role", "teacher")
         .limit(1);
 
-      if (duplicateError) {
-        throw duplicateError;
-      }
+      if (duplicateError) throw duplicateError;
 
       if (duplicates && duplicates.length > 0) {
         alert("This class has already been submitted today.");
@@ -475,16 +436,17 @@ export default function FeedingTeacherPage() {
         ate_today: row.ateToday,
         admin_override_ate_without_pay: false,
         new_balance: row.newBalance,
-        assigned_teacher_name: getTeacherName(teacher),
-        entered_by_name: getTeacherName(teacher),
+        assigned_teacher_name: String(
+          teacher.full_name || teacher.name || teacher.username || "Teacher"
+        ),
+        entered_by_name: String(
+          teacher.full_name || teacher.name || teacher.username || "Teacher"
+        ),
         entered_by_role: "teacher",
       }));
 
       const { error: dailyError } = await supabase.from("daily_entries").insert(dailyPayload);
-
-      if (dailyError) {
-        throw dailyError;
-      }
+      if (dailyError) throw dailyError;
 
       const balancesPayload = previewRows.map((row) => ({
         student_id: row.studentId,
@@ -498,9 +460,7 @@ export default function FeedingTeacherPage() {
         .from("student_balances")
         .upsert(balancesPayload, { onConflict: "student_id" });
 
-      if (balanceError) {
-        throw balanceError;
-      }
+      if (balanceError) throw balanceError;
 
       const ledgerPayload = previewRows.map((row) => ({
         date: today,
@@ -513,16 +473,15 @@ export default function FeedingTeacherPage() {
         attendance: row.attendance,
         ate_today: row.ateToday,
         new_balance: row.newBalance,
-        assigned_teacher_name: getTeacherName(teacher),
+        assigned_teacher_name: String(
+          teacher.full_name || teacher.name || teacher.username || "Teacher"
+        ),
         feeding_fee: feedingFee,
         minimum_to_eat: minimumToEat,
       }));
 
       const { error: ledgerError } = await supabase.from("balance_ledger").insert(ledgerPayload);
-
-      if (ledgerError) {
-        throw ledgerError;
-      }
+      if (ledgerError) throw ledgerError;
 
       alert("Daily entry submitted successfully.");
       setAmounts({});
@@ -589,12 +548,6 @@ export default function FeedingTeacherPage() {
               <strong>{dayName}</strong>, {prettyDate}
             </p>
           </div>
-
-          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-            <button onClick={handleLogout} style={headerButtonStyle}>
-              Logout
-            </button>
-          </div>
         </div>
       </div>
 
@@ -644,24 +597,6 @@ export default function FeedingTeacherPage() {
               ))
             )}
           </select>
-
-          <div style={{ marginTop: "14px", fontSize: "14px" }}>
-            <p style={{ margin: "4px 0" }}>
-              <strong>Teacher:</strong> {getTeacherName(teacher || {})}
-            </p>
-            <p style={{ margin: "4px 0" }}>
-              <strong>Class:</strong> {selectedClass || "No class selected"}
-            </p>
-            <p style={{ margin: "4px 0" }}>
-              <strong>Students:</strong> {loadingStudents ? "Loading..." : students.length}
-            </p>
-            <p style={{ margin: "4px 0" }}>
-              <strong>Feeding Fee:</strong> GHS {feedingFee}
-            </p>
-            <p style={{ margin: "4px 0" }}>
-              <strong>Minimum To Eat:</strong> GHS {minimumToEat}
-            </p>
-          </div>
         </div>
 
         {!loadingStudents && students.length === 0 && !entryBlocked && (
@@ -865,13 +800,4 @@ const inputStyle: React.CSSProperties = {
   borderRadius: "10px",
   border: "1px solid #ddd",
   fontSize: "16px",
-};
-
-const headerButtonStyle: React.CSSProperties = {
-  border: "none",
-  borderRadius: "8px",
-  padding: "10px 12px",
-  background: COLORS.secondary,
-  color: "#ffffff",
-  cursor: "pointer",
 };
