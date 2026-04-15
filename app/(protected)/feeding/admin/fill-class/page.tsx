@@ -33,7 +33,7 @@ function getClassName(row: Record<string, any>) {
 }
 
 function getStudentName(row: Record<string, any>) {
-  const fullName = String(row.full_name || "").trim();
+  const fullName = String(row.full_name || row.fullName || "").trim();
   if (fullName) return fullName;
 
   const first = String(row.first_name || "").trim();
@@ -156,6 +156,7 @@ async function rebuildStudentBalancesFromLedger() {
     class_name: getClassName(row),
     academic_year: String(row.academic_year || row.academicYear || ""),
     balance: Number(row.new_balance || row.newBalance || 0),
+    updated_at: new Date().toISOString(),
   }));
 
   if (!payload.length) return;
@@ -228,6 +229,10 @@ export default function AdminFillClassPage() {
         supabase.from("school_closures").select("*").order("start_date", { ascending: true }),
       ]);
 
+      if (classesRes.error) throw classesRes.error;
+      if (teachersRes.error) throw teachersRes.error;
+      if (closuresRes.error) throw closuresRes.error;
+
       setSettingsRow(settingsRes.data || null);
       setClasses(classesRes.data || []);
       setTeachers(teachersRes.data || []);
@@ -253,8 +258,7 @@ export default function AdminFillClassPage() {
       const { data, error } = await supabase
         .from("students")
         .select("*")
-        .eq("class_name", selectedClass)
-        .order("first_name", { ascending: true });
+        .eq("class_name", selectedClass);
 
       if (error) throw error;
 
@@ -371,15 +375,7 @@ export default function AdminFillClassPage() {
   const academicYear = String(settingsRow?.academic_year || "2026/2027");
   const currentTerm = String(settingsRow?.current_term || "-");
 
-  const previewRows: (Student & {
-    amountPaidToday: number;
-    attendance: Attendance;
-    previousBalance: number;
-    ateWithoutPay: boolean;
-    availableBeforeMeal: number;
-    ateToday: boolean;
-    newBalance: number;
-  })[] = students.map((student) => {
+  const previewRows = students.map((student) => {
     const studentId = getStudentIdValue(student);
     const amountPaidToday = Number(amounts[studentId] || 0);
     const studentAttendance = attendance[studentId] || "present";
@@ -397,6 +393,9 @@ export default function AdminFillClassPage() {
 
     return {
       ...student,
+      studentId,
+      fullName: getStudentName(student),
+      className: getClassName(student),
       amountPaidToday,
       attendance: studentAttendance,
       previousBalance,
@@ -510,7 +509,7 @@ export default function AdminFillClassPage() {
         academic_year: academicYear,
         class_name: selectedClass,
         student_id: row.studentId,
-        student_name: getStudentName(row),
+        student_name: row.fullName,
         attendance: row.attendance,
         amount_paid_today: row.amountPaidToday,
         previous_balance: row.previousBalance,
@@ -521,6 +520,7 @@ export default function AdminFillClassPage() {
         assigned_teacher_name: getTeacherName(assignedTeacher || {}),
         entered_by_name: "Admin",
         entered_by_role: "admin",
+        created_at: new Date().toISOString(),
       }));
 
       const { error: dailyInsertError } = await supabase
@@ -533,8 +533,8 @@ export default function AdminFillClassPage() {
         date: selectedDate,
         academic_year: academicYear,
         student_id: row.studentId,
-        student_name: getStudentName(row),
-        class_name: getClassName(row),
+        student_name: row.fullName,
+        class_name: row.className,
         amount_paid_today: row.amountPaidToday,
         previous_balance: row.previousBalance,
         attendance: row.attendance,
@@ -545,6 +545,7 @@ export default function AdminFillClassPage() {
         edited_by: "Admin",
         feeding_fee: feedingFee,
         minimum_to_eat: minimumToEat,
+        created_at: new Date().toISOString(),
       }));
 
       const { error: ledgerInsertError } = await supabase
@@ -561,6 +562,7 @@ export default function AdminFillClassPage() {
           class_name: selectedClass,
           date: selectedDate,
           details: `Admin edited/resubmitted ${selectedClass} for ${selectedDate}. Ate-without-pay count: ${summary.ateWithoutPayCount}`,
+          created_at: new Date().toISOString(),
         },
       ]);
 
@@ -777,7 +779,7 @@ export default function AdminFillClassPage() {
           >
             <div style={{ marginBottom: "12px" }}>
               <div style={{ fontWeight: "bold", fontSize: "17px" }}>
-                {getStudentName(student)}
+                {student.fullName}
               </div>
               <div style={{ fontSize: "13px", color: "#555" }}>{student.studentId}</div>
             </div>
