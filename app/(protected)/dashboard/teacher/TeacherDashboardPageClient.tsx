@@ -17,9 +17,9 @@ type TeacherInfo = {
 
 const softwareCards = [
   {
-    title: "Student Management",
+    title: "Students Database",
     description: "View student details and records",
-    href: "/students",
+    href: "/sds",
     emoji: "🎓",
   },
   {
@@ -37,8 +37,14 @@ const softwareCards = [
   {
     title: "Fees",
     description: "View class fee information",
-    href: "/fees",
+    href: "/fees/teacher",
     emoji: "💳",
+  },
+  {
+    title: "Teacher Attendance",
+    description: "Track and manage teacher attendance records",
+    href: "/teacher-attendance",
+    emoji: "📊",
   },
 ];
 
@@ -58,40 +64,45 @@ export default function TeacherDashboardPageClient() {
 
   useEffect(() => {
     async function loadDashboardData() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
-      const authUserId = session?.user?.id;
+        const authUserId = session?.user?.id;
 
-      const { data: settings } = await supabase
-        .from("school_settings")
-        .select("school_name")
-        .limit(1)
-        .single();
+        const { data: settings } = await supabase
+          .from("school_settings")
+          .select("school_name")
+          .limit(1)
+          .single();
 
-      if (settings?.school_name) {
-        setSchoolName(settings.school_name);
-      }
+        if (settings?.school_name) {
+          setSchoolName(settings.school_name);
+        }
 
-      if (!authUserId) return;
+        if (!authUserId) return;
 
-      const { data: teacher } = await supabase
-        .from("teachers")
-        .select("full_name, photo_url, role, teacher_id, username, phone")
-        .eq("auth_user_id", authUserId)
-        .limit(1)
-        .single();
+        const { data: teacher } = await supabase
+          .from("teachers")
+          .select("full_name, photo_url, role, teacher_id, username, phone")
+          .eq("auth_user_id", authUserId)
+          .limit(1)
+          .single();
 
-      if (teacher) {
-        setTeacherInfo({
-          full_name: teacher.full_name ?? "Teacher",
-          photo_url: teacher.photo_url ?? null,
-          role: teacher.role ?? "teacher",
-          teacher_id: teacher.teacher_id ?? "",
-          username: teacher.username ?? "",
-          phone: teacher.phone ?? "",
-        });
+        if (teacher) {
+          setTeacherInfo({
+            full_name: teacher.full_name ?? "Teacher",
+            photo_url: teacher.photo_url ?? null,
+            role: teacher.role ?? "teacher",
+            teacher_id: teacher.teacher_id ?? "",
+            username: teacher.username ?? "",
+            phone: teacher.phone ?? "",
+          });
+        }
+      } catch (error) {
+        console.error("Dashboard data load error:", error);
+        // If auth error, the ProtectedRoute should handle redirect
       }
     }
 
@@ -341,7 +352,7 @@ export default function TeacherDashboardPageClient() {
                     onClick={() => setMenuOpen(false)}
                   />
                   <LinkItem
-                    href="/fees"
+                    href="/fees/teacher"
                     label="Fees"
                     onClick={() => setMenuOpen(false)}
                   />

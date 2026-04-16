@@ -124,6 +124,8 @@ export default function FeedingTeacherPage() {
   const [checkingUser, setCheckingUser] = useState(true);
   const [teacher, setTeacher] = useState<TeacherRow | null>(null);
 
+  const [assignedClassIds, setAssignedClassIds] = useState<string[]>([]);
+  const [assignedClassNames, setAssignedClassNames] = useState<string[]>([]);
   const [selectedClass, setSelectedClass] = useState("");
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [loadingStudents, setLoadingStudents] = useState(false);
@@ -154,55 +156,91 @@ export default function FeedingTeacherPage() {
     let active = true;
 
     async function checkUser() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
-      if (!active) return;
+        if (!active) return;
 
-      if (!session?.user) {
+        if (!session?.user) {
+          router.replace("/");
+          return;
+        }
+
+        const [teachersRes, settingsRes, classesRes] = await Promise.all([
+          supabase.from("teachers").select("*"),
+          supabase.from("school_settings").select("*").limit(1).maybeSingle(),
+          supabase.from("classes").select("*").order("class_order", { ascending: true }),
+        ]);
+
+        if (!active) return;
+
+        if (teachersRes.error || !teachersRes.data || teachersRes.data.length === 0) {
+          router.replace("/");
+          return;
+        }
+
+        const row =
+          teachersRes.data.find((item) => item.auth_user_id === session.user.id) ||
+          teachersRes.data.find(
+            (item) =>
+              String(item.email || "").trim().toLowerCase() ===
+              String(session.user.email || "").trim().toLowerCase()
+          ) ||
+          null;
+
+        if (!row) {
+          router.replace("/");
+          return;
+        }
+
+        const role = getRole(row);
+
+        if (role === "owner" || role === "admin" || role === "headmaster") {
+          router.replace("/feeding/admin");
+          return;
+        }
+
+        // Get teacher's assigned classes using API
+        const assignResponse = await fetch(`/api/teacher-assignments/get?teacher_id=${row.id}`);
+        const assignData = await assignResponse.json();
+
+        if (assignResponse.ok && !assignData.error) {
+          const classIds = assignData.class_ids || [];
+          setAssignedClassIds(classIds);
+
+          // Create mapping from class_id to class_name
+          const classNames: string[] = [];
+          (classesRes.data || []).forEach((cls: any) => {
+            const classId = String(cls.id || "").trim();
+            const className = String(cls.class_name || "").trim();
+            
+            // Add to classNames only if teacher is assigned to this class
+            if (classIds.includes(classId)) {
+              classNames.push(className);
+            }
+          });
+
+          setAssignedClassNames(classNames);
+          
+          // Set default selected class
+          if (classNames.length > 0) {
+            setSelectedClass(classNames[0]);
+          }
+        } else {
+          console.error("Failed to load teacher assignments:", assignData.error);
+          setAssignedClassIds([]);
+          setAssignedClassNames([]);
+        }
+
+        setTeacher(row);
+        setSettingsRow(settingsRes.data || null);
+        setCheckingUser(false);
+      } catch (error) {
+        console.error("Error checking user:", error);
         router.replace("/");
-        return;
       }
-
-      const [teachersRes, settingsRes] = await Promise.all([
-        supabase.from("teachers").select("*"),
-        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-      ]);
-
-      if (!active) return;
-
-      if (teachersRes.error || !teachersRes.data || teachersRes.data.length === 0) {
-        router.replace("/");
-        return;
-      }
-
-      const row =
-        teachersRes.data.find((item) => item.auth_user_id === session.user.id) ||
-        teachersRes.data.find(
-          (item) =>
-            String(item.email || "").trim().toLowerCase() ===
-            String(session.user.email || "").trim().toLowerCase()
-        ) ||
-        null;
-
-      if (!row) {
-        router.replace("/");
-        return;
-      }
-
-      const role = getRole(row);
-
-      if (role === "owner" || role === "admin" || role === "headmaster") {
-        router.replace("/feeding/admin");
-        return;
-      }
-
-      const classes = getAssignedClasses(row);
-      setTeacher(row);
-      setSelectedClass(classes[0] || "");
-      setSettingsRow(settingsRes.data || null);
-      setCheckingUser(false);
     }
 
     void checkUser();
@@ -504,7 +542,6 @@ export default function FeedingTeacherPage() {
     return <PageLoader text="Checking access..." />;
   }
 
-  const assignedClasses = getAssignedClasses(teacher || {});
   const submitDisabled =
     submitting ||
     loadingBalances ||
@@ -587,10 +624,10 @@ export default function FeedingTeacherPage() {
             style={selectStyle}
             disabled={entryBlocked}
           >
-            {assignedClasses.length === 0 ? (
+            {assignedClassNames.length === 0 ? (
               <option value="">No class assigned</option>
             ) : (
-              assignedClasses.map((className) => (
+              assignedClassNames.map((className) => (
                 <option key={className} value={className}>
                   {className}
                 </option>

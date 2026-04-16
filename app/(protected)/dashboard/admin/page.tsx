@@ -19,9 +19,9 @@ type AdminInfo = {
 
 const softwareCards = [
   {
-    title: "Student Management System",
+    title: "Students Database",
     description: "Open the central student database and student records.",
-    href: "/students",
+    href: "/sds",
     emoji: "🎓",
   },
   {
@@ -39,8 +39,14 @@ const softwareCards = [
   {
     title: "Fees",
     description: "Open fees tracking, payments, and arrears.",
-    href: "/fees",
+    href: "/fees/admin",
     emoji: "💳",
+  },
+  {
+    title: "Teacher Attendance",
+    description: "Track and manage teacher attendance records.",
+    href: "/teacher-attendance",
+    emoji: "📊",
   },
 ];
 
@@ -75,29 +81,34 @@ function AdminDashboardPageClient() {
 
   useEffect(() => {
     async function loadDashboardData() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
-      const authUserId = session?.user?.id;
-      if (!authUserId) return;
+        const authUserId = session?.user?.id;
+        if (!authUserId) return;
 
-      const { data: admin } = await supabase
-        .from("teachers")
-        .select("full_name, photo_url, role, teacher_id, username, phone")
-        .eq("auth_user_id", authUserId)
-        .limit(1)
-        .single();
+        const { data: admin } = await supabase
+          .from("teachers")
+          .select("full_name, photo_url, role, teacher_id, username, phone")
+          .eq("auth_user_id", authUserId)
+          .limit(1)
+          .single();
 
-      if (admin) {
-        setAdminInfo({
-          full_name: admin.full_name ?? "Admin",
-          photo_url: admin.photo_url ?? null,
-          role: admin.role ?? "admin",
-          teacher_id: admin.teacher_id ?? "",
-          username: admin.username ?? "",
-          phone: admin.phone ?? "",
-        });
+        if (admin) {
+          setAdminInfo({
+            full_name: admin.full_name ?? "Admin",
+            photo_url: admin.photo_url ?? null,
+            role: admin.role ?? "admin",
+            teacher_id: admin.teacher_id ?? "",
+            username: admin.username ?? "",
+            phone: admin.phone ?? "",
+          });
+        }
+      } catch (error) {
+        console.error("Dashboard data load error:", error);
+        // If auth error, the ProtectedRoute should handle redirect
       }
     }
 

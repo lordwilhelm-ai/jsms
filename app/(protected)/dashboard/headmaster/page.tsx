@@ -19,9 +19,9 @@ type HeadmasterInfo = {
 
 const softwareCards = [
   {
-    title: "Student Management System",
+    title: "Students Database",
     description: "Open student records and student details.",
-    href: "/students",
+    href: "/sds",
     emoji: "🎓",
   },
   {
@@ -39,8 +39,14 @@ const softwareCards = [
   {
     title: "Fees",
     description: "Open fees tracking, payments, and arrears.",
-    href: "/fees",
+    href: "/fees/admin",
     emoji: "💳",
+  },
+  {
+    title: "Teacher Attendance",
+    description: "Track and manage teacher attendance records.",
+    href: "/teacher-attendance",
+    emoji: "📊",
   },
 ];
 
@@ -75,29 +81,34 @@ function HeadmasterDashboardPageClient() {
 
   useEffect(() => {
     async function loadDashboardData() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
-      const authUserId = session?.user?.id;
-      if (!authUserId) return;
+        const authUserId = session?.user?.id;
+        if (!authUserId) return;
 
-      const { data: headmaster } = await supabase
-        .from("teachers")
-        .select("full_name, photo_url, role, teacher_id, username, phone")
-        .eq("auth_user_id", authUserId)
-        .limit(1)
-        .single();
+        const { data: headmaster } = await supabase
+          .from("teachers")
+          .select("full_name, photo_url, role, teacher_id, username, phone")
+          .eq("auth_user_id", authUserId)
+          .limit(1)
+          .single();
 
-      if (headmaster) {
-        setHeadmasterInfo({
-          full_name: headmaster.full_name ?? "Headmaster",
-          photo_url: headmaster.photo_url ?? null,
-          role: headmaster.role ?? "headmaster",
-          teacher_id: headmaster.teacher_id ?? "",
-          username: headmaster.username ?? "",
-          phone: headmaster.phone ?? "",
-        });
+        if (headmaster) {
+          setHeadmasterInfo({
+            full_name: headmaster.full_name ?? "Headmaster",
+            photo_url: headmaster.photo_url ?? null,
+            role: headmaster.role ?? "headmaster",
+            teacher_id: headmaster.teacher_id ?? "",
+            username: headmaster.username ?? "",
+            phone: headmaster.phone ?? "",
+          });
+        }
+      } catch (error) {
+        console.error("Dashboard data load error:", error);
+        // If auth error, the ProtectedRoute should handle redirect
       }
     }
 

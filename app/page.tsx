@@ -36,6 +36,9 @@ export default function Home() {
         data: { session },
       } = await supabase.auth.getSession();
 
+      const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+      const next = params?.get("next") || null;
+
       if (!session?.user?.id) return;
 
       const { data: teacher } = await supabase
@@ -46,6 +49,11 @@ export default function Home() {
         .single();
 
       if (!teacher?.role) return;
+
+      if (next && typeof next === "string" && next.startsWith("/")) {
+        router.replace(next);
+        return;
+      }
 
       if (teacher.role === "teacher") {
         router.replace("/dashboard/teacher");
@@ -139,6 +147,14 @@ export default function Home() {
 
       if (!teacher?.role) {
         throw new Error("Role not found for this account.");
+      }
+
+      // respect next query param when present
+      const paramsAfter = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+      const nextAfter = paramsAfter?.get("next") || null;
+      if (nextAfter && nextAfter.startsWith("/")) {
+        router.push(nextAfter);
+        return;
       }
 
       if (teacher.role === "teacher") {

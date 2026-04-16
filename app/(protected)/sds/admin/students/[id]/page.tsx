@@ -69,6 +69,9 @@ export default function SDSAdminStudentProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  const [userRole, setUserRole] = useState<"teacher" | "admin" | "other">("other");
+  const [isAssignedStudent, setIsAssignedStudent] = useState(true);
+
   const [settingsRow, setSettingsRow] = useState<SettingsRow | null>(null);
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [message, setMessage] = useState("");
@@ -116,105 +119,153 @@ export default function SDSAdminStudentProfilePage() {
     let active = true;
 
     async function checkAndLoad() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
-      if (!active) return;
+        if (!active) return;
 
-      if (!session?.user) {
-        router.replace("/");
-        return;
-      }
+        if (!session?.user) {
+          router.replace("/");
+          return;
+        }
 
-      const [teachersRes, studentRes, settingsRes, classesRes] = await Promise.all([
-        supabase.from("teachers").select("*"),
-        supabase.from("students").select("*").eq("id", studentRowId).maybeSingle(),
-        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-        supabase.from("classes").select("*").order("class_order", { ascending: true }),
-      ]);
+        const [teachersRes, studentRes, settingsRes, classesRes] = await Promise.all([
+          supabase.from("teachers").select("*"),
+          supabase.from("students").select("*").eq("id", studentRowId).maybeSingle(),
+          supabase.from("school_settings").select("*").limit(1).maybeSingle(),
+          supabase.from("classes").select("*").order("class_order", { ascending: true }),
+        ]);
 
-      if (!active) return;
+        if (!active) return;
 
-      if (teachersRes.error || !teachersRes.data || teachersRes.data.length === 0) {
-        router.replace("/");
-        return;
-      }
+        if (teachersRes.error || !teachersRes.data || teachersRes.data.length === 0) {
+          router.replace("/");
+          return;
+        }
 
-      const userRow =
-        teachersRes.data.find((item) => item.auth_user_id === session.user.id) ||
-        teachersRes.data.find(
-          (item) =>
-            String(item.email || "").trim().toLowerCase() ===
-            String(session.user.email || "").trim().toLowerCase()
-        ) ||
-        null;
+        const userRow =
+          teachersRes.data.find((item) => item.auth_user_id === session.user.id) ||
+          teachersRes.data.find(
+            (item) =>
+              String(item.email || "").trim().toLowerCase() ===
+              String(session.user.email || "").trim().toLowerCase()
+          ) ||
+          null;
 
-      if (!userRow) {
-        router.replace("/");
-        return;
-      }
+        if (!userRow) {
+          router.replace("/");
+          return;
+        }
 
-      const role = getRole(userRow);
+        const role = getRole(userRow);
+        setUserRole(role === "teacher" ? "teacher" : "admin");
 
-      if (role === "teacher") {
-        router.replace("/sds/teacher");
-        return;
-      }
+        // If it's a teacher, verify they're assigned to this student's class
+        if (role === "teacher") {
+          try {
+            const assignResponse = await fetch(`/api/teacher-assignments/get?teacher_id=${userRow.id}`);
+            const assignData = await assignResponse.json();
 
-      if (studentRes.error || !studentRes.data) {
-        setMessage(`Error: ${studentRes.error?.message || "Student not found."}`);
+            if (!assignResponse.ok || assignData.error) {
+              setMessage("Error loading your class assignments.");
+              setIsAssignedStudent(false);
+              setCheckingUser(false);
+              setLoading(false);
+              return;
+            }
+
+            const classIds = assignData.class_ids || [];
+
+            // Get the student's class name and check if teacher is assigned to it
+            if (studentRes.data) {
+              const studentClassName = String(studentRes.data.class_name || "").trim();
+              
+              // Find the class ID for this class name
+              const assignedToClass = (classesRes.data || []).some((cls: any) => {
+                const className = String(cls.class_name || "").trim();
+                const classId = String(cls.id || "").trim();
+                return className === studentClassName && classIds.includes(classId);
+              });
+
+              if (!assignedToClass) {
+                setMessage("You don't have permission to view this student.");
+                setIsAssignedStudent(false);
+                setCheckingUser(false);
+                setLoading(false);
+                return;
+              }
+            }
+          } catch (error) {
+            console.error("Error checking teacher assignments:", error);
+            setIsAssignedStudent(false);
+            setCheckingUser(false);
+            setLoading(false);
+            return;
+          }
+        }
+
+        if (studentRes.error || !studentRes.data) {
+          setMessage(`Error: ${studentRes.error?.message || "Student not found."}`);
+          setCheckingUser(false);
+          setLoading(false);
+          return;
+        }
+
+        const row = studentRes.data;
+
+        setSettingsRow(settingsRes.data || null);
+        setClasses(classesRes.data || []);
+        setIsAssignedStudent(true);
+
+        setForm({
+          id: String(row.id || ""),
+          fullName: String(row.full_name || ""),
+          studentId: String(row.student_id || ""),
+          gender: String(row.gender || ""),
+          dateOfBirth: String(row.date_of_birth || ""),
+          age: row.age ? String(row.age) : "",
+          className: String(row.class_name || ""),
+          photoUrl: String(row.photo_url || ""),
+
+          fatherName: String(row.father_name || ""),
+          fatherPhone: String(row.father_phone || ""),
+          fatherAddress: String(row.father_address || ""),
+
+          motherName: String(row.mother_name || ""),
+          motherPhone: String(row.mother_phone || ""),
+          motherAddress: String(row.mother_address || ""),
+
+          staysWith: String(row.stays_with || "Both parents"),
+
+          guardianName: String(row.guardian_name || ""),
+          guardianPhone: String(row.guardian_phone || ""),
+          guardianAddress: String(row.guardian_address || ""),
+
+          emergencyContact: String(row.emergency_contact || ""),
+
+          healthCondition: String(row.health_condition || ""),
+          disabilitySupport: String(row.disability_support || ""),
+          healthNote: String(row.health_note || ""),
+
+          nhisImageUrl: String(row.nhis_image_url || ""),
+          weighingCardUrl: String(row.weighing_card_url || ""),
+          otherDocument1Url: String(row.other_document_1_url || ""),
+          otherDocument2Url: String(row.other_document_2_url || ""),
+          otherDocument3Url: String(row.other_document_3_url || ""),
+
+          status: String(row.status || "active"),
+        });
+
         setCheckingUser(false);
         setLoading(false);
-        return;
+      } catch (error) {
+        console.error("Error loading student profile:", error);
+        setMessage("Error loading student profile.");
+        setCheckingUser(false);
+        setLoading(false);
       }
-
-      const row = studentRes.data;
-
-      setSettingsRow(settingsRes.data || null);
-      setClasses(classesRes.data || []);
-
-      setForm({
-        id: String(row.id || ""),
-        fullName: String(row.full_name || ""),
-        studentId: String(row.student_id || ""),
-        gender: String(row.gender || ""),
-        dateOfBirth: String(row.date_of_birth || ""),
-        age: row.age ? String(row.age) : "",
-        className: String(row.class_name || ""),
-        photoUrl: String(row.photo_url || ""),
-
-        fatherName: String(row.father_name || ""),
-        fatherPhone: String(row.father_phone || ""),
-        fatherAddress: String(row.father_address || ""),
-
-        motherName: String(row.mother_name || ""),
-        motherPhone: String(row.mother_phone || ""),
-        motherAddress: String(row.mother_address || ""),
-
-        staysWith: String(row.stays_with || "Both parents"),
-
-        guardianName: String(row.guardian_name || ""),
-        guardianPhone: String(row.guardian_phone || ""),
-        guardianAddress: String(row.guardian_address || ""),
-
-        emergencyContact: String(row.emergency_contact || ""),
-
-        healthCondition: String(row.health_condition || ""),
-        disabilitySupport: String(row.disability_support || ""),
-        healthNote: String(row.health_note || ""),
-
-        nhisImageUrl: String(row.nhis_image_url || ""),
-        weighingCardUrl: String(row.weighing_card_url || ""),
-        otherDocument1Url: String(row.other_document_1_url || ""),
-        otherDocument2Url: String(row.other_document_2_url || ""),
-        otherDocument3Url: String(row.other_document_3_url || ""),
-
-        status: String(row.status || "active"),
-      });
-
-      setCheckingUser(false);
-      setLoading(false);
     }
 
     void checkAndLoad();
@@ -257,6 +308,12 @@ export default function SDSAdminStudentProfilePage() {
   }, [classes]);
 
   async function handleSave() {
+    // Teachers cannot save - read-only view
+    if (userRole === "teacher") {
+      setMessage("Error: You can only view student information. Contact an administrator to make changes.");
+      return;
+    }
+
     if (!form.fullName.trim()) {
       setMessage("Error: Full name is required.");
       return;
@@ -343,6 +400,51 @@ export default function SDSAdminStudentProfilePage() {
     return <div style={{ padding: "24px" }}>Loading student profile...</div>;
   }
 
+  if (!isAssignedStudent) {
+    return (
+      <main
+        style={{
+          minHeight: "100vh",
+          background: COLORS.background,
+          fontFamily: "Arial, sans-serif",
+          color: COLORS.text,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "24px",
+        }}
+      >
+        <div
+          style={{
+            textAlign: "center",
+            background: COLORS.white,
+            borderRadius: "16px",
+            padding: "40px",
+            maxWidth: "400px",
+            boxShadow: "0 10px 28px rgba(0,0,0,0.08)",
+          }}
+        >
+          <h2 style={{ margin: "0 0 12px", color: COLORS.danger }}>Access Denied</h2>
+          <p style={{ margin: "0 0 24px", color: COLORS.muted }}>{message}</p>
+          <Link
+            href={userRole === "teacher" ? "/sds/teacher" : "/sds/admin"}
+            style={{
+              display: "inline-block",
+              textDecoration: "none",
+              background: COLORS.primary,
+              color: COLORS.secondary,
+              padding: "10px 20px",
+              borderRadius: "8px",
+              fontWeight: "bold",
+            }}
+          >
+            Go Back
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main
       style={{
@@ -356,7 +458,7 @@ export default function SDSAdminStudentProfilePage() {
         style={{
           background: COLORS.secondary,
           color: COLORS.white,
-          padding: "20px 24px",
+          padding: "16px",
           borderBottom: `6px solid ${COLORS.primary}`,
         }}
       >
@@ -372,40 +474,59 @@ export default function SDSAdminStudentProfilePage() {
           }}
         >
           <div>
-            <h1 style={{ margin: 0 }}>Student Profile</h1>
-            <p style={{ margin: "6px 0 0", fontWeight: "bold" }}>{schoolName}</p>
-            <p style={{ margin: "4px 0 0", opacity: 0.9 }}>{motto}</p>
-            <p style={{ margin: "6px 0 0", fontSize: "13px", opacity: 0.9 }}>
+            <h1 style={{ margin: 0, fontSize: "clamp(18px, 5vw, 28px)" }}>Student Profile</h1>
+            <p style={{ margin: "6px 0 0", fontWeight: "bold", fontSize: "clamp(12px, 4vw, 16px)" }}>{schoolName}</p>
+            <p style={{ margin: "4px 0 0", opacity: 0.9, fontSize: "clamp(11px, 3vw, 14px)" }}>{motto}</p>
+            <p style={{ margin: "6px 0 0", fontSize: "11px", opacity: 0.9 }}>
               <strong>{academicYear}</strong> • <strong>{currentTerm}</strong>
             </p>
           </div>
 
-          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-            <Link href="/sds/admin" style={topButtonStyle}>
+          <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: "8px", width: "100%", maxWidth: "300px" }}>
+            <Link
+              href={userRole === "teacher" ? "/sds/teacher" : "/sds/admin"}
+              style={{...topButtonStyle, fontSize: "12px", padding: "10px 12px"}}
+            >
               Back to SDS
             </Link>
-            <button type="button" onClick={handleSave} disabled={saving} style={saveButtonStyle}>
-              {saving ? "Saving..." : "Save Changes"}
-            </button>
+            {userRole === "admin" && (
+              <button type="button" onClick={handleSave} disabled={saving} style={{...saveButtonStyle, fontSize: "12px", padding: "10px 12px"}}>
+                {saving ? "Saving..." : "Save"}
+              </button>
+            )}
+            {userRole === "teacher" && (
+              <div style={{
+                padding: "8px 12px",
+                background: "#f3f4f6",
+                borderRadius: "8px",
+                fontSize: "11px",
+                fontWeight: "bold",
+                color: COLORS.muted,
+                gridColumn: "1 / -1",
+                textAlign: "center",
+              }}>
+                📖 View Only
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      <div style={{ maxWidth: "1300px", margin: "0 auto", padding: "24px" }}>
+      <div style={{ maxWidth: "1300px", margin: "0 auto", padding: "12px" }}>
         <div
           style={{
             background: COLORS.white,
             borderRadius: "22px",
-            padding: "20px",
+            padding: "16px",
             boxShadow: "0 10px 28px rgba(0,0,0,0.08)",
-            marginBottom: "20px",
+            marginBottom: "16px",
           }}
         >
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "220px 1fr",
-              gap: "20px",
+              gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+              gap: "16px",
               alignItems: "start",
             }}
           >
@@ -417,7 +538,8 @@ export default function SDSAdminStudentProfilePage() {
                   style={{
                     width: "100%",
                     maxWidth: "220px",
-                    height: "220px",
+                    height: "auto",
+                    aspectRatio: "1",
                     objectFit: "cover",
                     borderRadius: "18px",
                     border: "1px solid #ddd",
@@ -428,7 +550,7 @@ export default function SDSAdminStudentProfilePage() {
                   style={{
                     width: "100%",
                     maxWidth: "220px",
-                    height: "220px",
+                    aspectRatio: "1",
                     borderRadius: "18px",
                     border: "1px dashed #d1d5db",
                     display: "flex",
@@ -438,6 +560,7 @@ export default function SDSAdminStudentProfilePage() {
                     background: "#fafafa",
                     textAlign: "center",
                     padding: "12px",
+                    fontSize: "12px",
                   }}
                 >
                   No student photo
@@ -446,16 +569,16 @@ export default function SDSAdminStudentProfilePage() {
             </div>
 
             <div>
-              <h2 style={{ margin: 0, color: COLORS.secondary }}>
+              <h2 style={{ margin: 0, color: COLORS.secondary, fontSize: "clamp(16px, 5vw, 24px)" }}>
                 {form.fullName || "Unnamed Student"}
               </h2>
 
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-                  gap: "10px",
-                  marginTop: "14px",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+                  gap: "8px",
+                  marginTop: "12px",
                 }}
               >
                 <InfoBadge label="Student ID" value={form.studentId || "-"} />
@@ -491,7 +614,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, fullName: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 />
               </div>
 
@@ -502,7 +626,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, studentId: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 />
               </div>
 
@@ -513,7 +638,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, gender: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 >
                   <option value="">Select</option>
                   <option value="Male">Male</option>
@@ -528,7 +654,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, className: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 >
                   <option value="">Select Class</option>
                   {classOptions.map((className) => (
@@ -547,7 +674,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, dateOfBirth: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 />
               </div>
 
@@ -567,7 +695,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, status: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 >
                   <option value="active">active</option>
                   <option value="inactive">inactive</option>
@@ -585,7 +714,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, fatherName: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 />
               </div>
 
@@ -596,7 +726,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, fatherPhone: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 />
               </div>
 
@@ -607,7 +738,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, fatherAddress: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 />
               </div>
 
@@ -618,7 +750,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, motherName: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 />
               </div>
 
@@ -629,7 +762,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, motherPhone: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 />
               </div>
 
@@ -640,7 +774,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, motherAddress: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 />
               </div>
 
@@ -651,7 +786,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, staysWith: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 >
                   <option value="Both parents">Both parents</option>
                   <option value="Father">Father</option>
@@ -676,7 +812,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, guardianName: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 />
               </div>
 
@@ -687,7 +824,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, guardianPhone: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 />
               </div>
 
@@ -698,7 +836,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, guardianAddress: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 />
               </div>
             </div>
@@ -713,7 +852,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, healthCondition: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 />
               </div>
 
@@ -724,7 +864,8 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, disabilitySupport: e.target.value }))
                   }
-                  style={inputStyle}
+                  disabled={userRole === "teacher"}
+                  style={{...inputStyle, background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background}}
                 />
               </div>
 
@@ -735,14 +876,16 @@ export default function SDSAdminStudentProfilePage() {
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, healthNote: e.target.value }))
                   }
-                  style={{ ...inputStyle, minHeight: "100px", resize: "vertical" }}
+                  disabled={userRole === "teacher"}
+                  style={{ ...inputStyle, minHeight: "100px", resize: "vertical", background: userRole === "teacher" ? "#f3f4f6" : inputStyle.background }}
                 />
               </div>
             </div>
           </SectionCard>
 
-          <SectionCard title="Documents / Uploads">
-            <div style={uploadGridStyle}>
+          {userRole === "admin" && (
+            <SectionCard title="Documents / Uploads">
+              <div style={uploadGridStyle}>
               <SDSFileUpload
                 label="Student Photo"
                 value={form.photoUrl}
@@ -803,7 +946,8 @@ export default function SDSAdminStudentProfilePage() {
                 }
               />
             </div>
-          </SectionCard>
+            </SectionCard>
+          )}
         </div>
       </div>
     </main>
@@ -850,14 +994,14 @@ function SectionCard({
 
 const gridStyle: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+  gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
   gap: "12px",
 };
 
 const uploadGridStyle: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-  gap: "14px",
+  gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+  gap: "12px",
 };
 
 const labelStyle: React.CSSProperties = {
@@ -874,6 +1018,7 @@ const inputStyle: React.CSSProperties = {
   border: "1px solid #ddd",
   fontSize: "14px",
   outline: "none",
+  minHeight: "44px",
 };
 
 const topButtonStyle: React.CSSProperties = {
