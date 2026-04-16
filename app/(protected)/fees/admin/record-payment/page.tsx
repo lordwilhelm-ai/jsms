@@ -309,7 +309,7 @@ export default function RecordPaymentPage() {
   const visibleStudents = useMemo<StudentViewRow[]>(() => {
     const search = studentSearch.trim().toLowerCase();
 
-    return students
+    const rows: StudentViewRow[] = students
       .filter((student) => {
         const classNameValue = getClassName(student);
         if (classNameValue !== selectedClass) return false;
@@ -354,8 +354,11 @@ export default function RecordPaymentPage() {
           status: totals.status,
           paymentHistory,
         };
-      })
-      .sort((a, b) => String(a.full_name || "").localeCompare(String(b.full_name || "")));
+      });
+
+    return rows.sort((a, b) =>
+      String(a.full_name || "").localeCompare(String(b.full_name || ""))
+    );
   }, [students, studentSearch, selectedClass, currentTermPayments, drafts, classMap]);
 
   function updateDraft(student: AnyRow, patch: Partial<DraftRow>) {
@@ -750,10 +753,7 @@ export default function RecordPaymentPage() {
       </div>
 
       {paymentModal && (
-        <div
-          onClick={() => setPaymentModal(null)}
-          style={overlayStyle}
-        >
+        <div onClick={() => setPaymentModal(null)} style={overlayStyle}>
           <div
             onClick={(e) => e.stopPropagation()}
             style={modalCardStyle}
