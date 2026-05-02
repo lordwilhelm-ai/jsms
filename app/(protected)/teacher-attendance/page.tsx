@@ -8,10 +8,19 @@ import { supabase } from "@/lib/supabase";
 
 type AnyRow = Record<string, any>;
 
-const SCHOOL_LAT = 5.144163;
-const SCHOOL_LNG = -1.281675;
-const ALLOWED_RADIUS_METERS = 180;
-const MAX_GPS_ACCURACY_METERS = 100;
+type AttendanceLocationSettings = {
+  schoolLat: number;
+  schoolLng: number;
+  allowedRadiusMeters: number;
+  maxGpsAccuracyMeters: number;
+};
+
+const DEFAULT_ATTENDANCE_SETTINGS: AttendanceLocationSettings = {
+  schoolLat: 5.144163,
+  schoolLng: -1.281675,
+  allowedRadiusMeters: 180,
+  maxGpsAccuracyMeters: 100,
+};
 
 const COLORS = {
   bg: "#f7f4ec",
@@ -117,12 +126,13 @@ function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number)
   const R = 6371000;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
+
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(toRad(lat1)) *
-    Math.cos(toRad(lat2)) *
-    Math.sin(dLon / 2) *
-    Math.sin(dLon / 2);
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
 
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
@@ -198,12 +208,29 @@ function getTeacherClass(row: AnyRow | null) {
   return String(possible || "-");
 }
 
+function getAttendanceLocationSettings(row: AnyRow | null): AttendanceLocationSettings {
+  if (!row) return DEFAULT_ATTENDANCE_SETTINGS;
+
+  return {
+    schoolLat: Number(row.school_lat ?? DEFAULT_ATTENDANCE_SETTINGS.schoolLat),
+    schoolLng: Number(row.school_lng ?? DEFAULT_ATTENDANCE_SETTINGS.schoolLng),
+    allowedRadiusMeters: Number(
+      row.allowed_radius_meters ?? DEFAULT_ATTENDANCE_SETTINGS.allowedRadiusMeters
+    ),
+    maxGpsAccuracyMeters: Number(
+      row.max_gps_accuracy_meters ?? DEFAULT_ATTENDANCE_SETTINGS.maxGpsAccuracyMeters
+    ),
+  };
+}
+
 export default function TeacherAttendancePage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [currentUserRow, setCurrentUserRow] = useState<AnyRow | null>(null);
   const [settingsRow, setSettingsRow] = useState<AnyRow | null>(null);
+  const [attendanceSettings, setAttendanceSettings] =
+    useState<AttendanceLocationSettings>(DEFAULT_ATTENDANCE_SETTINGS);
 
   const [allTeachers, setAllTeachers] = useState<AnyRow[]>([]);
   const [todayAllAttendance, setTodayAllAttendance] = useState<AnyRow[]>([]);
@@ -234,9 +261,10 @@ export default function TeacherAttendancePage() {
           return;
         }
 
-        const [teachersRes, settingsRes] = await Promise.all([
+        const [teachersRes, settingsRes, attendanceSettingsRes] = await Promise.all([
           supabase.from("teachers").select("*"),
           supabase.from("school_settings").select("*").limit(1).maybeSingle(),
+          supabase.from("teacher_attendance_settings").select("*").limit(1).maybeSingle(),
         ]);
 
         if (!active) return;
@@ -282,6 +310,7 @@ export default function TeacherAttendancePage() {
 
         setCurrentUserRow(finalUser);
         setSettingsRow(settingsRes.data || null);
+        setAttendanceSettings(getAttendanceLocationSettings(attendanceSettingsRes.data || null));
         setAllTeachers(realTeachers);
 
         if (isAdminRole(role)) {
@@ -416,12 +445,18 @@ export default function TeacherAttendancePage() {
       const lat = position.coords.latitude;
       const lng = position.coords.longitude;
       const accuracy = Number(position.coords.accuracy || 0);
-      const distance = haversineMeters(lat, lng, SCHOOL_LAT, SCHOOL_LNG);
+
+      const distance = haversineMeters(
+        lat,
+        lng,
+        attendanceSettings.schoolLat,
+        attendanceSettings.schoolLng
+      );
 
       setDistanceMeters(distance);
       setGpsAccuracy(accuracy);
 
-      if (!Number.isFinite(accuracy) || accuracy > MAX_GPS_ACCURACY_METERS) {
+      if (!Number.isFinite(accuracy) || accuracy > attendanceSettings.maxGpsAccuracyMeters) {
         return {
           ok: false as const,
           error: `Location not accurate enough yet. Current GPS accuracy is ${Math.round(
@@ -430,11 +465,12 @@ export default function TeacherAttendancePage() {
         };
       }
 
-      if (distance > ALLOWED_RADIUS_METERS) {
+      if (distance > attendanceSettings.allowedRadiusMeters) {
         return {
           ok: false as const,
-          error: `You must be on school premises to ${mode === "checkin" ? "check in" : "check out"
-            }. Distance: ${Math.round(distance)}m`,
+          error: `You must be on school premises to ${
+            mode === "checkin" ? "check in" : "check out"
+          }. Distance: ${Math.round(distance)}m`,
         };
       }
 
@@ -569,6 +605,7 @@ export default function TeacherAttendancePage() {
         todayAttendance={todayAllAttendance}
         dutyThisWeek={dutyThisWeek}
         dutyNextWeek={dutyNextWeek}
+        attendanceSettings={attendanceSettings}
       />
     );
   }
@@ -693,7 +730,7 @@ export default function TeacherAttendancePage() {
 
           <div style={smallInfoStyle}>
             Check-in and check-out work only inside the school radius of{" "}
-            <strong>{ALLOWED_RADIUS_METERS} meters</strong>.
+            <strong>{attendanceSettings.allowedRadiusMeters} meters</strong>.
           </div>
 
           {gpsAccuracy !== null && (
@@ -718,6 +755,7 @@ function AdminTeacherAttendanceView({
   todayAttendance,
   dutyThisWeek,
   dutyNextWeek,
+  attendanceSettings,
 }: {
   currentUserRow: AnyRow | null;
   settingsRow: AnyRow | null;
@@ -725,6 +763,7 @@ function AdminTeacherAttendanceView({
   todayAttendance: AnyRow[];
   dutyThisWeek: AnyRow[];
   dutyNextWeek: AnyRow[];
+  attendanceSettings: AttendanceLocationSettings;
 }) {
   const [search, setSearch] = useState("");
 
@@ -860,19 +899,17 @@ function AdminTeacherAttendanceView({
               Duty Roster
             </Link>
 
-            <button onClick={() => window.print()} style={adminActionButtonStyle}>
-              Print Today
-            </button>
-
             <Link href="/teacher-attendance/records" style={adminActionButtonStyle}>
-              Records
+              Records / Print
             </Link>
-
 
             <Link href="/teacher-attendance/location-settings" style={adminActionButtonStyle}>
               Location Settings
             </Link>
 
+            <button onClick={() => window.print()} style={adminActionButtonStyle}>
+              Print Today
+            </button>
           </div>
         </div>
 
@@ -1012,7 +1049,11 @@ function AdminTeacherAttendanceView({
           <div style={adminStatsGridStyle}>
             <AdminStatCard label="This Week" value={String(onDutyThisWeek)} tone="warning" />
             <AdminStatCard label="Next Week" value={String(onDutyNextWeek)} tone="info" />
-            <AdminStatCard label="School Radius" value={`${ALLOWED_RADIUS_METERS}m`} tone="success" />
+            <AdminStatCard
+              label="School Radius"
+              value={`${attendanceSettings.allowedRadiusMeters}m`}
+              tone="success"
+            />
           </div>
         </div>
       </div>
@@ -1152,19 +1193,19 @@ function AdminStatCard({
     tone === "success"
       ? COLORS.successText
       : tone === "warning"
-        ? COLORS.warningText
-        : tone === "danger"
-          ? COLORS.dangerText
-          : COLORS.infoText;
+      ? COLORS.warningText
+      : tone === "danger"
+      ? COLORS.dangerText
+      : COLORS.infoText;
 
   const bg =
     tone === "success"
       ? COLORS.successBg
       : tone === "warning"
-        ? COLORS.warningBg
-        : tone === "danger"
-          ? COLORS.dangerBg
-          : COLORS.infoBg;
+      ? COLORS.warningBg
+      : tone === "danger"
+      ? COLORS.dangerBg
+      : COLORS.infoBg;
 
   return (
     <div style={adminStatCardStyle}>
@@ -1206,14 +1247,14 @@ function MessageBox({
           messageType === "success"
             ? COLORS.successBg
             : messageType === "error"
-              ? COLORS.dangerBg
-              : COLORS.infoBg,
+            ? COLORS.dangerBg
+            : COLORS.infoBg,
         color:
           messageType === "success"
             ? COLORS.successText
             : messageType === "error"
-              ? COLORS.dangerText
-              : COLORS.infoText,
+            ? COLORS.dangerText
+            : COLORS.infoText,
         borderRadius: "10px",
         padding: "11px 13px",
         marginBottom: "10px",
