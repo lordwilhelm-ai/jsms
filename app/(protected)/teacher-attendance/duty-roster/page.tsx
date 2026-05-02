@@ -281,7 +281,6 @@ export default function DutyRosterPage() {
         teacher_name: teacherName,
         week_start_date: weekStart,
         week_end_date: weekEnd,
-        note: note.trim() || null,
       };
 
       const { error } = await supabase.from("teacher_duty_roster").insert(payload);
