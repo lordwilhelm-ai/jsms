@@ -120,9 +120,9 @@ function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number)
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
+    Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) *
+    Math.sin(dLon / 2);
 
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
@@ -433,9 +433,8 @@ export default function TeacherAttendancePage() {
       if (distance > ALLOWED_RADIUS_METERS) {
         return {
           ok: false as const,
-          error: `You must be on school premises to ${
-            mode === "checkin" ? "check in" : "check out"
-          }. Distance: ${Math.round(distance)}m`,
+          error: `You must be on school premises to ${mode === "checkin" ? "check in" : "check out"
+            }. Distance: ${Math.round(distance)}m`,
         };
       }
 
@@ -865,19 +864,15 @@ function AdminTeacherAttendanceView({
               Print Today
             </button>
 
-            <button
-              onClick={() => alert("Attendance records page will be added next.")}
-              style={adminActionButtonStyle}
-            >
+            <Link href="/teacher-attendance/records" style={adminActionButtonStyle}>
               Records
-            </button>
+            </Link>
 
-            <button
-              onClick={() => alert("Location settings page will be added later.")}
-              style={adminActionButtonStyle}
-            >
+
+            <Link href="/teacher-attendance/location-settings" style={adminActionButtonStyle}>
               Location Settings
-            </button>
+            </Link>
+
           </div>
         </div>
 
@@ -1157,19 +1152,19 @@ function AdminStatCard({
     tone === "success"
       ? COLORS.successText
       : tone === "warning"
-      ? COLORS.warningText
-      : tone === "danger"
-      ? COLORS.dangerText
-      : COLORS.infoText;
+        ? COLORS.warningText
+        : tone === "danger"
+          ? COLORS.dangerText
+          : COLORS.infoText;
 
   const bg =
     tone === "success"
       ? COLORS.successBg
       : tone === "warning"
-      ? COLORS.warningBg
-      : tone === "danger"
-      ? COLORS.dangerBg
-      : COLORS.infoBg;
+        ? COLORS.warningBg
+        : tone === "danger"
+          ? COLORS.dangerBg
+          : COLORS.infoBg;
 
   return (
     <div style={adminStatCardStyle}>
@@ -1211,14 +1206,14 @@ function MessageBox({
           messageType === "success"
             ? COLORS.successBg
             : messageType === "error"
-            ? COLORS.dangerBg
-            : COLORS.infoBg,
+              ? COLORS.dangerBg
+              : COLORS.infoBg,
         color:
           messageType === "success"
             ? COLORS.successText
             : messageType === "error"
-            ? COLORS.dangerText
-            : COLORS.infoText,
+              ? COLORS.dangerText
+              : COLORS.infoText,
         borderRadius: "10px",
         padding: "11px 13px",
         marginBottom: "10px",
