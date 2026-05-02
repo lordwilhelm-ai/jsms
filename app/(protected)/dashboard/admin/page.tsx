@@ -43,6 +43,12 @@ const softwareCards = [
     emoji: "💳",
   },
   {
+    title: "Income & Expenditure",
+    description: "Record school income, expenses, balances, and financial reports.",
+    href: "/income-expenditure",
+    emoji: "💰",
+  },
+  {
     title: "Teacher Attendance",
     description: "Track and manage teacher attendance records.",
     href: "/teacher-attendance",
@@ -108,7 +114,6 @@ function AdminDashboardPageClient() {
         }
       } catch (error) {
         console.error("Dashboard data load error:", error);
-        // If auth error, the ProtectedRoute should handle redirect
       }
     }
 
@@ -180,7 +185,7 @@ function AdminDashboardPageClient() {
                 {settings.logo_url ? (
                   <img
                     src={settings.logo_url}
-                    alt={settings.school_name}
+                    alt={settings.school_name || "School Logo"}
                     style={{
                       width: "100%",
                       height: "100%",
@@ -257,6 +262,7 @@ function AdminDashboardPageClient() {
               >
                 {adminInfo.role}
               </p>
+
               {(settings.academic_year || settings.current_term) && (
                 <p
                   style={{
@@ -414,8 +420,8 @@ function AdminDashboardPageClient() {
                 {settings.school_name
                   ? `${settings.school_name} central control area.`
                   : "Central control area."}{" "}
-                Open the software modules in the main area, and use the side
-                menu for teachers, students, subjects, classes, and settings.
+                Open the software modules in the main area, and use the side menu
+                for teachers, students, subjects, classes, and settings.
               </p>
             </div>
           </motion.div>
