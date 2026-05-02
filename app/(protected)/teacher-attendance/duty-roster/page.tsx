@@ -19,8 +19,6 @@ const COLORS = {
   border: "#e5e7eb",
   successBg: "#dcfce7",
   successText: "#166534",
-  warningBg: "#fef3c7",
-  warningText: "#a16207",
   dangerBg: "#fee2e2",
   dangerText: "#991b1b",
   infoBg: "#eff6ff",
@@ -108,14 +106,12 @@ export default function DutyRosterPage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
-  const [adminRow, setAdminRow] = useState<AnyRow | null>(null);
   const [teachers, setTeachers] = useState<AnyRow[]>([]);
   const [roster, setRoster] = useState<AnyRow[]>([]);
 
   const [selectedTeacherId, setSelectedTeacherId] = useState("");
   const [weekStart, setWeekStart] = useState(toIsoDate(startOfWeekMonday(new Date())));
   const [weekEnd, setWeekEnd] = useState(toIsoDate(endOfWeekSunday(new Date())));
-  const [note, setNote] = useState("");
 
   const [search, setSearch] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
@@ -142,9 +138,7 @@ export default function DutyRosterPage() {
 
         if (!active) return;
 
-        if (teachersRes.error) {
-          throw teachersRes.error;
-        }
+        if (teachersRes.error) throw teachersRes.error;
 
         const allUsers = teachersRes.data || [];
 
@@ -164,23 +158,16 @@ export default function DutyRosterPage() {
           full_name: "Admin",
           role: "admin",
           teacher_id: "",
-          username: "",
-          phone: "",
         };
 
         const finalUser = matchedUser || fallbackAdminUser;
-        const role = getRole(finalUser);
 
-        if (!isAdminRole(role)) {
+        if (!isAdminRole(getRole(finalUser))) {
           router.replace("/teacher-attendance");
           return;
         }
 
-        const realTeachers = allUsers.filter((item) => isTeacherRole(getRole(item)));
-
-        setAdminRow(finalUser);
-        setTeachers(realTeachers);
-
+        setTeachers(allUsers.filter((item) => isTeacherRole(getRole(item))));
         await loadRoster();
       } catch (error: any) {
         console.error(error);
@@ -220,7 +207,6 @@ export default function DutyRosterPage() {
 
   const filteredRoster = useMemo(() => {
     const q = search.trim().toLowerCase();
-
     if (!q) return roster;
 
     return roster.filter((row) => {
@@ -284,13 +270,11 @@ export default function DutyRosterPage() {
       };
 
       const { error } = await supabase.from("teacher_duty_roster").insert(payload);
-
       if (error) throw error;
 
       await reloadRoster();
 
       setSelectedTeacherId("");
-      setNote("");
       setMessage("Duty assigned successfully.");
       setMessageType("success");
     } catch (error: any) {
@@ -313,11 +297,7 @@ export default function DutyRosterPage() {
       setActionLoading(true);
       setMessage("");
 
-      const { error } = await supabase
-        .from("teacher_duty_roster")
-        .delete()
-        .eq("id", row.id);
-
+      const { error } = await supabase.from("teacher_duty_roster").delete().eq("id", row.id);
       if (error) throw error;
 
       await reloadRoster();
@@ -342,15 +322,7 @@ export default function DutyRosterPage() {
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: COLORS.bg,
-        fontFamily: "Arial, sans-serif",
-        color: COLORS.text,
-        padding: "12px",
-      }}
-    >
+    <main style={pageStyle}>
       <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
         <div style={headerStyle}>
           <div style={headerFlexStyle}>
@@ -359,12 +331,18 @@ export default function DutyRosterPage() {
               <h1 style={{ margin: "4px 0 0", fontSize: "24px", lineHeight: 1.1 }}>
                 Duty Roster
               </h1>
-              <p style={headerNameStyle}>Assign weekly teacher duty</p>
+              <p style={headerNameStyle}>Assign multiple teachers for weekly duty</p>
             </div>
 
             <div style={headerRightStyle}>
               <Link href="/teacher-attendance" style={topButtonStyle}>
                 Back
+              </Link>
+              <Link href="/teacher-attendance/records" style={topButtonStyle}>
+                Records
+              </Link>
+              <Link href="/teacher-attendance/location-settings" style={topButtonStyle}>
+                Location
               </Link>
               <button onClick={() => window.print()} style={topButtonStyle}>
                 Print
@@ -393,7 +371,8 @@ export default function DutyRosterPage() {
 
                     return (
                       <option key={teacherId} value={teacherId}>
-                        {getTeacherName(teacher)} {getTeacherClass(teacher) !== "-" ? `— ${getTeacherClass(teacher)}` : ""}
+                        {getTeacherName(teacher)}
+                        {getTeacherClass(teacher) !== "-" ? ` — ${getTeacherClass(teacher)}` : ""}
                       </option>
                     );
                   })}
@@ -421,16 +400,6 @@ export default function DutyRosterPage() {
                   />
                 </label>
               </div>
-
-              <label style={labelStyle}>
-                Note
-                <textarea
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder="Optional note"
-                  style={{ ...inputStyle, minHeight: "82px", resize: "vertical" }}
-                />
-              </label>
 
               <button
                 onClick={handleAssignDuty}
@@ -474,7 +443,8 @@ export default function DutyRosterPage() {
             <div style={{ height: "12px" }} />
 
             <div style={noticeStyle}>
-              Duty week is automatically set from Monday to Sunday. You can still edit the end date manually.
+              You can assign more than one teacher to the same duty week. The system only blocks
+              the same teacher from being added twice for the same week.
             </div>
           </section>
         </div>
@@ -485,9 +455,7 @@ export default function DutyRosterPage() {
           <div style={sectionTopStyle}>
             <div>
               <h3 style={sectionTitleStyle}>Duty Roster List</h3>
-              <p style={smallTextStyle}>
-                Showing all assigned duty records. Search by teacher, ID, or week.
-              </p>
+              <p style={smallTextStyle}>Search by teacher, ID, or week.</p>
             </div>
 
             <input
@@ -505,7 +473,6 @@ export default function DutyRosterPage() {
                   <th style={thStyle}>Teacher</th>
                   <th style={thStyle}>Week Start</th>
                   <th style={thStyle}>Week End</th>
-                  <th style={thStyle}>Note</th>
                   <th style={thStyle}>Action</th>
                 </tr>
               </thead>
@@ -513,7 +480,7 @@ export default function DutyRosterPage() {
               <tbody>
                 {filteredRoster.length === 0 ? (
                   <tr>
-                    <td style={tdStyle} colSpan={5}>
+                    <td style={tdStyle} colSpan={4}>
                       No duty roster records found.
                     </td>
                   </tr>
@@ -526,7 +493,6 @@ export default function DutyRosterPage() {
                       </td>
                       <td style={tdStyle}>{formatDate(row.week_start_date)}</td>
                       <td style={tdStyle}>{formatDate(row.week_end_date)}</td>
-                      <td style={tdStyle}>{String(row.note || "-")}</td>
                       <td style={tdStyle}>
                         <button
                           onClick={() => handleDeleteDuty(row)}
@@ -541,44 +507,6 @@ export default function DutyRosterPage() {
                 )}
               </tbody>
             </table>
-          </div>
-
-          <div style={mobileListStyle}>
-            {filteredRoster.length === 0 ? (
-              <p style={{ margin: 0, color: COLORS.muted, fontSize: "13px" }}>
-                No duty roster records found.
-              </p>
-            ) : (
-              filteredRoster.map((row) => (
-                <div key={String(row.id)} style={mobileCardStyle}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: "10px" }}>
-                    <div>
-                      <strong>{String(row.teacher_name || "Teacher")}</strong>
-                      <div style={tinyMutedStyle}>{String(row.teacher_id || "-")}</div>
-                    </div>
-
-                    <button
-                      onClick={() => handleDeleteDuty(row)}
-                      disabled={actionLoading}
-                      style={deleteButtonStyle}
-                    >
-                      Delete
-                    </button>
-                  </div>
-
-                  <div style={mobileMiniGridStyle}>
-                    <MiniCard label="Start" value={formatDate(row.week_start_date)} />
-                    <MiniCard label="End" value={formatDate(row.week_end_date)} />
-                  </div>
-
-                  {row.note && (
-                    <p style={{ margin: "8px 0 0", color: COLORS.muted, fontSize: "12px" }}>
-                      {String(row.note)}
-                    </p>
-                  )}
-                </div>
-              ))
-            )}
           </div>
         </section>
       </div>
@@ -620,30 +548,19 @@ function MessageBox({
   );
 }
 
-function MiniCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div
-      style={{
-        border: `1px solid ${COLORS.border}`,
-        borderRadius: "10px",
-        padding: "8px",
-        background: "#fff",
-      }}
-    >
-      <p style={{ margin: 0, color: COLORS.muted, fontSize: "10px" }}>{label}</p>
-      <p style={{ margin: "4px 0 0", fontWeight: 800, fontSize: "12px" }}>{value}</p>
-    </div>
-  );
-}
+const pageStyle: React.CSSProperties = {
+  minHeight: "100vh",
+  background: COLORS.bg,
+  fontFamily: "Arial, sans-serif",
+  color: COLORS.text,
+  padding: "12px",
+};
 
 const loadingPageStyle: React.CSSProperties = {
-  minHeight: "100vh",
+  ...pageStyle,
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  background: COLORS.bg,
-  fontFamily: "Arial, sans-serif",
-  padding: "20px",
 };
 
 const loadingCardStyle: React.CSSProperties = {
@@ -670,6 +587,7 @@ const headerFlexStyle: React.CSSProperties = {
   justifyContent: "space-between",
   gap: "10px",
   alignItems: "flex-start",
+  flexWrap: "wrap",
 };
 
 const eyebrowStyle: React.CSSProperties = {
@@ -822,7 +740,7 @@ const tableWrapStyle: React.CSSProperties = {
 const tableStyle: React.CSSProperties = {
   width: "100%",
   borderCollapse: "collapse",
-  minWidth: "760px",
+  minWidth: "680px",
 };
 
 const thStyle: React.CSSProperties = {
@@ -856,23 +774,4 @@ const deleteButtonStyle: React.CSSProperties = {
   fontWeight: 900,
   fontSize: "12px",
   cursor: "pointer",
-};
-
-const mobileListStyle: React.CSSProperties = {
-  display: "none",
-  gap: "8px",
-};
-
-const mobileCardStyle: React.CSSProperties = {
-  border: `1px solid ${COLORS.border}`,
-  borderRadius: "12px",
-  padding: "10px",
-  background: "#fff",
-};
-
-const mobileMiniGridStyle: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-  gap: "8px",
-  marginTop: "8px",
 };
