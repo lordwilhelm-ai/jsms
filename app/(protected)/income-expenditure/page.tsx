@@ -34,14 +34,26 @@ const EXPENSE_CATEGORIES = ["Salary", "TNT", "Hardware", "Other Expenses"];
 
 function getRole(row: AnyRow | null) {
   const raw = String(row?.role || "").trim().toLowerCase();
-  if (raw === "owner" || raw === "admin" || raw === "headmaster" || raw === "super_admin" || raw === "superadmin") {
+  if (
+    raw === "owner" ||
+    raw === "admin" ||
+    raw === "headmaster" ||
+    raw === "super_admin" ||
+    raw === "superadmin"
+  ) {
     return raw;
   }
   return "teacher";
 }
 
 function isAdminRole(role: string) {
-  return role === "owner" || role === "admin" || role === "headmaster" || role === "super_admin" || role === "superadmin";
+  return (
+    role === "owner" ||
+    role === "admin" ||
+    role === "headmaster" ||
+    role === "super_admin" ||
+    role === "superadmin"
+  );
 }
 
 function numberValue(value: unknown) {
@@ -81,12 +93,11 @@ function endOfWeekSunday(date: Date) {
   return end;
 }
 
-function startOfMonth(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
-}
-
-function endOfMonth(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
+function lastMonthSameDay(date: Date) {
+  const copy = new Date(date);
+  copy.setMonth(copy.getMonth() - 1);
+  copy.setHours(0, 0, 0, 0);
+  return copy;
 }
 
 function startOfYear(date: Date) {
@@ -122,8 +133,8 @@ function getDateRange(mode: ReportMode, settings: AnyRow | null) {
 
   if (mode === "month") {
     return {
-      start: toIsoDate(startOfMonth(now)),
-      end: toIsoDate(endOfMonth(now)),
+      start: toIsoDate(lastMonthSameDay(now)),
+      end: toIsoDate(now),
     };
   }
 
@@ -135,14 +146,14 @@ function getDateRange(mode: ReportMode, settings: AnyRow | null) {
           "term_start_date",
           "current_term_start",
           "term_start",
-        ]) || toIsoDate(startOfMonth(now)),
+        ]) || toIsoDate(startOfWeekMonday(now)),
       end:
         getSettingDate(settings, [
           "current_term_end_date",
           "term_end_date",
           "current_term_end",
           "term_end",
-        ]) || toIsoDate(endOfMonth(now)),
+        ]) || toIsoDate(endOfWeekSunday(now)),
     };
   }
 
@@ -180,7 +191,6 @@ export default function IncomeExpenditurePage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-
   const [activeTab, setActiveTab] = useState<ActiveTab>("dashboard");
 
   const [adminRow, setAdminRow] = useState<AnyRow | null>(null);
@@ -216,9 +226,9 @@ export default function IncomeExpenditurePage() {
   const [openingBank, setOpeningBank] = useState("0");
   const [openingCash, setOpeningCash] = useState("0");
 
-  const [reportMode, setReportMode] = useState<ReportMode>("today");
-  const [reportStart, setReportStart] = useState(toIsoDate(new Date()));
-  const [reportEnd, setReportEnd] = useState(toIsoDate(new Date()));
+  const [reportMode, setReportMode] = useState<ReportMode>("term");
+  const [reportStart, setReportStart] = useState("");
+  const [reportEnd, setReportEnd] = useState("");
   const [search, setSearch] = useState("");
 
   const [message, setMessage] = useState("");
@@ -253,8 +263,15 @@ export default function IncomeExpenditurePage() {
           supabase.from("teachers").select("*"),
           supabase.from("school_settings").select("*").limit(1).maybeSingle(),
           supabase.from("finance_settings").select("*").limit(1).maybeSingle(),
-          supabase.from("finance_transactions").select("*").order("transaction_date", { ascending: false }),
-          supabase.from("finance_items").select("*").order("category", { ascending: true }).order("item_name", { ascending: true }),
+          supabase
+            .from("finance_transactions")
+            .select("*")
+            .order("transaction_date", { ascending: false }),
+          supabase
+            .from("finance_items")
+            .select("*")
+            .order("category", { ascending: true })
+            .order("item_name", { ascending: true }),
           supabase.from("fee_payments").select("*").order("payment_date", { ascending: false }),
           supabase.from("book_profit_summary").select("*").limit(1).maybeSingle(),
           supabase.from("uniform_profit_summary").select("*").limit(1).maybeSingle(),
@@ -263,6 +280,13 @@ export default function IncomeExpenditurePage() {
         if (!active) return;
 
         if (teachersRes.error) throw teachersRes.error;
+        if (schoolSettingsRes.error) throw schoolSettingsRes.error;
+        if (financeSettingsRes.error) throw financeSettingsRes.error;
+        if (transactionsRes.error) throw transactionsRes.error;
+        if (itemsRes.error) throw itemsRes.error;
+        if (feesRes.error) throw feesRes.error;
+        if (booksRes.error) throw booksRes.error;
+        if (uniformsRes.error) throw uniformsRes.error;
 
         const allUsers = teachersRes.data || [];
         const matchedUser =
@@ -289,21 +313,12 @@ export default function IncomeExpenditurePage() {
           return;
         }
 
-        if (schoolSettingsRes.error) throw schoolSettingsRes.error;
-        if (financeSettingsRes.error) throw financeSettingsRes.error;
-        if (transactionsRes.error) throw transactionsRes.error;
-        if (itemsRes.error) throw itemsRes.error;
-        if (feesRes.error) throw feesRes.error;
-        if (booksRes.error) throw booksRes.error;
-        if (uniformsRes.error) throw uniformsRes.error;
-
+        const settings = schoolSettingsRes.data || null;
         const financeSetting = financeSettingsRes.data || {
           opening_bank_balance: 0,
           opening_cash_balance: 0,
         };
-
-        const settings = schoolSettingsRes.data || null;
-        const range = getDateRange("today", settings);
+        const range = getDateRange("term", settings);
 
         setAdminRow(finalUser);
         setSettingsRow(settings);
@@ -337,8 +352,15 @@ export default function IncomeExpenditurePage() {
     const [financeSettingsRes, transactionsRes, itemsRes, feesRes, booksRes, uniformsRes] =
       await Promise.all([
         supabase.from("finance_settings").select("*").limit(1).maybeSingle(),
-        supabase.from("finance_transactions").select("*").order("transaction_date", { ascending: false }),
-        supabase.from("finance_items").select("*").order("category", { ascending: true }).order("item_name", { ascending: true }),
+        supabase
+          .from("finance_transactions")
+          .select("*")
+          .order("transaction_date", { ascending: false }),
+        supabase
+          .from("finance_items")
+          .select("*")
+          .order("category", { ascending: true })
+          .order("item_name", { ascending: true }),
         supabase.from("fee_payments").select("*").order("payment_date", { ascending: false }),
         supabase.from("book_profit_summary").select("*").limit(1).maybeSingle(),
         supabase.from("uniform_profit_summary").select("*").limit(1).maybeSingle(),
@@ -372,10 +394,6 @@ export default function IncomeExpenditurePage() {
     );
   }, [feePayments, academicYear, currentTerm]);
 
-  const reportRange = useMemo(() => {
-    return { start: reportStart, end: reportEnd };
-  }, [reportStart, reportEnd]);
-
   const schoolFeesIncome = useMemo(() => {
     return currentTermFees.reduce((sum, row) => sum + numberValue(row.amount_paid), 0);
   }, [currentTermFees]);
@@ -391,13 +409,13 @@ export default function IncomeExpenditurePage() {
     return financeItems.filter((item) => String(item.type || "") === "expense");
   }, [financeItems]);
 
-  const expenseItemsForCategory = useMemo(() => {
-    return expenseItems.filter((item) => String(item.category || "") === expenseCategory);
-  }, [expenseItems, expenseCategory]);
-
   const incomeItemsForCategory = useMemo(() => {
     return incomeItems.filter((item) => String(item.category || "") === incomeCategory);
   }, [incomeItems, incomeCategory]);
+
+  const expenseItemsForCategory = useMemo(() => {
+    return expenseItems.filter((item) => String(item.category || "") === expenseCategory);
+  }, [expenseItems, expenseCategory]);
 
   useEffect(() => {
     const first = incomeItemsForCategory[0]?.item_name;
@@ -458,10 +476,7 @@ export default function IncomeExpenditurePage() {
     const currentBank = openingBankBalance + bankIncome - bankExpense + cashToBank - bankToCash;
 
     const totalAvailable = currentCash + currentBank;
-
-    const totalIncome =
-      schoolFeesIncome + manualIncomeTotal + bookProfit + uniformProfit;
-
+    const totalIncome = schoolFeesIncome + manualIncomeTotal + bookProfit + uniformProfit;
     const netBalance = totalIncome - expenseTotal;
 
     return {
@@ -481,6 +496,10 @@ export default function IncomeExpenditurePage() {
       bankToCash,
     };
   }, [financeSettings, transactions, schoolFeesIncome, bookProfit, uniformProfit]);
+
+  const reportRange = useMemo(() => {
+    return { start: reportStart, end: reportEnd };
+  }, [reportStart, reportEnd]);
 
   const reportTransactions = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -1202,7 +1221,7 @@ export default function IncomeExpenditurePage() {
                     <option value="today">Today</option>
                     <option value="week">This Week</option>
                     <option value="month">This Month</option>
-                    <option value="term">Current Term</option>
+                    <option value="term">Term</option>
                     <option value="year">Academic Year</option>
                     <option value="custom">Custom Date Range</option>
                   </select>
@@ -1267,11 +1286,7 @@ export default function IncomeExpenditurePage() {
 
               <div style={{ height: "12px" }} />
 
-              <TransactionsTable
-                rows={reportTransactions}
-                onDelete={handleDeleteTransaction}
-                saving={saving}
-              />
+              <TransactionsTable rows={reportTransactions} onDelete={handleDeleteTransaction} saving={saving} />
             </section>
           </>
         )}
@@ -1488,7 +1503,9 @@ function TransactionsTable({
             <th style={thStyle}>Amount</th>
             <th style={thStyle}>Location / Transfer</th>
             <th style={thStyle}>Description</th>
-            <th style={thStyle} className="no-print">Action</th>
+            <th style={thStyle} className="no-print">
+              Action
+            </th>
           </tr>
         </thead>
 
@@ -1510,11 +1527,7 @@ function TransactionsTable({
                 <td style={tdStyle}>{location}</td>
                 <td style={tdStyle}>{String(row.description || "-")}</td>
                 <td style={tdStyle} className="no-print">
-                  <button
-                    onClick={() => onDelete(row)}
-                    disabled={saving}
-                    style={deleteButtonStyle}
-                  >
+                  <button onClick={() => onDelete(row)} disabled={saving} style={deleteButtonStyle}>
                     Delete
                   </button>
                 </td>
