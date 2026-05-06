@@ -34,15 +34,16 @@ function getStudentName(row: StudentRow) {
   const first = String(row.first_name || "").trim();
   const other = String(row.other_name || "").trim();
   const last = String(row.last_name || "").trim();
+
   return `${first} ${other} ${last}`.replace(/\s+/g, " ").trim();
 }
 
 function getStudentIdValue(row: StudentRow) {
-  return String(row.student_id || row.studentId || row.id || "").trim();
+  return String(row.student_id || row.studentId || "").trim();
 }
 
 function getClassName(row: Record<string, any>) {
-  return String(row.class_name || row.className || "").trim();
+  return String(row.class_name || row.className || row.name || "").trim();
 }
 
 function normalizePhone(value: string) {
@@ -51,6 +52,7 @@ function normalizePhone(value: string) {
 
 function calcAge(dateOfBirth: string) {
   if (!dateOfBirth) return "";
+
   const dob = new Date(`${dateOfBirth}T00:00:00`);
   if (Number.isNaN(dob.getTime())) return "";
 
@@ -82,20 +84,35 @@ function getEmergencyContactFromStayWith(params: {
   return "";
 }
 
-function makeStudentId(existingRows: StudentRow[]) {
-  let newId = "";
-  let duplicate = true;
+const emptyForm = {
+  fullName: "",
+  studentId: "",
+  gender: "",
+  dateOfBirth: "",
+  age: "",
+  className: "",
 
-  while (duplicate) {
-    const randomNumber = Math.floor(100000 + Math.random() * 900000);
-    newId = `JVS${randomNumber}`;
-    duplicate = existingRows.some(
-      (row) => getStudentIdValue(row).toLowerCase() === newId.toLowerCase()
-    );
-  }
+  fatherName: "",
+  fatherPhone: "",
+  fatherAddress: "",
 
-  return newId;
-}
+  motherName: "",
+  motherPhone: "",
+  motherAddress: "",
+
+  staysWith: "Both parents",
+
+  guardianName: "",
+  guardianPhone: "",
+  guardianAddress: "",
+
+  emergencyContact: "",
+
+  healthCondition: "",
+  disabilitySupport: "",
+  healthNote: "",
+  status: "active",
+};
 
 export default function SDSAdminPage() {
   const router = useRouter();
@@ -106,43 +123,15 @@ export default function SDSAdminPage() {
   const [settingsRow, setSettingsRow] = useState<SettingsRow | null>(null);
 
   const [loading, setLoading] = useState(true);
-
   const [classFilter, setClassFilter] = useState("All");
   const [search, setSearch] = useState("");
 
-  const [showAddModal, setShowAddModal] = useState(false);
+  const [showStudentModal, setShowStudentModal] = useState(false);
+  const [editingStudentId, setEditingStudentId] = useState("");
   const [savingStudent, setSavingStudent] = useState(false);
   const [message, setMessage] = useState("");
 
-  const [form, setForm] = useState({
-    fullName: "",
-    studentId: "",
-    gender: "",
-    dateOfBirth: "",
-    age: "",
-    className: "",
-
-    fatherName: "",
-    fatherPhone: "",
-    fatherAddress: "",
-
-    motherName: "",
-    motherPhone: "",
-    motherAddress: "",
-
-    staysWith: "Both parents",
-
-    guardianName: "",
-    guardianPhone: "",
-    guardianAddress: "",
-
-    emergencyContact: "",
-
-    healthCondition: "",
-    disabilitySupport: "",
-    healthNote: "",
-    status: "active",
-  });
+  const [form, setForm] = useState(emptyForm);
 
   useEffect(() => {
     let active = true;
@@ -187,9 +176,7 @@ export default function SDSAdminPage() {
         return;
       }
 
-      const role = getRole(userRow);
-
-      if (role === "teacher") {
+      if (getRole(userRow) === "teacher") {
         router.replace("/sds/teacher");
         return;
       }
@@ -197,14 +184,6 @@ export default function SDSAdminPage() {
       setStudents(studentsRes.data || []);
       setClasses(classesRes.data || []);
       setSettingsRow(settingsRes.data || null);
-
-      if (classesRes.data && classesRes.data.length > 0) {
-        const firstClass = getClassName(classesRes.data[0]);
-        setForm((prev) => ({
-          ...prev,
-          className: prev.className || firstClass,
-        }));
-      }
 
       setCheckingUser(false);
       setLoading(false);
@@ -270,44 +249,56 @@ export default function SDSAdminPage() {
 
   function openAddStudentModal() {
     setMessage("");
-    const generatedId = makeStudentId(students);
+    setEditingStudentId("");
 
-    setForm((prev) => ({
-      ...prev,
-      fullName: "",
-      studentId: generatedId,
-      gender: "",
-      dateOfBirth: "",
-      age: "",
-      className: prev.className || classOptions[0] || "",
-      fatherName: "",
-      fatherPhone: "",
-      fatherAddress: "",
-      motherName: "",
-      motherPhone: "",
-      motherAddress: "",
-      staysWith: "Both parents",
-      guardianName: "",
-      guardianPhone: "",
-      guardianAddress: "",
-      emergencyContact: "",
-      healthCondition: "",
-      disabilitySupport: "",
-      healthNote: "",
-      status: "active",
-    }));
+    setForm({
+      ...emptyForm,
+      className: classOptions[0] || "",
+    });
 
-    setShowAddModal(true);
+    setShowStudentModal(true);
   }
 
-  async function handleAddStudent() {
+  function openEditStudentModal(student: StudentRow) {
+    setMessage("");
+    setEditingStudentId(String(student.id || ""));
+
+    setForm({
+      fullName: getStudentName(student),
+      studentId: getStudentIdValue(student),
+      gender: String(student.gender || ""),
+      dateOfBirth: String(student.date_of_birth || ""),
+      age: String(student.age || ""),
+      className: getClassName(student),
+
+      fatherName: String(student.father_name || ""),
+      fatherPhone: String(student.father_phone || ""),
+      fatherAddress: String(student.father_address || ""),
+
+      motherName: String(student.mother_name || ""),
+      motherPhone: String(student.mother_phone || ""),
+      motherAddress: String(student.mother_address || ""),
+
+      staysWith: String(student.stays_with || "Both parents"),
+
+      guardianName: String(student.guardian_name || ""),
+      guardianPhone: String(student.guardian_phone || ""),
+      guardianAddress: String(student.guardian_address || ""),
+
+      emergencyContact: String(student.emergency_contact || ""),
+
+      healthCondition: String(student.health_condition || ""),
+      disabilitySupport: String(student.disability_support || ""),
+      healthNote: String(student.health_note || ""),
+      status: String(student.status || "active"),
+    });
+
+    setShowStudentModal(true);
+  }
+
+  async function handleSaveStudent() {
     if (!form.fullName.trim()) {
       setMessage("Error: Full name is required.");
-      return;
-    }
-
-    if (!form.studentId.trim()) {
-      setMessage("Error: Student ID is required.");
       return;
     }
 
@@ -322,7 +313,7 @@ export default function SDSAdminPage() {
 
       const payload = {
         full_name: form.fullName.trim(),
-        student_id: form.studentId.trim(),
+        student_id: form.studentId.trim() || null,
         gender: form.gender || null,
         date_of_birth: form.dateOfBirth || null,
         age: form.age ? Number(form.age) : null,
@@ -344,27 +335,44 @@ export default function SDSAdminPage() {
         status: form.status || "active",
       };
 
-      const { data, error } = await supabase
-        .from("students")
-        .insert([payload])
-        .select()
-        .single();
+      if (editingStudentId) {
+        const { data, error } = await supabase
+          .from("students")
+          .update(payload)
+          .eq("id", editingStudentId)
+          .select()
+          .single();
 
-      if (error) {
-        throw error;
+        if (error) throw error;
+
+        setStudents((prev) =>
+          prev
+            .map((row) => (row.id === editingStudentId ? data : row))
+            .sort((a, b) => getStudentName(a).localeCompare(getStudentName(b)))
+        );
+
+        setShowStudentModal(false);
+        alert("Student details updated successfully.");
+      } else {
+        const { data, error } = await supabase
+          .from("students")
+          .insert([payload])
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        setStudents((prev) =>
+          [...prev, data].sort((a, b) => getStudentName(a).localeCompare(getStudentName(b)))
+        );
+
+        setShowStudentModal(false);
+        alert("Student added successfully.");
       }
-
-      setStudents((prev) =>
-        [...prev, data].sort((a, b) => getStudentName(a).localeCompare(getStudentName(b)))
-      );
-
-      setShowAddModal(false);
-      setMessage("");
-      alert("Student added successfully.");
     } catch (error) {
       console.error(error);
       setMessage(
-        error instanceof Error ? `Error: ${error.message}` : "Error: Failed to add student."
+        error instanceof Error ? `Error: ${error.message}` : "Error: Failed to save student."
       );
     } finally {
       setSavingStudent(false);
@@ -492,7 +500,7 @@ export default function SDSAdminPage() {
                   <th style={thStyle}>Gender</th>
                   <th style={thStyle}>Age</th>
                   <th style={thStyle}>Status</th>
-                  <th style={thStyle}>Open</th>
+                  <th style={thStyle}>Action</th>
                 </tr>
               </thead>
 
@@ -500,18 +508,19 @@ export default function SDSAdminPage() {
                 {filteredStudents.map((student) => (
                   <tr key={student.id}>
                     <td style={tdStyle}>{getStudentName(student)}</td>
-                    <td style={tdStyle}>{getStudentIdValue(student)}</td>
-                    <td style={tdStyle}>{getClassName(student)}</td>
+                    <td style={tdStyle}>{getStudentIdValue(student) || "-"}</td>
+                    <td style={tdStyle}>{getClassName(student) || "-"}</td>
                     <td style={tdStyle}>{String(student.gender || "-")}</td>
                     <td style={tdStyle}>{String(student.age || "-")}</td>
                     <td style={tdStyle}>{String(student.status || "active")}</td>
                     <td style={tdStyle}>
-                      <Link
-                        href={`/sds/admin/students/${student.id}`}
-                        style={openLinkStyle}
+                      <button
+                        type="button"
+                        onClick={() => openEditStudentModal(student)}
+                        style={editButtonStyle}
                       >
-                        Open Profile
-                      </Link>
+                        Edit Details
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -532,31 +541,9 @@ export default function SDSAdminPage() {
         </p>
       </div>
 
-      {showAddModal && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.45)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "18px",
-            zIndex: 1000,
-          }}
-        >
-          <div
-            style={{
-              width: "100%",
-              maxWidth: "980px",
-              maxHeight: "92vh",
-              overflowY: "auto",
-              background: COLORS.white,
-              borderRadius: "24px",
-              padding: "22px",
-              boxShadow: "0 18px 40px rgba(0,0,0,0.16)",
-            }}
-          >
+      {showStudentModal && (
+        <div style={overlayStyle}>
+          <div style={modalStyle}>
             <div
               style={{
                 display: "flex",
@@ -567,15 +554,17 @@ export default function SDSAdminPage() {
               }}
             >
               <div>
-                <h2 style={{ margin: 0, color: COLORS.secondary }}>Add Student</h2>
+                <h2 style={{ margin: 0, color: COLORS.secondary }}>
+                  {editingStudentId ? "Edit Student Details" : "Add Student"}
+                </h2>
                 <p style={{ margin: "6px 0 0", color: COLORS.muted, fontSize: "13px" }}>
-                  Create the student first. Full profile details and document uploads come on the profile page.
+                  Student ID is optional. The system uses the hidden database ID internally.
                 </p>
               </div>
 
               <button
                 type="button"
-                onClick={() => setShowAddModal(false)}
+                onClick={() => setShowStudentModal(false)}
                 style={closeButtonStyle}
               >
                 Close
@@ -597,7 +586,7 @@ export default function SDSAdminPage() {
                   </div>
 
                   <div>
-                    <label style={labelStyle}>Student ID</label>
+                    <label style={labelStyle}>Student ID Optional</label>
                     <input
                       value={form.studentId}
                       onChange={(e) =>
@@ -854,16 +843,20 @@ export default function SDSAdminPage() {
               <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
                 <button
                   type="button"
-                  onClick={handleAddStudent}
+                  onClick={handleSaveStudent}
                   disabled={savingStudent}
                   style={addButtonStyle}
                 >
-                  {savingStudent ? "Saving..." : "Save Student"}
+                  {savingStudent
+                    ? "Saving..."
+                    : editingStudentId
+                    ? "Save Changes"
+                    : "Save Student"}
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => setShowAddModal(false)}
+                  onClick={() => setShowStudentModal(false)}
                   style={cancelButtonStyle}
                 >
                   Cancel
@@ -963,6 +956,17 @@ const addButtonStyle: React.CSSProperties = {
   cursor: "pointer",
 };
 
+const editButtonStyle: React.CSSProperties = {
+  border: "1px solid #f59e0b",
+  background: "#fff7cc",
+  color: "#92400e",
+  borderRadius: "10px",
+  padding: "9px 12px",
+  fontWeight: 800,
+  fontSize: "13px",
+  cursor: "pointer",
+};
+
 const cancelButtonStyle: React.CSSProperties = {
   border: "1px solid #d1d5db",
   background: "#ffffff",
@@ -985,8 +989,24 @@ const closeButtonStyle: React.CSSProperties = {
   cursor: "pointer",
 };
 
-const openLinkStyle: React.CSSProperties = {
-  textDecoration: "none",
-  color: "#b45309",
-  fontWeight: 800,
+const overlayStyle: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(0,0,0,0.45)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "18px",
+  zIndex: 1000,
+};
+
+const modalStyle: React.CSSProperties = {
+  width: "100%",
+  maxWidth: "980px",
+  maxHeight: "92vh",
+  overflowY: "auto",
+  background: COLORS.white,
+  borderRadius: "24px",
+  padding: "22px",
+  boxShadow: "0 18px 40px rgba(0,0,0,0.16)",
 };
