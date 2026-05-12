@@ -25,6 +25,12 @@ const softwareCards = [
     emoji: "🎓",
   },
   {
+    title: "Admission",
+    description: "Handle new student admissions and enrollment records.",
+    href: "/admission",
+    emoji: "📝",
+  },
+  {
     title: "Feeding",
     description: "Open feeding, attendance, and related records.",
     href: "/feeding",
@@ -41,6 +47,18 @@ const softwareCards = [
     description: "Open fees tracking, payments, and arrears.",
     href: "/fees/admin",
     emoji: "💳",
+  },
+  {
+    title: "Books",
+    description: "Manage book sales, book stock, and student book records.",
+    href: "/books",
+    emoji: "📚",
+  },
+  {
+    title: "Uniforms",
+    description: "Manage uniform sales, sizes, stock, and student uniform records.",
+    href: "/uniforms",
+    emoji: "👕",
   },
   {
     title: "Teacher Attendance",
@@ -108,7 +126,6 @@ function AdminDashboardPageClient() {
         }
       } catch (error) {
         console.error("Dashboard data load error:", error);
-        // If auth error, the ProtectedRoute should handle redirect
       }
     }
 
