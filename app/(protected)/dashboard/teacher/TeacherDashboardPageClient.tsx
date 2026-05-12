@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AnimatePresence, motion } from "framer-motion";
-import { supabase } from "@/lib/supabase";
+import { motion } from "framer-motion";
 import LogoutButton from "@/app/components/LogoutButton";
+import useSchoolSettings from "@/app/components/useSchoolSettings";
+import { supabase } from "@/lib/supabase";
 
 type TeacherInfo = {
   full_name: string;
@@ -15,44 +16,61 @@ type TeacherInfo = {
   phone: string;
 };
 
-const softwareCards = [
+const teacherCards = [
+  {
+    title: "Teacher Attendance",
+    description: "Check in, check out, and view your attendance records.",
+    href: "/teacher-attendance",
+    emoji: "📊",
+  },
+  {
+    title: "Feeding",
+    description: "Record feeding and student attendance.",
+    href: "/feeding/teacher",
+    emoji: "🍽️",
+  },
   {
     title: "Students Database",
-    description: "View student details and records",
+    description: "View student details and records.",
     href: "/sds",
     emoji: "🎓",
   },
   {
-    title: "Feeding",
-    description: "Record feeding and attendance",
-    href: "/feeding",
-    emoji: "🍽️",
-  },
-  {
     title: "Report Card",
-    description: "Upload results and manage reports",
+    description: "Upload results and manage reports.",
     href: "/report-card",
     emoji: "📘",
   },
   {
     title: "Fees",
-    description: "View class fee information",
+    description: "View class fee information.",
     href: "/fees/teacher",
     emoji: "💳",
   },
   {
-    title: "Teacher Attendance",
-    description: "Track and manage teacher attendance records",
-    href: "/teacher-attendance",
-    emoji: "📊",
+    title: "Books",
+    description: "View books given or sold to students in your class.",
+    href: "/books/teacher",
+    emoji: "📚",
+  },
+  {
+    title: "Uniforms",
+    description: "View uniforms given or sold to students in your class.",
+    href: "/uniforms/teacher",
+    emoji: "👕",
   },
 ];
 
-export default function TeacherDashboardPageClient() {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [showAbout, setShowAbout] = useState(false);
+const teacherMenuItems = [
+  { label: "Dashboard", href: "/dashboard/teacher", emoji: "🏠" },
+  { label: "About Me", href: "/about-me", emoji: "👤" },
+  { label: "Change Password", href: "/change-password", emoji: "🔐" },
+];
 
-  const [schoolName, setSchoolName] = useState("School");
+export default function TeacherDashboardPageClient() {
+  const { settings } = useSchoolSettings();
+
+  const [menuOpen, setMenuOpen] = useState(false);
   const [teacherInfo, setTeacherInfo] = useState<TeacherInfo>({
     full_name: "Teacher",
     photo_url: null,
@@ -63,24 +81,13 @@ export default function TeacherDashboardPageClient() {
   });
 
   useEffect(() => {
-    async function loadDashboardData() {
+    async function loadTeacherData() {
       try {
         const {
           data: { session },
         } = await supabase.auth.getSession();
 
         const authUserId = session?.user?.id;
-
-        const { data: settings } = await supabase
-          .from("school_settings")
-          .select("school_name")
-          .limit(1)
-          .single();
-
-        if (settings?.school_name) {
-          setSchoolName(settings.school_name);
-        }
-
         if (!authUserId) return;
 
         const { data: teacher } = await supabase
@@ -101,12 +108,11 @@ export default function TeacherDashboardPageClient() {
           });
         }
       } catch (error) {
-        console.error("Dashboard data load error:", error);
-        // If auth error, the ProtectedRoute should handle redirect
+        console.error("Teacher dashboard data load error:", error);
       }
     }
 
-    loadDashboardData();
+    loadTeacherData();
   }, []);
 
   return (
@@ -119,365 +125,257 @@ export default function TeacherDashboardPageClient() {
     >
       <header
         style={{
-          height: "72px",
-          background: "#ffffff",
-          borderBottom: "1px solid #e5e7eb",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "0 16px",
           position: "sticky",
           top: 0,
-          zIndex: 30,
+          zIndex: 20,
+          background: "#ffffff",
+          borderBottom: "1px solid #e5e7eb",
+          padding: "18px 22px",
         }}
       >
         <div
           style={{
-            minWidth: 0,
+            maxWidth: "1100px",
+            margin: "0 auto",
             display: "flex",
             alignItems: "center",
-            gap: "12px",
+            justifyContent: "space-between",
+            gap: "16px",
           }}
         >
           <div
             style={{
-              width: "42px",
-              height: "42px",
-              borderRadius: "14px",
-              overflow: "hidden",
-              background: "#eef7fd",
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
+              gap: "14px",
+              minWidth: 0,
             }}
           >
-            {teacherInfo.photo_url ? (
-              <img
-                src={teacherInfo.photo_url}
-                alt={teacherInfo.full_name}
+            <div
+              style={{
+                width: "44px",
+                height: "44px",
+                borderRadius: "16px",
+                background: "#eef2ff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                overflow: "hidden",
+                flexShrink: 0,
+              }}
+            >
+              {teacherInfo.photo_url ? (
+                <img
+                  src={teacherInfo.photo_url}
+                  alt={teacherInfo.full_name}
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                  }}
+                />
+              ) : settings.logo_url ? (
+                <img
+                  src={settings.logo_url}
+                  alt={settings.school_name || "School logo"}
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                  }}
+                />
+              ) : (
+                <span style={{ fontSize: "20px" }}>👤</span>
+              )}
+            </div>
+
+            <div style={{ minWidth: 0 }}>
+              <h1
                 style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
+                  margin: 0,
+                  fontSize: "20px",
+                  fontWeight: 900,
+                  color: "#111827",
+                  letterSpacing: "1px",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  maxWidth: "70vw",
                 }}
-              />
-            ) : (
-              <span style={{ fontSize: "18px" }}>👤</span>
-            )}
+              >
+                {settings.school_name || "JEFSEM VISION SCHOOL"}
+              </h1>
+
+              <p
+                style={{
+                  margin: "6px 0 0",
+                  fontSize: "12px",
+                  color: "#6b7280",
+                  fontWeight: 600,
+                }}
+              >
+                Teacher Dashboard
+              </p>
+            </div>
           </div>
 
-          <div style={{ minWidth: 0 }}>
-            <h1
-              style={{
-                margin: 0,
-                fontSize: "17px",
-                fontWeight: 800,
-                color: "#111827",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              {schoolName}
-            </h1>
-            <p
-              style={{
-                margin: "3px 0 0",
-                fontSize: "11px",
-                color: "#6b7280",
-              }}
-            >
-              Teacher Dashboard
-            </p>
-          </div>
+          <button
+            type="button"
+            onClick={() => setMenuOpen((prev) => !prev)}
+            style={{
+              border: "none",
+              background: "transparent",
+              fontSize: "30px",
+              cursor: "pointer",
+              color: "#111827",
+              lineHeight: 1,
+              padding: "8px",
+            }}
+            aria-label="Open menu"
+          >
+            ☰
+          </button>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setMenuOpen(true)}
-          aria-label="Open menu"
-          style={{
-            border: "none",
-            background: "transparent",
-            padding: 0,
-            width: "40px",
-            height: "40px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            flexShrink: 0,
-          }}
-        >
-          <div style={{ display: "grid", gap: "4px" }}>
-            <span
-              style={{
-                display: "block",
-                width: "23px",
-                height: "2.5px",
-                background: "#111827",
-                borderRadius: "999px",
-              }}
-            />
-            <span
-              style={{
-                display: "block",
-                width: "23px",
-                height: "2.5px",
-                background: "#111827",
-                borderRadius: "999px",
-              }}
-            />
-            <span
-              style={{
-                display: "block",
-                width: "23px",
-                height: "2.5px",
-                background: "#111827",
-                borderRadius: "999px",
-              }}
-            />
-          </div>
-        </button>
-      </header>
-
-      <AnimatePresence>
         {menuOpen && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              onClick={() => {
-                setMenuOpen(false);
-                setShowAbout(false);
-              }}
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
+            style={{
+              maxWidth: "1100px",
+              margin: "16px auto 0",
+              background: "#ffffff",
+              border: "1px solid #e5e7eb",
+              borderRadius: "20px",
+              padding: "12px",
+              boxShadow: "0 12px 30px rgba(0,0,0,0.08)",
+            }}
+          >
+            <div
               style={{
-                position: "fixed",
-                inset: 0,
-                background: "rgba(0,0,0,0.28)",
-                zIndex: 40,
-              }}
-            />
-
-            <motion.aside
-              initial={{ x: "100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "100%" }}
-              transition={{ type: "tween", duration: 0.22 }}
-              style={{
-                position: "fixed",
-                top: 0,
-                right: 0,
-                width: "76%",
-                maxWidth: "285px",
-                height: "100vh",
-                background: "#ffffff",
-                zIndex: 50,
-                boxShadow: "-10px 0 30px rgba(0,0,0,0.16)",
-                display: "flex",
-                flexDirection: "column",
+                display: "grid",
+                gap: "8px",
               }}
             >
-              <div
-                style={{
-                  height: "72px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "0 16px",
-                  borderBottom: "1px solid #e5e7eb",
-                }}
-              >
-                <h2
+              {teacherMenuItems.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMenuOpen(false)}
                   style={{
-                    margin: 0,
-                    fontSize: "15px",
-                    color: "#111827",
-                    fontWeight: 700,
-                  }}
-                >
-                  Menu
-                </h2>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    setShowAbout(false);
-                  }}
-                  aria-label="Close menu"
-                  style={{
-                    border: "none",
-                    background: "transparent",
-                    fontSize: "26px",
-                    lineHeight: 1,
-                    cursor: "pointer",
+                    textDecoration: "none",
                     color: "#111827",
                   }}
                 >
-                  ×
-                </button>
-              </div>
-
-              <div
-                style={{
-                  padding: "14px",
-                  display: "flex",
-                  flexDirection: "column",
-                  height: "100%",
-                }}
-              >
-                <div style={{ display: "grid", gap: "8px" }}>
-                  <LinkItem
-                    href="/dashboard/teacher"
-                    label="Dashboard"
-                    onClick={() => setMenuOpen(false)}
-                  />
-                  <LinkItem
-                    href="/students"
-                    label="Student Management"
-                    onClick={() => setMenuOpen(false)}
-                  />
-                  <LinkItem
-                    href="/feeding"
-                    label="Feeding"
-                    onClick={() => setMenuOpen(false)}
-                  />
-                  <LinkItem
-                    href="/report-card"
-                    label="Report Card"
-                    onClick={() => setMenuOpen(false)}
-                  />
-                  <LinkItem
-                    href="/fees/teacher"
-                    label="Fees"
-                    onClick={() => setMenuOpen(false)}
-                  />
-
-                  <button
-                    type="button"
-                    onClick={() => setShowAbout((prev) => !prev)}
-                    style={menuButtonStyle}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      padding: "12px 14px",
+                      borderRadius: "14px",
+                      background: "#f9fafb",
+                      fontSize: "14px",
+                      fontWeight: 800,
+                    }}
                   >
-                    About Me
-                  </button>
-
-                  <AnimatePresence>
-                    {showAbout && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        transition={{ duration: 0.2 }}
-                        style={{ overflow: "hidden" }}
-                      >
-                        <div
-                          style={{
-                            background: "#f8fafc",
-                            border: "1px solid #e5e7eb",
-                            borderRadius: "14px",
-                            padding: "12px",
-                            display: "grid",
-                            gap: "8px",
-                            marginTop: "4px",
-                          }}
-                        >
-                          <InfoRow label="Full Name" value={teacherInfo.full_name} />
-                          <InfoRow label="Teacher ID" value={teacherInfo.teacher_id} />
-                          <InfoRow label="Username" value={teacherInfo.username} />
-                          <InfoRow label="Phone" value={teacherInfo.phone} />
-                          <InfoRow label="Role" value={teacherInfo.role} />
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-
-                <div style={{ marginTop: "auto", paddingTop: "18px" }}>
-                  <div style={{ display: "grid", gap: "8px" }}>
-                    <LinkItem
-                      href="/change-password"
-                      label="Change Password"
-                      onClick={() => setMenuOpen(false)}
-                    />
-
-                    <LogoutButton
-                      onDone={() => {
-                        setMenuOpen(false);
-                        setShowAbout(false);
-                      }}
-                    />
+                    <span>{item.emoji}</span>
+                    <span>{item.label}</span>
                   </div>
-                </div>
-              </div>
-            </motion.aside>
-          </>
-        )}
-      </AnimatePresence>
+                </Link>
+              ))}
 
-      <div
+              <LogoutButton
+                style={{
+                  width: "100%",
+                  background: "#b91c1c",
+                  borderRadius: "14px",
+                  padding: "12px 14px",
+                  fontSize: "14px",
+                  fontWeight: 800,
+                  marginTop: "4px",
+                }}
+              />
+            </div>
+          </motion.div>
+        )}
+      </header>
+
+      <section
         style={{
-          maxWidth: "760px",
+          maxWidth: "1100px",
           margin: "0 auto",
-          padding: "22px 16px 30px",
+          padding: "28px 18px 50px",
         }}
       >
         <motion.div
-          initial={{ opacity: 0, y: 18 }}
+          initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
+          transition={{ duration: 0.25 }}
           style={{
             background: "#ffffff",
-            borderRadius: "30px",
-            padding: "28px 24px",
-            boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
-            marginBottom: "24px",
+            borderRadius: "28px",
+            padding: "22px",
+            marginBottom: "22px",
+            boxShadow: "0 12px 30px rgba(0,0,0,0.06)",
+            border: "1px solid #e5e7eb",
           }}
         >
-          <h2
-            style={{
-              margin: 0,
-              fontSize: "28px",
-              lineHeight: 1.2,
-              fontWeight: 800,
-              color: "#111827",
-            }}
-          >
-            Hello,{" "}
-            <span style={{ color: "#1d9bf0" }}>
-              {teacherInfo.full_name}
-            </span>
-          </h2>
-
           <p
             style={{
-              margin: "14px 0 0",
-              fontSize: "16px",
-              lineHeight: 1.55,
+              margin: 0,
+              fontSize: "12px",
               color: "#6b7280",
-              maxWidth: "420px",
+              textTransform: "uppercase",
+              letterSpacing: "1px",
+              fontWeight: 800,
             }}
           >
-            Welcome back. Choose the software you want to continue to.
+            Welcome
           </p>
+
+          <h2
+            style={{
+              margin: "8px 0 0",
+              fontSize: "24px",
+              color: "#111827",
+              fontWeight: 900,
+              lineHeight: 1.2,
+            }}
+          >
+            {teacherInfo.full_name}
+          </h2>
+
+          {(settings.academic_year || settings.current_term) && (
+            <p
+              style={{
+                margin: "10px 0 0",
+                fontSize: "13px",
+                color: "#6b7280",
+                fontWeight: 700,
+              }}
+            >
+              {settings.academic_year}
+              {settings.academic_year && settings.current_term ? " • " : ""}
+              {settings.current_term}
+            </p>
+          )}
         </motion.div>
 
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
             gap: "18px",
           }}
         >
-          {softwareCards.map((card, index) => (
+          {teacherCards.map((card, index) => (
             <motion.div
               key={card.title}
               initial={{ opacity: 0, y: 18 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: index * 0.05 }}
+              transition={{ duration: 0.25, delay: index * 0.04 }}
             >
               <Link
                 href={card.href}
@@ -495,9 +393,10 @@ export default function TeacherDashboardPageClient() {
                   style={{
                     background: "#ffffff",
                     borderRadius: "28px",
-                    padding: "22px",
-                    minHeight: "220px",
-                    boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
+                    padding: "24px",
+                    minHeight: "185px",
+                    boxShadow: "0 12px 30px rgba(0,0,0,0.06)",
+                    border: "1px solid #e5e7eb",
                     display: "flex",
                     flexDirection: "column",
                     justifyContent: "space-between",
@@ -506,14 +405,14 @@ export default function TeacherDashboardPageClient() {
                   <div>
                     <div
                       style={{
-                        width: "64px",
-                        height: "64px",
+                        width: "58px",
+                        height: "58px",
                         borderRadius: "18px",
-                        background: "#eef7fd",
+                        background: "#eff6ff",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        fontSize: "28px",
+                        fontSize: "26px",
                         marginBottom: "18px",
                       }}
                     >
@@ -523,10 +422,10 @@ export default function TeacherDashboardPageClient() {
                     <h3
                       style={{
                         margin: 0,
-                        fontSize: "20px",
-                        lineHeight: 1.25,
                         color: "#111827",
-                        fontWeight: 800,
+                        fontSize: "22px",
+                        lineHeight: 1.2,
+                        fontWeight: 900,
                       }}
                     >
                       {card.title}
@@ -534,10 +433,11 @@ export default function TeacherDashboardPageClient() {
 
                     <p
                       style={{
-                        margin: "14px 0 0",
-                        fontSize: "14px",
-                        lineHeight: 1.7,
+                        margin: "12px 0 0",
                         color: "#6b7280",
+                        fontSize: "14px",
+                        lineHeight: 1.6,
+                        fontWeight: 500,
                       }}
                     >
                       {card.description}
@@ -548,77 +448,7 @@ export default function TeacherDashboardPageClient() {
             </motion.div>
           ))}
         </div>
-      </div>
+      </section>
     </main>
   );
 }
-
-function LinkItem({
-  href,
-  label,
-  onClick,
-}: {
-  href: string;
-  label: string;
-  onClick?: () => void;
-}) {
-  return (
-    <Link
-      href={href}
-      onClick={onClick}
-      style={{
-        textDecoration: "none",
-        color: "#111827",
-        background: "#f9fafb",
-        border: "1px solid #e5e7eb",
-        borderRadius: "14px",
-        padding: "11px 13px",
-        fontWeight: 600,
-        fontSize: "12px",
-        lineHeight: 1.35,
-      }}
-    >
-      {label}
-    </Link>
-  );
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p
-        style={{
-          margin: 0,
-          fontSize: "10px",
-          color: "#6b7280",
-          marginBottom: "3px",
-        }}
-      >
-        {label}
-      </p>
-      <p
-        style={{
-          margin: 0,
-          fontSize: "12px",
-          color: "#111827",
-          fontWeight: 600,
-          textTransform: label === "Role" ? "capitalize" : "none",
-        }}
-      >
-        {value || "-"}
-      </p>
-    </div>
-  );
-}
-
-const menuButtonStyle: React.CSSProperties = {
-  border: "1px solid #e5e7eb",
-  background: "#f9fafb",
-  color: "#111827",
-  borderRadius: "14px",
-  padding: "11px 13px",
-  fontWeight: 600,
-  fontSize: "12px",
-  cursor: "pointer",
-  textAlign: "left",
-};
