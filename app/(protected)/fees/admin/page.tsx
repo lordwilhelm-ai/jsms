@@ -4,6 +4,12 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import {
+  getUniversalReceiptSuggestions,
+  searchUniversalReceipt,
+  type UniversalPayment,
+  type UniversalReceiptResult,
+} from "@/lib/universalReceiptSearch";
 
 type AnyRow = Record<string, any>;
 
@@ -25,17 +31,17 @@ const COLORS = {
   text: "#111827",
   muted: "#6b7280",
   border: "#e5e7eb",
-  successBg: "#dcfce7",
-  successText: "#166534",
-  warningBg: "#fef3c7",
-  warningText: "#a16207",
   dangerBg: "#fee2e2",
   dangerText: "#991b1b",
 };
 
 function getRole(row: AnyRow | null) {
   const raw = String(row?.role || "").trim().toLowerCase();
-  if (raw === "owner" || raw === "admin" || raw === "headmaster") return raw;
+
+  if (raw === "owner" || raw === "admin" || raw === "headmaster") {
+    return raw;
+  }
+
   return "teacher";
 }
 
@@ -53,35 +59,78 @@ function numberValue(value: unknown) {
 }
 
 function formatMoney(value: number) {
-  return `GHS ${value.toFixed(2)}`;
+  return `GHS ${Number(value || 0).toFixed(2)}`;
 }
 
-function getPaymentStatus(balance: number, totalPaid: number): "paid" | "part" | "unpaid" {
+function getPaymentStatus(
+  balance: number,
+  totalPaid: number
+): "paid" | "part" | "unpaid" {
   if (balance <= 0) return "paid";
   if (totalPaid > 0) return "part";
   return "unpaid";
 }
 
 function buildReceiptNo(payment: AnyRow) {
-  if (payment.receipt_no) return String(payment.receipt_no);
-  return String(payment.id || "");
+  return String(
+    payment.receipt_no ||
+      payment.receipt_number ||
+      payment.receipt ||
+      payment.reference ||
+      payment.id ||
+      ""
+  );
 }
 
-function calcStudentFinancials(student: AnyRow, classRow: AnyRow | null, payments: AnyRow[]) {
+function getPaymentDate(payment: AnyRow) {
+  return String(payment.payment_date || payment.created_at || "-");
+}
+
+function formatDateTime(value: string) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function calcStudentFinancials(
+  student: AnyRow,
+  classRow: AnyRow | null,
+  payments: AnyRow[]
+) {
   const isNew = Boolean(student.is_new);
+
   let baseFee = isNew
     ? numberValue(classRow?.fee_new)
     : numberValue(classRow?.fee_returning);
 
-  const scholarshipType = String(student.scholarship_type || "none").trim().toLowerCase();
+  const scholarshipType = String(student.scholarship_type || "none")
+    .trim()
+    .toLowerCase();
 
   if (scholarshipType === "full") baseFee = 0;
   if (scholarshipType === "half") baseFee = baseFee / 2;
-  if (scholarshipType === "custom") baseFee = numberValue(student.scholarship_amount);
+
+  if (scholarshipType === "custom") {
+    baseFee = numberValue(student.scholarship_amount);
+  }
 
   const arrears = numberValue(student.arrears);
   const totalOwed = baseFee + arrears;
-  const totalPaid = payments.reduce((sum, row) => sum + numberValue(row.amount_paid), 0);
+
+  const totalPaid = payments.reduce((sum, row) => {
+    return sum + numberValue(row.amount_paid);
+  }, 0);
+
   const balance = totalOwed - totalPaid;
   const paymentStatus = getPaymentStatus(balance, totalPaid);
 
@@ -104,8 +153,14 @@ export default function FeesAdminPage() {
   const [students, setStudents] = useState<AnyRow[]>([]);
   const [payments, setPayments] = useState<AnyRow[]>([]);
 
-  const [searchText, setSearchText] = useState("");
-  const [selectedReceipt, setSelectedReceipt] = useState<AnyRow | null>(null);
+  const [receiptSearch, setReceiptSearch] = useState("");
+  const [receiptSuggestions, setReceiptSuggestions] = useState<
+    UniversalPayment[]
+  >([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [searchingReceipt, setSearchingReceipt] = useState(false);
+  const [universalResult, setUniversalResult] =
+    useState<UniversalReceiptResult | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -122,17 +177,30 @@ export default function FeesAdminPage() {
         return;
       }
 
-      const [teachersRes, settingsRes, classesRes, studentsRes, paymentsRes] = await Promise.all([
+      const [
+        teachersRes,
+        settingsRes,
+        classesRes,
+        studentsRes,
+        paymentsRes,
+      ] = await Promise.all([
         supabase.from("teachers").select("*"),
         supabase.from("school_settings").select("*").limit(1).maybeSingle(),
         supabase.from("classes").select("*"),
         supabase.from("students").select("*"),
-        supabase.from("fee_payments").select("*").order("created_at", { ascending: false }),
+        supabase
+          .from("fee_payments")
+          .select("*")
+          .order("created_at", { ascending: false }),
       ]);
 
       if (!active) return;
 
-      if (teachersRes.error || !teachersRes.data || teachersRes.data.length === 0) {
+      if (
+        teachersRes.error ||
+        !teachersRes.data ||
+        teachersRes.data.length === 0
+      ) {
         router.replace("/");
         return;
       }
@@ -174,24 +242,44 @@ export default function FeesAdminPage() {
     };
   }, [router]);
 
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      const value = receiptSearch.trim();
+
+      if (!value) {
+        setReceiptSuggestions([]);
+        return;
+      }
+
+      const suggestions = await getUniversalReceiptSuggestions(value);
+      setReceiptSuggestions(suggestions);
+      setShowSuggestions(true);
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [receiptSearch]);
+
   const schoolName = String(settingsRow?.school_name || "JEFSEM VISION SCHOOL");
   const motto = String(settingsRow?.motto || "Success in Excellence");
   const academicYear = String(settingsRow?.academic_year || "");
   const currentTerm = String(settingsRow?.current_term || "");
 
   const currentTermPayments = useMemo(() => {
-    return payments.filter(
-      (row) =>
-        String(row.academic_year || "") === academicYear &&
-        String(row.term || "") === currentTerm
-    );
+    return payments.filter((row) => {
+      const paymentYear = String(row.academic_year || "");
+      const paymentTerm = String(row.term || "");
+
+      return paymentYear === academicYear && paymentTerm === currentTerm;
+    });
   }, [payments, academicYear, currentTerm]);
 
   const classMap = useMemo(() => {
     const map = new Map<string, AnyRow>();
+
     classes.forEach((row) => {
       map.set(getClassName(row), row);
     });
+
     return map;
   }, [classes]);
 
@@ -205,11 +293,16 @@ export default function FeesAdminPage() {
         const studentId = getStudentIdValue(student);
         const className = getClassName(student);
         const classRow = classMap.get(className) || null;
-        const studentPayments = currentTermPayments.filter(
-          (row) => String(row.student_id || "") === studentId
-        );
 
-        const finance = calcStudentFinancials(student, classRow, studentPayments);
+        const studentPayments = currentTermPayments.filter((row) => {
+          return String(row.student_id || "") === studentId;
+        });
+
+        const finance = calcStudentFinancials(
+          student,
+          classRow,
+          studentPayments
+        );
 
         return {
           ...student,
@@ -224,15 +317,35 @@ export default function FeesAdminPage() {
   }, [students, classMap, currentTermPayments]);
 
   const summary = useMemo(() => {
-    const totalFeesDue = studentRows.reduce((sum, row) => sum + row.totalOwed, 0);
-    const totalCollected = studentRows.reduce((sum, row) => sum + row.totalPaid, 0);
-    const outstanding = studentRows.reduce((sum, row) => sum + Math.max(row.balance, 0), 0);
+    const totalFeesDue = studentRows.reduce(
+      (sum, row) => sum + row.totalOwed,
+      0
+    );
 
-    const studentsPaid = studentRows.filter((row) => row.paymentStatus === "paid").length;
-    const studentsPart = studentRows.filter((row) => row.paymentStatus === "part").length;
-    const studentsUnpaid = studentRows.filter((row) => row.paymentStatus === "unpaid").length;
+    const totalCollected = studentRows.reduce(
+      (sum, row) => sum + row.totalPaid,
+      0
+    );
+
+    const outstanding = studentRows.reduce(
+      (sum, row) => sum + Math.max(row.balance, 0),
+      0
+    );
+
+    const studentsPaid = studentRows.filter(
+      (row) => row.paymentStatus === "paid"
+    ).length;
+
+    const studentsPart = studentRows.filter(
+      (row) => row.paymentStatus === "part"
+    ).length;
+
+    const studentsUnpaid = studentRows.filter(
+      (row) => row.paymentStatus === "unpaid"
+    ).length;
 
     const todayIso = new Date().toISOString().split("T")[0];
+
     const todaysPaymentsValue = currentTermPayments
       .filter((row) => String(row.payment_date || "").slice(0, 10) === todayIso)
       .reduce((sum, row) => sum + numberValue(row.amount_paid), 0);
@@ -252,8 +365,14 @@ export default function FeesAdminPage() {
   const recentPayments = useMemo(() => {
     return [...currentTermPayments]
       .sort((a, b) => {
-        const aDate = new Date(String(a.created_at || a.payment_date || "")).getTime();
-        const bDate = new Date(String(b.created_at || b.payment_date || "")).getTime();
+        const aDate = new Date(
+          String(a.created_at || a.payment_date || "")
+        ).getTime();
+
+        const bDate = new Date(
+          String(b.created_at || b.payment_date || "")
+        ).getTime();
+
         return bDate - aDate;
       })
       .slice(0, 8);
@@ -277,42 +396,22 @@ export default function FeesAdminPage() {
       .sort((a, b) => a.className.localeCompare(b.className));
   }, [classes]);
 
-  const searchResults = useMemo(() => {
-    const text = searchText.trim().toLowerCase();
-    if (!text) return [];
+  async function handleReceiptSearch(value?: string) {
+    const receiptValue = String(value || receiptSearch).trim();
 
-    return currentTermPayments
-      .filter((row) => buildReceiptNo(row).toLowerCase().includes(text))
-      .sort((a, b) => {
-        const aDate = new Date(String(a.created_at || a.payment_date || "")).getTime();
-        const bDate = new Date(String(b.created_at || b.payment_date || "")).getTime();
-        return bDate - aDate;
-      })
-      .slice(0, 10);
-  }, [searchText, currentTermPayments]);
+    if (!receiptValue) {
+      alert("Enter a receipt number first.");
+      return;
+    }
 
-  const receiptPopupInfo = useMemo(() => {
-    if (!selectedReceipt) return null;
+    setSearchingReceipt(true);
+    setShowSuggestions(false);
 
-    const studentId = String(selectedReceipt.student_id || "");
-    const student = studentRows.find((row) => row.studentId === studentId) || null;
+    const result = await searchUniversalReceipt(receiptValue);
 
-    return {
-      receiptNo: buildReceiptNo(selectedReceipt),
-      studentName: String(selectedReceipt.student_name || "-"),
-      studentId: String(selectedReceipt.student_id || "-"),
-      className: String(selectedReceipt.class_name || "-"),
-      amountPaid: numberValue(selectedReceipt.amount_paid),
-      method: String(selectedReceipt.method || "-"),
-      paymentType: String(selectedReceipt.payment_type || "-"),
-      paymentDate: String(selectedReceipt.payment_date || "-"),
-      recordedBy: String(selectedReceipt.recorded_by || "-"),
-      notes: String(selectedReceipt.notes || "-"),
-      balanceAfter: student ? student.balance : 0,
-      totalPaid: student ? student.totalPaid : numberValue(selectedReceipt.amount_paid),
-      totalOwed: student ? student.totalOwed : 0,
-    };
-  }, [selectedReceipt, studentRows]);
+    setUniversalResult(result);
+    setSearchingReceipt(false);
+  }
 
   if (checkingUser || loading) {
     return <div style={{ padding: "24px" }}>Loading fees dashboard...</div>;
@@ -341,23 +440,49 @@ export default function FeesAdminPage() {
           }}
         >
           <div style={{ marginBottom: "24px" }}>
-            <p style={{ margin: 0, fontSize: "12px", opacity: 0.8 }}>Fees Module</p>
-            <h1 style={{ margin: "6px 0 0", fontSize: "24px", lineHeight: 1.2 }}>
+            <p style={{ margin: 0, fontSize: "12px", opacity: 0.8 }}>
+              Fees Module
+            </p>
+
+            <h1
+              style={{
+                margin: "6px 0 0",
+                fontSize: "24px",
+                lineHeight: 1.2,
+              }}
+            >
               Admin Panel
             </h1>
+
             <p style={{ margin: "10px 0 0", fontSize: "13px", opacity: 0.85 }}>
               {schoolName}
             </p>
-            <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#f5e7b7" }}>
+
+            <p
+              style={{
+                margin: "4px 0 0",
+                fontSize: "12px",
+                color: "#f5e7b7",
+              }}
+            >
               {academicYear || "-"} • {currentTerm || "-"}
             </p>
           </div>
 
           <div style={{ display: "grid", gap: "10px" }}>
             <ActionLink href="/fees/admin" label="Dashboard" active />
-            <ActionLink href="/fees/admin/record-payment" label="Record Payment" />
-            <ActionLink href="/fees/admin/fee-structure" label="Fee Structure" />
-            <ActionLink href="/fees/admin/student-accounts" label="Student Accounts" />
+            <ActionLink
+              href="/fees/admin/record-payment"
+              label="Record Payment"
+            />
+            <ActionLink
+              href="/fees/admin/fee-structure"
+              label="Fee Structure"
+            />
+            <ActionLink
+              href="/fees/admin/student-accounts"
+              label="Student Accounts"
+            />
             <ActionLink href="/fees/admin/debtors" label="Debtors" />
             <ActionLink href="/fees/admin/receipts" label="Receipts" />
             <ActionLink href="/fees/admin/reports" label="Reports" />
@@ -394,8 +519,13 @@ export default function FeesAdminPage() {
               }}
             >
               <div>
-                <h2 style={{ margin: 0, fontSize: "30px" }}>Fees Dashboard</h2>
-                <p style={{ margin: "8px 0 0", color: "#d1d5db" }}>{motto}</p>
+                <h2 style={{ margin: 0, fontSize: "30px" }}>
+                  Fees Dashboard
+                </h2>
+
+                <p style={{ margin: "8px 0 0", color: "#d1d5db" }}>
+                  {motto}
+                </p>
               </div>
 
               <Link href="/dashboard/admin" style={topButtonStyle}>
@@ -412,94 +542,120 @@ export default function FeesAdminPage() {
               marginBottom: "24px",
             }}
           >
-            <SummaryCard title="Total Fees Due" value={formatMoney(summary.totalFeesDue)} />
-            <SummaryCard title="Total Collected" value={formatMoney(summary.totalCollected)} />
-            <SummaryCard title="Outstanding" value={formatMoney(summary.outstanding)} />
+            <SummaryCard
+              title="Total Fees Due"
+              value={formatMoney(summary.totalFeesDue)}
+            />
+            <SummaryCard
+              title="Total Collected"
+              value={formatMoney(summary.totalCollected)}
+            />
+            <SummaryCard
+              title="Outstanding"
+              value={formatMoney(summary.outstanding)}
+            />
             <SummaryCard title="Total Students" value={summary.totalStudents} />
             <SummaryCard title="Students Paid" value={summary.studentsPaid} />
-            <SummaryCard title="Students Part Paid" value={summary.studentsPart} />
+            <SummaryCard
+              title="Students Part Paid"
+              value={summary.studentsPart}
+            />
             <SummaryCard title="Students Unpaid" value={summary.studentsUnpaid} />
-            <SummaryCard title="Today's Payments" value={formatMoney(summary.todaysPaymentsValue)} />
+            <SummaryCard
+              title="Today's Payments"
+              value={formatMoney(summary.todaysPaymentsValue)}
+            />
           </div>
 
           <Section title="Receipt Search">
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1.4fr 1fr",
-                gap: "18px",
-              }}
-            >
-              <div>
-                <input
-                  type="text"
-                  placeholder="Search receipt number only"
-                  value={searchText}
-                  onChange={(e) => setSearchText(e.target.value)}
-                  style={inputStyle}
-                />
+            <div style={{ position: "relative", display: "flex", gap: "10px" }}>
+              <input
+                type="text"
+                placeholder="Search receipt number"
+                value={receiptSearch}
+                onChange={(e) => {
+                  setReceiptSearch(e.target.value);
+                  setShowSuggestions(true);
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    void handleReceiptSearch();
+                  }
+                }}
+                style={inputStyle}
+              />
 
-                <div style={{ marginTop: "14px" }}>
-                  {!searchText.trim() ? (
-                    <p style={{ color: COLORS.muted, marginBottom: 0 }}>
-                      Enter a receipt number and matching records will show here.
-                    </p>
-                  ) : searchResults.length === 0 ? (
-                    <p style={{ color: COLORS.muted, marginBottom: 0 }}>No receipt found.</p>
-                  ) : (
-                    <div style={{ display: "grid", gap: "10px" }}>
-                      {searchResults.map((row) => (
-                        <button
-                          key={String(row.id || row.receipt_no)}
-                          onClick={() => setSelectedReceipt(row)}
-                          style={{
-                            textAlign: "left",
-                            border: `1px solid ${COLORS.border}`,
-                            background: COLORS.card,
-                            borderRadius: "14px",
-                            padding: "14px",
-                            cursor: "pointer",
-                          }}
-                        >
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              gap: "12px",
-                              alignItems: "center",
-                              flexWrap: "wrap",
-                            }}
-                          >
-                            <div>
-                              <strong>{buildReceiptNo(row)}</strong>
-                              <p style={{ margin: "6px 0 0", color: COLORS.muted, fontSize: "13px" }}>
-                                {String(row.student_name || "-")} • {String(row.class_name || "-")}
-                              </p>
-                            </div>
-                            <div style={{ fontWeight: "bold", color: COLORS.sidebar }}>
-                              {formatMoney(numberValue(row.amount_paid))}
-                            </div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div
+              <button
+                type="button"
+                onClick={() => void handleReceiptSearch()}
+                disabled={searchingReceipt}
                 style={{
-                  background: "#fffaf0",
-                  border: `1px solid ${COLORS.gold}`,
-                  borderRadius: "18px",
-                  padding: "18px",
+                  border: "none",
+                  borderRadius: "12px",
+                  background: COLORS.sidebar,
+                  color: "#fff",
+                  padding: "0 18px",
+                  fontWeight: "bold",
+                  cursor: searchingReceipt ? "not-allowed" : "pointer",
+                  opacity: searchingReceipt ? 0.65 : 1,
+                  whiteSpace: "nowrap",
                 }}
               >
-                <h4 style={{ marginTop: 0, color: COLORS.sidebar }}>Quick View</h4>
-                <p style={{ margin: 0, color: COLORS.muted, lineHeight: 1.6, fontSize: "14px" }}>
-                  Search any receipt number here and open the payment details instantly.
-                </p>
-              </div>
+                {searchingReceipt ? "Searching..." : "Search"}
+              </button>
+
+              {showSuggestions && receiptSuggestions.length > 0 && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "54px",
+                    left: 0,
+                    right: "110px",
+                    background: "#fff",
+                    border: `1px solid ${COLORS.border}`,
+                    borderRadius: "14px",
+                    boxShadow: "0 18px 35px rgba(0,0,0,0.12)",
+                    zIndex: 20,
+                    maxHeight: "260px",
+                    overflowY: "auto",
+                  }}
+                >
+                  {receiptSuggestions.map((item) => (
+                    <button
+                      key={`${item.module}-${item.receipt_number}-${item.id}`}
+                      type="button"
+                      onClick={() => {
+                        setReceiptSearch(item.receipt_number);
+                        setShowSuggestions(false);
+                        void handleReceiptSearch(item.receipt_number);
+                      }}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        border: "none",
+                        borderBottom: `1px solid ${COLORS.border}`,
+                        background: "#fff",
+                        padding: "12px 14px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <strong>{item.receipt_number}</strong>
+                      <p
+                        style={{
+                          margin: "4px 0 0",
+                          fontSize: "12px",
+                          color: COLORS.muted,
+                        }}
+                      >
+                        {item.module} • {item.student_name || "-"} •{" "}
+                        {formatMoney(item.amount_paid)}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </Section>
 
@@ -519,14 +675,22 @@ export default function FeesAdminPage() {
                   String(row.student_name || "-"),
                   String(row.class_name || "-"),
                   formatMoney(numberValue(row.amount_paid)),
-                  String(row.payment_date || "-"),
+                  getPaymentDate(row),
                 ])}
               />
             </Section>
 
             <Section title="Top Debtors">
               <ReportTable
-                headers={["Student", "ID", "Class", "Total", "Paid", "Balance", "Status"]}
+                headers={[
+                  "Student",
+                  "ID",
+                  "Class",
+                  "Total",
+                  "Paid",
+                  "Balance",
+                  "Status",
+                ]}
                 rows={topDebtors.map((row) => [
                   String(row.full_name || "-"),
                   row.studentId,
@@ -553,54 +717,156 @@ export default function FeesAdminPage() {
         </section>
       </div>
 
-      {receiptPopupInfo && (
-        <div onClick={() => setSelectedReceipt(null)} style={overlayStyle}>
-          <div onClick={(e) => e.stopPropagation()} style={modalCardStyle}>
-            <div
+      {universalResult && (
+        <ReceiptModal
+          result={universalResult}
+          onClose={() => setUniversalResult(null)}
+        />
+      )}
+    </main>
+  );
+}
+
+function ReceiptModal({
+  result,
+  onClose,
+}: {
+  result: UniversalReceiptResult;
+  onClose: () => void;
+}) {
+  const searchedReceipt = result.searchedReceipt;
+  const payments = result.studentPayments || [];
+
+  const totalPaid = payments.reduce((sum, payment) => {
+    return sum + Number(payment.amount_paid || 0);
+  }, 0);
+
+  return (
+    <div onClick={onClose} style={overlayStyle}>
+      <div onClick={(e) => e.stopPropagation()} style={modalCardStyle}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: "12px",
+            alignItems: "start",
+            marginBottom: "18px",
+          }}
+        >
+          <div>
+            <p
               style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: "12px",
-                alignItems: "start",
-                marginBottom: "18px",
+                margin: 0,
+                color: COLORS.gold,
+                fontWeight: "bold",
               }}
             >
-              <div>
-                <p style={{ margin: 0, color: COLORS.gold, fontWeight: "bold" }}>Receipt Details</p>
-                <h3 style={{ margin: "6px 0 0", color: COLORS.sidebar }}>
-                  {receiptPopupInfo.receiptNo}
-                </h3>
-              </div>
+              Receipt Details
+            </p>
 
-              <button onClick={() => setSelectedReceipt(null)} style={closeButtonStyle}>
-                Close
-              </button>
-            </div>
+            <h3 style={{ margin: "6px 0 0", color: COLORS.sidebar }}>
+              {searchedReceipt ? searchedReceipt.receipt_number : "Not Found"}
+            </h3>
+          </div>
 
+          <button onClick={onClose} style={closeButtonStyle}>
+            Close
+          </button>
+        </div>
+
+        {result.error ? (
+          <div
+            style={{
+              background: COLORS.dangerBg,
+              color: COLORS.dangerText,
+              borderRadius: "14px",
+              padding: "14px",
+              fontWeight: "bold",
+            }}
+          >
+            {result.error}
+          </div>
+        ) : searchedReceipt ? (
+          <>
             <div
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                 gap: "14px",
+                marginBottom: "18px",
               }}
             >
-              <MiniInfo label="Student Name" value={receiptPopupInfo.studentName} />
-              <MiniInfo label="Student ID" value={receiptPopupInfo.studentId} />
-              <MiniInfo label="Class" value={receiptPopupInfo.className} />
-              <MiniInfo label="Amount Paid" value={formatMoney(receiptPopupInfo.amountPaid)} />
-              <MiniInfo label="Payment Type" value={receiptPopupInfo.paymentType} />
-              <MiniInfo label="Method" value={receiptPopupInfo.method} />
-              <MiniInfo label="Payment Date" value={receiptPopupInfo.paymentDate} />
-              <MiniInfo label="Recorded By" value={receiptPopupInfo.recordedBy} />
-              <MiniInfo label="Total Owed" value={formatMoney(receiptPopupInfo.totalOwed)} />
-              <MiniInfo label="Total Paid So Far" value={formatMoney(receiptPopupInfo.totalPaid)} />
-              <MiniInfo label="Balance After Payment" value={formatMoney(receiptPopupInfo.balanceAfter)} />
-              <MiniInfo label="Notes" value={receiptPopupInfo.notes} />
+              <MiniInfo label="Student" value={searchedReceipt.student_name} />
+              <MiniInfo label="Student ID" value={searchedReceipt.student_id} />
+              <MiniInfo label="Class" value={searchedReceipt.class_name} />
+              <MiniInfo label="Found In" value={searchedReceipt.module} />
+              <MiniInfo
+                label="Receipt Amount"
+                value={formatMoney(searchedReceipt.amount_paid)}
+              />
+              <MiniInfo
+                label="Total Paid"
+                value={formatMoney(totalPaid)}
+              />
             </div>
-          </div>
-        </div>
-      )}
-    </main>
+
+            <h4 style={{ margin: "0 0 8px", color: COLORS.sidebar }}>
+              Searched Receipt
+            </h4>
+            <PaymentTable payments={[searchedReceipt]} />
+
+            <h4 style={{ margin: "18px 0 8px", color: COLORS.sidebar }}>
+              All Payments By This Student
+            </h4>
+            <PaymentTable payments={payments} />
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PaymentTable({ payments }: { payments: UniversalPayment[] }) {
+  if (payments.length === 0) {
+    return <p style={{ color: COLORS.muted }}>No payments found.</p>;
+  }
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table
+        style={{
+          width: "100%",
+          borderCollapse: "collapse",
+          fontSize: "13px",
+        }}
+      >
+        <thead>
+          <tr style={{ background: "#fff7cc" }}>
+            <th style={thStyle}>Module</th>
+            <th style={thStyle}>Receipt</th>
+            <th style={thStyle}>Item</th>
+            <th style={thStyle}>Amount</th>
+            <th style={thStyle}>Term</th>
+            <th style={thStyle}>Date</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {payments.map((payment) => (
+            <tr
+              key={`${payment.module}-${payment.receipt_number}-${payment.id}`}
+            >
+              <td style={tdStyle}>{payment.module}</td>
+              <td style={tdStyle}>{payment.receipt_number}</td>
+              <td style={tdStyle}>{payment.item_name || "-"}</td>
+              <td style={tdStyle}>{formatMoney(payment.amount_paid)}</td>
+              <td style={tdStyle}>{payment.term || "-"}</td>
+              <td style={tdStyle}>{formatDateTime(payment.created_at)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -623,7 +889,9 @@ function ActionLink({
         padding: "14px 16px",
         borderRadius: "14px",
         fontWeight: "bold",
-        border: active ? `2px solid ${COLORS.gold}` : "1px solid rgba(255,255,255,0.08)",
+        border: active
+          ? `2px solid ${COLORS.gold}`
+          : "1px solid rgba(255,255,255,0.08)",
         display: "block",
       }}
     >
@@ -632,7 +900,13 @@ function ActionLink({
   );
 }
 
-function SummaryCard({ title, value }: { title: string; value: string | number }) {
+function SummaryCard({
+  title,
+  value,
+}: {
+  title: string;
+  value: string | number;
+}) {
   return (
     <div
       style={{
@@ -655,8 +929,20 @@ function SummaryCard({ title, value }: { title: string; value: string | number }
           background: COLORS.gold,
         }}
       />
-      <p style={{ margin: 0, fontSize: "14px", color: COLORS.muted }}>{title}</p>
-      <h2 style={{ margin: "10px 0 0", color: COLORS.sidebar, fontSize: "28px" }}>{value}</h2>
+
+      <p style={{ margin: 0, fontSize: "14px", color: COLORS.muted }}>
+        {title}
+      </p>
+
+      <h2
+        style={{
+          margin: "10px 0 0",
+          color: COLORS.sidebar,
+          fontSize: "28px",
+        }}
+      >
+        {value}
+      </h2>
     </div>
   );
 }
@@ -676,7 +962,7 @@ function Section({
         padding: "20px",
         boxShadow: "0 10px 25px rgba(0,0,0,0.06)",
         border: `1px solid ${COLORS.border}`,
-        overflowX: "auto",
+        overflowX: "visible",
         marginBottom: "20px",
       }}
     >
@@ -696,7 +982,13 @@ function ReportTable({
   return rows.length === 0 ? (
     <p style={{ color: COLORS.muted, marginBottom: 0 }}>No data found.</p>
   ) : (
-    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+    <table
+      style={{
+        width: "100%",
+        borderCollapse: "collapse",
+        fontSize: "14px",
+      }}
+    >
       <thead>
         <tr style={{ background: "#fff7cc" }}>
           {headers.map((header) => (
@@ -706,6 +998,7 @@ function ReportTable({
           ))}
         </tr>
       </thead>
+
       <tbody>
         {rows.map((row, index) => (
           <tr key={index}>
@@ -731,9 +1024,19 @@ function MiniInfo({ label, value }: { label: string; value: string }) {
         padding: "10px 12px",
       }}
     >
-      <p style={{ margin: 0, fontSize: "11px", color: COLORS.muted }}>{label}</p>
-      <p style={{ margin: "5px 0 0", fontWeight: "bold", color: COLORS.sidebar, fontSize: "14px" }}>
-        {value}
+      <p style={{ margin: 0, fontSize: "11px", color: COLORS.muted }}>
+        {label}
+      </p>
+
+      <p
+        style={{
+          margin: "5px 0 0",
+          fontWeight: "bold",
+          color: COLORS.sidebar,
+          fontSize: "14px",
+        }}
+      >
+        {value || "-"}
       </p>
     </div>
   );
@@ -766,11 +1069,13 @@ const thStyle: React.CSSProperties = {
   textAlign: "left",
   padding: "12px",
   borderBottom: "1px solid #e5e7eb",
+  whiteSpace: "nowrap",
 };
 
 const tdStyle: React.CSSProperties = {
   padding: "12px",
   borderBottom: "1px solid #f0f0f0",
+  whiteSpace: "nowrap",
 };
 
 const closeButtonStyle: React.CSSProperties = {
@@ -796,7 +1101,9 @@ const overlayStyle: React.CSSProperties = {
 
 const modalCardStyle: React.CSSProperties = {
   width: "100%",
-  maxWidth: "700px",
+  maxWidth: "950px",
+  maxHeight: "90vh",
+  overflowY: "auto",
   background: "#fff",
   borderRadius: "24px",
   padding: "24px",
