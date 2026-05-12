@@ -19,22 +19,22 @@ type AdminInfo = {
 
 const softwareCards = [
   {
-    title: "Students Database",
-    description: "Open the central student database and student records.",
-    href: "/sds",
-    emoji: "🎓",
-  },
-  {
-    title: "Admission",
-    description: "Handle new student admissions and enrollment records.",
-    href: "/admission",
-    emoji: "📝",
+    title: "Teacher Attendance",
+    description: "Track and manage teacher attendance records.",
+    href: "/teacher-attendance",
+    emoji: "📊",
   },
   {
     title: "Feeding",
     description: "Open feeding, attendance, and related records.",
     href: "/feeding",
     emoji: "🍽️",
+  },
+  {
+    title: "Students Database",
+    description: "Open the central student database and student records.",
+    href: "/sds",
+    emoji: "🎓",
   },
   {
     title: "Report Card",
@@ -55,6 +55,12 @@ const softwareCards = [
     emoji: "💰",
   },
   {
+    title: "Admission",
+    description: "Handle new student admissions and enrollment records.",
+    href: "/admission",
+    emoji: "📝",
+  },
+  {
     title: "Books",
     description: "Manage book sales, book stock, and student book records.",
     href: "/books",
@@ -65,12 +71,6 @@ const softwareCards = [
     description: "Manage uniform sales, sizes, stock, and student uniform records.",
     href: "/uniforms",
     emoji: "👕",
-  },
-  {
-    title: "Teacher Attendance",
-    description: "Track and manage teacher attendance records.",
-    href: "/teacher-attendance",
-    emoji: "📊",
   },
 ];
 
@@ -260,6 +260,7 @@ function AdminDashboardPageClient() {
               >
                 Logged in as
               </p>
+
               <p
                 style={{
                   margin: "6px 0 0",
@@ -270,6 +271,7 @@ function AdminDashboardPageClient() {
               >
                 {adminInfo.full_name}
               </p>
+
               <p
                 style={{
                   margin: "4px 0 0",
@@ -280,6 +282,7 @@ function AdminDashboardPageClient() {
               >
                 {adminInfo.role}
               </p>
+
               {(settings.academic_year || settings.current_term) && (
                 <p
                   style={{
@@ -388,6 +391,7 @@ function AdminDashboardPageClient() {
                 background: "rgba(250,204,21,0.14)",
               }}
             />
+
             <div
               style={{
                 position: "absolute",
