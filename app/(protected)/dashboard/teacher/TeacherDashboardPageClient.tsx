@@ -26,45 +26,59 @@ const PROFILE_BUCKET = "teacher-photos";
 const softwareCards = [
   {
     title: "Teacher Attendance",
-    description: "Track and manage teacher attendance records",
+    description: "Check in and out",
     href: "/teacher-attendance",
     emoji: "📊",
+    bg: "#eef2ff",
+    accent: "#4f46e5",
   },
   {
     title: "Feeding",
-    description: "Record feeding and attendance",
+    description: "Feeding records",
     href: "/feeding",
     emoji: "🍽️",
+    bg: "#fff7ed",
+    accent: "#ea580c",
   },
   {
     title: "Students Database",
-    description: "View student details and records",
+    description: "Student records",
     href: "/sds",
     emoji: "🎓",
+    bg: "#ecfdf5",
+    accent: "#059669",
   },
   {
     title: "Report Card",
-    description: "Upload results and manage reports",
+    description: "Results and reports",
     href: "/report-card",
     emoji: "📘",
+    bg: "#eff6ff",
+    accent: "#2563eb",
   },
   {
     title: "Fees",
-    description: "View class fee information",
+    description: "Class fee info",
     href: "/fees/teacher",
     emoji: "💳",
+    bg: "#fefce8",
+    accent: "#ca8a04",
   },
   {
     title: "Books",
-    description: "View books given or sold to students in your class",
+    description: "Student books",
     href: "/books/teacher",
     emoji: "📚",
+    bg: "#f5f3ff",
+    accent: "#7c3aed",
   },
   {
     title: "Uniforms",
-    description: "View uniforms given or sold to students in your class",
+    description: "Student uniforms",
     href: "/uniforms/teacher",
     emoji: "👕",
+    bg: "#f0fdfa",
+    accent: "#0f766e",
   },
 ];
 
@@ -448,19 +462,19 @@ export default function TeacherDashboardPageClient() {
     <main
       style={{
         minHeight: "100vh",
-        background: "#f3f4f6",
+        background: "linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%)",
         fontFamily: "Arial, sans-serif",
       }}
     >
       <header
         style={{
-          height: "72px",
+          height: "66px",
           background: "#ffffff",
           borderBottom: "1px solid #e5e7eb",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "0 16px",
+          padding: "0 14px",
           position: "sticky",
           top: 0,
           zIndex: 30,
@@ -471,20 +485,21 @@ export default function TeacherDashboardPageClient() {
             minWidth: 0,
             display: "flex",
             alignItems: "center",
-            gap: "12px",
+            gap: "10px",
           }}
         >
           <div
             style={{
-              width: "42px",
-              height: "42px",
+              width: "40px",
+              height: "40px",
               borderRadius: "14px",
               overflow: "hidden",
-              background: "#eef7fd",
+              background: "#eef2ff",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               flexShrink: 0,
+              border: "1px solid #e0e7ff",
             }}
           >
             {teacherInfo.photo_url ? (
@@ -506,12 +521,13 @@ export default function TeacherDashboardPageClient() {
             <h1
               style={{
                 margin: 0,
-                fontSize: "17px",
-                fontWeight: 800,
+                fontSize: "15px",
+                fontWeight: 900,
                 color: "#111827",
                 whiteSpace: "nowrap",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
+                maxWidth: "235px",
               }}
             >
               {schoolName}
@@ -522,6 +538,7 @@ export default function TeacherDashboardPageClient() {
                 margin: "3px 0 0",
                 fontSize: "11px",
                 color: "#6b7280",
+                fontWeight: 700,
               }}
             >
               Teacher Dashboard
@@ -535,10 +552,11 @@ export default function TeacherDashboardPageClient() {
           aria-label="Open menu"
           style={{
             border: "none",
-            background: "transparent",
+            background: "#f3f4f6",
             padding: 0,
             width: "40px",
             height: "40px",
+            borderRadius: "14px",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -561,7 +579,7 @@ export default function TeacherDashboardPageClient() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
+              transition={{ duration: 0.18 }}
               onClick={() => setMenuOpen(false)}
               style={overlayStyle}
             />
@@ -570,20 +588,32 @@ export default function TeacherDashboardPageClient() {
               initial={{ x: "100%" }}
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
-              transition={{ type: "tween", duration: 0.22 }}
+              transition={{ type: "tween", duration: 0.2 }}
               style={sideMenuStyle}
             >
               <div style={menuHeaderStyle}>
-                <h2
-                  style={{
-                    margin: 0,
-                    fontSize: "15px",
-                    color: "#111827",
-                    fontWeight: 800,
-                  }}
-                >
-                  Menu
-                </h2>
+                <div>
+                  <h2
+                    style={{
+                      margin: 0,
+                      fontSize: "17px",
+                      color: "#111827",
+                      fontWeight: 900,
+                    }}
+                  >
+                    ☰ Menu
+                  </h2>
+                  <p
+                    style={{
+                      margin: "4px 0 0",
+                      fontSize: "11px",
+                      color: "#6b7280",
+                      fontWeight: 700,
+                    }}
+                  >
+                    Quick actions
+                  </p>
+                </div>
 
                 <button
                   type="button"
@@ -595,44 +625,56 @@ export default function TeacherDashboardPageClient() {
                 </button>
               </div>
 
-              <div
-                style={{
-                  padding: "14px",
-                  display: "flex",
-                  flexDirection: "column",
-                  height: "100%",
-                }}
-              >
-                <div style={{ display: "grid", gap: "8px" }}>
-                  <LinkItem
-                    href="/dashboard/teacher"
-                    label="Dashboard"
-                    onClick={() => setMenuOpen(false)}
-                  />
+              <div style={{ padding: "14px", display: "grid", gap: "10px" }}>
+                <LinkItem
+                  href="/dashboard/teacher"
+                  label="🏠 Dashboard"
+                  bg="#eef2ff"
+                  color="#3730a3"
+                  onClick={() => setMenuOpen(false)}
+                />
 
-                  <button
-                    type="button"
-                    onClick={openAboutModal}
-                    style={menuButtonStyle}
-                  >
-                    About Me
-                  </button>
+                <button
+                  type="button"
+                  onClick={openAboutModal}
+                  style={{
+                    ...menuButtonStyle,
+                    background: "#ecfdf5",
+                    color: "#047857",
+                    borderColor: "#a7f3d0",
+                  }}
+                >
+                  👤 About Me
+                </button>
 
-                  <button
-                    type="button"
-                    onClick={openPasswordModal}
-                    style={menuButtonStyle}
-                  >
-                    Change Password
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={openPasswordModal}
+                  style={{
+                    ...menuButtonStyle,
+                    background: "#fff7ed",
+                    color: "#c2410c",
+                    borderColor: "#fed7aa",
+                  }}
+                >
+                  🔐 Change Password
+                </button>
 
-                <div style={{ marginTop: "auto", paddingTop: "18px" }}>
+                <div>
                   <LogoutButton
                     onDone={() => {
                       setMenuOpen(false);
                       setAboutOpen(false);
                       setPasswordOpen(false);
+                    }}
+                    style={{
+                      width: "100%",
+                      background: "#b91c1c",
+                      color: "#ffffff",
+                      borderRadius: "16px",
+                      padding: "13px 14px",
+                      fontWeight: 900,
+                      fontSize: "13px",
                     }}
                   />
                 </div>
@@ -644,33 +686,10 @@ export default function TeacherDashboardPageClient() {
 
       <AnimatePresence>
         {aboutOpen && (
-          <Modal title="About Me" onClose={() => setAboutOpen(false)}>
-            <div
-              style={{
-                display: "grid",
-                gap: "16px",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "14px",
-                }}
-              >
-                <div
-                  style={{
-                    width: "76px",
-                    height: "76px",
-                    borderRadius: "22px",
-                    background: "#eef7fd",
-                    overflow: "hidden",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
+          <BottomSheet title="👤 About Me" onClose={() => setAboutOpen(false)}>
+            <div style={{ display: "grid", gap: "14px" }}>
+              <div style={profileTopStyle}>
+                <div style={profileImageStyle}>
                   {teacherInfo.photo_url ? (
                     <img
                       src={teacherInfo.photo_url}
@@ -691,7 +710,7 @@ export default function TeacherDashboardPageClient() {
                     style={{
                       margin: 0,
                       color: "#111827",
-                      fontSize: "20px",
+                      fontSize: "19px",
                       fontWeight: 900,
                       lineHeight: 1.2,
                     }}
@@ -704,7 +723,7 @@ export default function TeacherDashboardPageClient() {
                       margin: "6px 0 0",
                       color: "#6b7280",
                       fontSize: "13px",
-                      fontWeight: 700,
+                      fontWeight: 800,
                       textTransform: "capitalize",
                     }}
                   >
@@ -713,21 +732,8 @@ export default function TeacherDashboardPageClient() {
                 </div>
               </div>
 
-              <label
-                style={{
-                  display: "block",
-                  background: "#f9fafb",
-                  border: "1px dashed #cbd5e1",
-                  borderRadius: "16px",
-                  padding: "13px",
-                  cursor: photoLoading ? "not-allowed" : "pointer",
-                  color: "#111827",
-                  fontSize: "13px",
-                  fontWeight: 800,
-                  textAlign: "center",
-                }}
-              >
-                {photoLoading ? "Uploading..." : "Upload Profile Picture"}
+              <label style={uploadButtonStyle}>
+                {photoLoading ? "⏳ Uploading..." : "📷 Add Profile Picture"}
                 <input
                   type="file"
                   accept="image/*"
@@ -764,13 +770,16 @@ export default function TeacherDashboardPageClient() {
                 />
               </div>
             </div>
-          </Modal>
+          </BottomSheet>
         )}
       </AnimatePresence>
 
       <AnimatePresence>
         {passwordOpen && (
-          <Modal title="Change Password" onClose={() => setPasswordOpen(false)}>
+          <BottomSheet
+            title="🔐 Change Password"
+            onClose={() => setPasswordOpen(false)}
+          >
             <div style={{ display: "grid", gap: "12px" }}>
               <div>
                 <label style={labelStyle}>New Password</label>
@@ -810,76 +819,85 @@ export default function TeacherDashboardPageClient() {
                   fontWeight: 900,
                   fontSize: "14px",
                   cursor: passwordLoading ? "not-allowed" : "pointer",
-                  marginTop: "4px",
+                  marginTop: "2px",
                 }}
               >
                 {passwordLoading ? "Changing..." : "Change Password"}
               </button>
             </div>
-          </Modal>
+          </BottomSheet>
         )}
       </AnimatePresence>
 
       <div
         style={{
-          maxWidth: "900px",
+          maxWidth: "520px",
           margin: "0 auto",
-          padding: "22px 16px 30px",
+          padding: "16px 12px 28px",
         }}
       >
         <motion.div
-          initial={{ opacity: 0, y: 18 }}
+          initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
+          transition={{ duration: 0.25 }}
           style={{
-            background: "#ffffff",
-            borderRadius: "30px",
-            padding: "28px 24px",
-            boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
-            marginBottom: "24px",
+            background: "linear-gradient(135deg, #111827 0%, #1e3a8a 100%)",
+            borderRadius: "24px",
+            padding: "18px",
+            boxShadow: "0 8px 24px rgba(15,23,42,0.18)",
+            marginBottom: "16px",
+            color: "#ffffff",
           }}
         >
-          <h2
+          <p
             style={{
               margin: 0,
-              fontSize: "28px",
-              lineHeight: 1.2,
-              fontWeight: 800,
-              color: "#111827",
+              fontSize: "11px",
+              fontWeight: 900,
+              letterSpacing: "0.8px",
+              textTransform: "uppercase",
+              opacity: 0.75,
             }}
           >
-            Hello,{" "}
-            <span style={{ color: "#1d9bf0" }}>
-              {teacherInfo.full_name}
-            </span>
+            Welcome back
+          </p>
+
+          <h2
+            style={{
+              margin: "7px 0 0",
+              fontSize: "22px",
+              lineHeight: 1.2,
+              fontWeight: 900,
+            }}
+          >
+            {teacherInfo.full_name}
           </h2>
 
           <p
             style={{
-              margin: "14px 0 0",
-              fontSize: "16px",
-              lineHeight: 1.55,
-              color: "#6b7280",
-              maxWidth: "460px",
+              margin: "9px 0 0",
+              fontSize: "13px",
+              lineHeight: 1.5,
+              color: "rgba(255,255,255,0.78)",
             }}
           >
-            Welcome back. Choose the software you want to continue to.
+            Choose what you want to continue.
           </p>
         </motion.div>
 
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-            gap: "18px",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: "12px",
           }}
         >
           {softwareCards.map((card, index) => (
             <motion.div
               key={card.title}
-              initial={{ opacity: 0, y: 18 }}
+              initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: index * 0.05 }}
+              transition={{ duration: 0.25, delay: index * 0.04 }}
             >
               <Link
                 href={card.href}
@@ -891,15 +909,15 @@ export default function TeacherDashboardPageClient() {
                 }}
               >
                 <motion.div
-                  whileTap={{ scale: 0.98 }}
-                  whileHover={{ y: -4 }}
+                  whileTap={{ scale: 0.97 }}
                   transition={{ type: "spring", stiffness: 260, damping: 18 }}
                   style={{
                     background: "#ffffff",
-                    borderRadius: "28px",
-                    padding: "22px",
-                    minHeight: "220px",
-                    boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
+                    borderRadius: "22px",
+                    padding: "14px",
+                    minHeight: "150px",
+                    boxShadow: "0 6px 18px rgba(15,23,42,0.08)",
+                    border: "1px solid #e5e7eb",
                     display: "flex",
                     flexDirection: "column",
                     justifyContent: "space-between",
@@ -908,15 +926,15 @@ export default function TeacherDashboardPageClient() {
                   <div>
                     <div
                       style={{
-                        width: "64px",
-                        height: "64px",
-                        borderRadius: "18px",
-                        background: "#eef7fd",
+                        width: "48px",
+                        height: "48px",
+                        borderRadius: "16px",
+                        background: card.bg,
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        fontSize: "28px",
-                        marginBottom: "18px",
+                        fontSize: "24px",
+                        marginBottom: "12px",
                       }}
                     >
                       {card.emoji}
@@ -925,10 +943,10 @@ export default function TeacherDashboardPageClient() {
                     <h3
                       style={{
                         margin: 0,
-                        fontSize: "20px",
-                        lineHeight: 1.25,
+                        fontSize: "15px",
+                        lineHeight: 1.2,
                         color: "#111827",
-                        fontWeight: 800,
+                        fontWeight: 900,
                       }}
                     >
                       {card.title}
@@ -936,14 +954,26 @@ export default function TeacherDashboardPageClient() {
 
                     <p
                       style={{
-                        margin: "14px 0 0",
-                        fontSize: "14px",
-                        lineHeight: 1.7,
+                        margin: "8px 0 0",
+                        fontSize: "11px",
+                        lineHeight: 1.45,
                         color: "#6b7280",
+                        fontWeight: 700,
                       }}
                     >
                       {card.description}
                     </p>
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: "12px",
+                      color: card.accent,
+                      fontSize: "11px",
+                      fontWeight: 900,
+                    }}
+                  >
+                    Open →
                   </div>
                 </motion.div>
               </Link>
@@ -955,7 +985,7 @@ export default function TeacherDashboardPageClient() {
   );
 }
 
-function Modal({
+function BottomSheet({
   title,
   children,
   onClose,
@@ -970,19 +1000,21 @@ function Modal({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        transition={{ duration: 0.2 }}
+        transition={{ duration: 0.18 }}
         onClick={onClose}
         style={overlayStyle}
       />
 
       <motion.div
-        initial={{ opacity: 0, y: 20, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 20, scale: 0.98 }}
-        transition={{ type: "spring", stiffness: 240, damping: 22 }}
-        style={modalStyle}
+        initial={{ y: "100%" }}
+        animate={{ y: 0 }}
+        exit={{ y: "100%" }}
+        transition={{ type: "tween", duration: 0.22 }}
+        style={bottomSheetStyle}
       >
-        <div style={modalHeaderStyle}>
+        <div style={sheetHandleStyle} />
+
+        <div style={sheetHeaderStyle}>
           <h2
             style={{
               margin: 0,
@@ -999,7 +1031,7 @@ function Modal({
           </button>
         </div>
 
-        <div style={{ padding: "16px" }}>{children}</div>
+        <div style={{ padding: "4px 16px 18px" }}>{children}</div>
       </motion.div>
     </>
   );
@@ -1008,10 +1040,14 @@ function Modal({
 function LinkItem({
   href,
   label,
+  bg,
+  color,
   onClick,
 }: {
   href: string;
   label: string;
+  bg: string;
+  color: string;
   onClick?: () => void;
 }) {
   return (
@@ -1020,12 +1056,12 @@ function LinkItem({
       onClick={onClick}
       style={{
         textDecoration: "none",
-        color: "#111827",
-        background: "#f9fafb",
-        border: "1px solid #e5e7eb",
-        borderRadius: "14px",
-        padding: "12px 13px",
-        fontWeight: 800,
+        background: bg,
+        color,
+        border: "1px solid rgba(0,0,0,0.06)",
+        borderRadius: "16px",
+        padding: "13px 14px",
+        fontWeight: 900,
         fontSize: "13px",
         lineHeight: 1.35,
       }}
@@ -1037,14 +1073,21 @@ function LinkItem({
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <div>
+    <div
+      style={{
+        background: "#ffffff",
+        border: "1px solid #e5e7eb",
+        borderRadius: "14px",
+        padding: "10px",
+      }}
+    >
       <p
         style={{
           margin: 0,
-          fontSize: "10px",
+          fontSize: "9px",
           color: "#6b7280",
           marginBottom: "4px",
-          fontWeight: 800,
+          fontWeight: 900,
           textTransform: "uppercase",
           letterSpacing: "0.4px",
         }}
@@ -1055,10 +1098,10 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       <p
         style={{
           margin: 0,
-          fontSize: "13px",
+          fontSize: "12px",
           color: "#111827",
-          fontWeight: 700,
-          lineHeight: 1.5,
+          fontWeight: 800,
+          lineHeight: 1.45,
           textTransform: label === "Role" ? "capitalize" : "none",
         }}
       >
@@ -1108,7 +1151,7 @@ function ErrorText({ text }: { text: string }) {
 
 const hamburgerLineStyle: CSSProperties = {
   display: "block",
-  width: "23px",
+  width: "21px",
   height: "2.5px",
   background: "#111827",
   borderRadius: "999px",
@@ -1117,7 +1160,7 @@ const hamburgerLineStyle: CSSProperties = {
 const overlayStyle: CSSProperties = {
   position: "fixed",
   inset: 0,
-  background: "rgba(0,0,0,0.32)",
+  background: "rgba(15,23,42,0.42)",
   zIndex: 40,
 };
 
@@ -1125,12 +1168,12 @@ const sideMenuStyle: CSSProperties = {
   position: "fixed",
   top: 0,
   right: 0,
-  width: "76%",
-  maxWidth: "285px",
+  width: "78%",
+  maxWidth: "300px",
   height: "100vh",
   background: "#ffffff",
   zIndex: 50,
-  boxShadow: "-10px 0 30px rgba(0,0,0,0.16)",
+  boxShadow: "-12px 0 34px rgba(0,0,0,0.18)",
   display: "flex",
   flexDirection: "column",
 };
@@ -1146,11 +1189,9 @@ const menuHeaderStyle: CSSProperties = {
 
 const menuButtonStyle: CSSProperties = {
   border: "1px solid #e5e7eb",
-  background: "#f9fafb",
-  color: "#111827",
-  borderRadius: "14px",
-  padding: "12px 13px",
-  fontWeight: 800,
+  borderRadius: "16px",
+  padding: "13px 14px",
+  fontWeight: 900,
   fontSize: "13px",
   cursor: "pointer",
   textAlign: "left",
@@ -1158,29 +1199,40 @@ const menuButtonStyle: CSSProperties = {
 
 const closeButtonStyle: CSSProperties = {
   border: "none",
-  background: "transparent",
-  fontSize: "28px",
+  background: "#f3f4f6",
+  fontSize: "24px",
   lineHeight: 1,
   cursor: "pointer",
   color: "#111827",
+  width: "34px",
+  height: "34px",
+  borderRadius: "12px",
 };
 
-const modalStyle: CSSProperties = {
+const bottomSheetStyle: CSSProperties = {
   position: "fixed",
-  left: "50%",
-  top: "50%",
-  transform: "translate(-50%, -50%)",
-  width: "calc(100% - 28px)",
-  maxWidth: "440px",
-  maxHeight: "86vh",
+  left: 0,
+  right: 0,
+  bottom: 0,
+  width: "100%",
+  maxHeight: "88vh",
   overflowY: "auto",
   background: "#ffffff",
-  borderRadius: "24px",
-  boxShadow: "0 24px 60px rgba(0,0,0,0.25)",
+  borderTopLeftRadius: "28px",
+  borderTopRightRadius: "28px",
+  boxShadow: "0 -20px 50px rgba(0,0,0,0.24)",
   zIndex: 60,
 };
 
-const modalHeaderStyle: CSSProperties = {
+const sheetHandleStyle: CSSProperties = {
+  width: "48px",
+  height: "5px",
+  borderRadius: "999px",
+  background: "#d1d5db",
+  margin: "10px auto 6px",
+};
+
+const sheetHeaderStyle: CSSProperties = {
   position: "sticky",
   top: 0,
   background: "#ffffff",
@@ -1188,24 +1240,60 @@ const modalHeaderStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
-  padding: "16px",
-  borderBottom: "1px solid #e5e7eb",
+  padding: "10px 16px 14px",
+  borderBottom: "1px solid #f3f4f6",
+};
+
+const profileTopStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "13px",
+  background: "linear-gradient(135deg, #eef2ff 0%, #ecfeff 100%)",
+  borderRadius: "20px",
+  padding: "13px",
+};
+
+const profileImageStyle: CSSProperties = {
+  width: "72px",
+  height: "72px",
+  borderRadius: "22px",
+  background: "#ffffff",
+  overflow: "hidden",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+  border: "1px solid #e5e7eb",
+};
+
+const uploadButtonStyle: CSSProperties = {
+  display: "block",
+  background: "#111827",
+  border: "none",
+  borderRadius: "16px",
+  padding: "13px",
+  cursor: "pointer",
+  color: "#ffffff",
+  fontSize: "13px",
+  fontWeight: 900,
+  textAlign: "center",
 };
 
 const infoGridStyle: CSSProperties = {
   display: "grid",
-  gap: "12px",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gap: "10px",
   background: "#f8fafc",
   border: "1px solid #e5e7eb",
   borderRadius: "18px",
-  padding: "14px",
+  padding: "10px",
 };
 
 const labelStyle: CSSProperties = {
   display: "block",
   fontSize: "12px",
   color: "#374151",
-  fontWeight: 800,
+  fontWeight: 900,
   marginBottom: "6px",
 };
 
