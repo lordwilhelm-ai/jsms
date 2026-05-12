@@ -25,6 +25,12 @@ const softwareCards = [
     emoji: "🎓",
   },
   {
+    title: "Admission",
+    description: "Handle new student admissions and enrollment records.",
+    href: "/admission",
+    emoji: "📝",
+  },
+  {
     title: "Feeding",
     description: "Open feeding, attendance, and related records.",
     href: "/feeding",
@@ -47,6 +53,18 @@ const softwareCards = [
     description: "Record school income, expenses, balances, and financial reports.",
     href: "/income-expenditure",
     emoji: "💰",
+  },
+  {
+    title: "Books",
+    description: "Manage book sales, book stock, and student book records.",
+    href: "/books",
+    emoji: "📚",
+  },
+  {
+    title: "Uniforms",
+    description: "Manage uniform sales, sizes, stock, and student uniform records.",
+    href: "/uniforms",
+    emoji: "👕",
   },
   {
     title: "Teacher Attendance",
@@ -185,7 +203,7 @@ function AdminDashboardPageClient() {
                 {settings.logo_url ? (
                   <img
                     src={settings.logo_url}
-                    alt={settings.school_name || "School Logo"}
+                    alt={settings.school_name}
                     style={{
                       width: "100%",
                       height: "100%",
@@ -262,7 +280,6 @@ function AdminDashboardPageClient() {
               >
                 {adminInfo.role}
               </p>
-
               {(settings.academic_year || settings.current_term) && (
                 <p
                   style={{
@@ -420,8 +437,8 @@ function AdminDashboardPageClient() {
                 {settings.school_name
                   ? `${settings.school_name} central control area.`
                   : "Central control area."}{" "}
-                Open the software modules in the main area, and use the side menu
-                for teachers, students, subjects, classes, and settings.
+                Open the software modules in the main area, and use the side
+                menu for teachers, students, subjects, classes, and settings.
               </p>
             </div>
           </motion.div>
