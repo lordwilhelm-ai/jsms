@@ -31,6 +31,12 @@ export const teacherCards: DashboardCard[] = [
     emoji: "💳",
   },
   {
+    title: "Books",
+    description: "View books available and book records for your assigned class.",
+    href: "/books",
+    emoji: "📚",
+  },
+  {
     title: "Change Password",
     description: "Change your account password securely.",
     href: "/change-password",
@@ -63,6 +69,13 @@ export const adminCards: DashboardCard[] = [
     href: "/fees",
     emoji: "💳",
   },
+  {
+    title: "Books",
+    description:
+      "Manage book stock, student book payments, receipts, and supplier credit.",
+    href: "/books",
+    emoji: "📚",
+  },
 ];
 
 export const headmasterCards: DashboardCard[] = [
@@ -89,5 +102,11 @@ export const headmasterCards: DashboardCard[] = [
     description: "Open the fees software.",
     href: "/fees",
     emoji: "💳",
+  },
+  {
+    title: "Books",
+    description: "View book stock, student book records, and book payments.",
+    href: "/books",
+    emoji: "📚",
   },
 ];
