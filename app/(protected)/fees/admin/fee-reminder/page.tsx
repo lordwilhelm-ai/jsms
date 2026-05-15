@@ -1,29 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type AnyRow = Record<string, any>;
-type GroupMode = "owing" | "all" | "class" | "level" | "individual";
+type SendMode = "owing" | "all" | "class" | "level" | "individual";
 type ChannelMode = "sms" | "whatsapp" | "both";
-type LinkMode = "fee" | "report" | "parent" | "custom";
 
-type RecipientRow = AnyRow & {
+type Recipient = {
   studentName: string;
-  studentIdValue: string;
-  classNameValue: string;
+  studentId: string;
+  className: string;
   levelGroup: string;
+  phone: string;
+  cleanPhone: string;
   expected: number;
   paid: number;
   balance: number;
-  parentName: string;
-  parentPhone: string;
-  cleanPhone: string;
   parentLink: string;
   message: string;
-  setupLabel: string;
 };
 
 const COLORS = {
@@ -34,41 +30,22 @@ const COLORS = {
   text: "#111827",
   muted: "#6b7280",
   border: "#e5e7eb",
-  dangerText: "#991b1b",
-  successText: "#166534",
-  warningText: "#92400e",
-  softGold: "#fff7d6",
+  danger: "#991b1b",
+  success: "#166534",
 };
 
-const DEFAULT_TEMPLATE =
+const DEFAULT_MESSAGE =
   "Dear Parent/Guardian, your ward {student_name} ({student_id}) in {class_name} has an outstanding school fees balance of {balance} for {term}, {academic_year}. Kindly make payment. View account: {portal_link}. Thank you. {school_name}";
 
-const TEMPLATES = [
-  {
-    name: "Fee Reminder",
-    value: DEFAULT_TEMPLATE,
-  },
-  {
-    name: "Short WhatsApp",
-    value:
-      "Hello, {student_name} ({class_name}) has a fee balance of {balance}. Kindly pay soon. Fee account: {portal_link} - {school_name}",
-  },
-  {
-    name: "Strong Reminder",
-    value:
-      "Dear Parent/Guardian, records show that {student_name} ({student_id}) still owes {balance} for {term}, {academic_year}. Kindly settle it as soon as possible. Details: {portal_link}. {school_name}",
-  },
-  {
-    name: "Custom",
-    value: DEFAULT_TEMPLATE,
-  },
-];
-
-function normalizeText(value: unknown) {
-  return String(value || "").trim().toLowerCase();
+function text(value: unknown) {
+  return String(value || "").trim();
 }
 
-function numberValue(value: unknown) {
+function lower(value: unknown) {
+  return text(value).toLowerCase();
+}
+
+function num(value: unknown) {
   const n = Number(value || 0);
   return Number.isFinite(n) ? n : 0;
 }
@@ -77,57 +54,47 @@ function money(value: number) {
   return `GHS ${Number(value || 0).toFixed(2)}`;
 }
 
-function getRole(row: AnyRow | null) {
-  const raw = normalizeText(row?.role);
-  if (raw === "owner" || raw === "admin" || raw === "headmaster") return raw;
-  return "teacher";
-}
-
 function getStudentName(row: AnyRow) {
-  const direct = String(row.full_name || row.student_name || row.studentName || row.fullName || row.name || "").trim();
+  const direct = text(row.full_name || row.student_name || row.studentName || row.fullName || row.name);
   if (direct) return direct;
 
-  const first = String(row.first_name || row.firstname || "").trim();
-  const other = String(row.other_name || row.middle_name || "").trim();
-  const last = String(row.last_name || row.surname || "").trim();
-  return `${first} ${other} ${last}`.replace(/\s+/g, " ").trim() || "-";
+  const first = text(row.first_name || row.firstname);
+  const other = text(row.other_name || row.middle_name);
+  const last = text(row.last_name || row.surname);
+
+  return `${first} ${other} ${last}`.replace(/\s+/g, " ").trim() || "Unknown Student";
 }
 
-function findRealJvsId(row: AnyRow) {
+function getStudentId(row: AnyRow) {
   const direct =
     row.jvs_id ||
     row.student_id ||
     row.jsms_id ||
     row.jvs_student_id ||
-    row.jvs_code ||
     row.student_code ||
-    row.student_number ||
     row.admission_number ||
     row.index_number ||
-    row.jvsId ||
     row.studentId ||
-    row.id_number ||
     "";
 
-  if (String(direct || "").toUpperCase().startsWith("JVS")) {
-    return String(direct).trim().toUpperCase().replace(/\s+/g, "");
+  if (text(direct).toUpperCase().startsWith("JVS")) {
+    return text(direct).toUpperCase().replace(/\s+/g, "");
   }
 
   for (const value of Object.values(row)) {
-    const text = String(value || "");
-    const match = text.match(/JVS\s*\d{4,}/i);
+    const match = text(value).match(/JVS\s*\d{4,}/i);
     if (match) return match[0].replace(/\s+/g, "").toUpperCase();
   }
 
-  return String(direct || "").trim();
+  return text(direct || row.id);
 }
 
 function getClassName(row: AnyRow) {
-  return String(row.class_name || row.className || row.class || row.current_class || row.student_class || row.grade || "").trim();
+  return text(row.class_name || row.className || row.class || row.current_class || row.student_class || row.grade || row.name);
 }
 
 function getLevelGroupFromClassName(className: string) {
-  const name = className.trim().toLowerCase();
+  const name = lower(className);
   if (name.includes("playroom")) return "Playroom";
   if (name.startsWith("kg")) return "KG";
   if (["class 1", "class 2", "class 3"].includes(name)) return "Lower Primary";
@@ -136,14 +103,13 @@ function getLevelGroupFromClassName(className: string) {
   return "Other";
 }
 
-function getLevelGroup(classRow: AnyRow | null, className: string) {
-  return String(classRow?.fee_level_group || "").trim() || getLevelGroupFromClassName(className);
-}
-
-function getParentName(row: AnyRow) {
-  return String(
-    row.parent_name || row.guardian_name || row.emergency_contact_name || row.father_name || row.mother_name || "Parent/Guardian"
-  ).trim();
+function cleanPhone(phone: string) {
+  const digits = text(phone).replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("233") && digits.length >= 12) return digits;
+  if (digits.startsWith("0") && digits.length === 10) return `233${digits.slice(1)}`;
+  if (digits.length === 9) return `233${digits}`;
+  return digits;
 }
 
 function getParentPhone(row: AnyRow) {
@@ -160,457 +126,350 @@ function getParentPhone(row: AnyRow) {
     row.mobile,
   ];
 
-  const found = candidates.find((value) => String(value || "").trim());
-  return String(found || "").trim();
+  const found = candidates.find((item) => text(item));
+  return text(found);
 }
 
-function cleanPhone(phone: string) {
-  const digits = String(phone || "").replace(/\D/g, "");
-  if (!digits) return "";
-  if (digits.startsWith("233")) return digits;
-  if (digits.startsWith("0") && digits.length === 10) return `233${digits.slice(1)}`;
-  if (digits.length === 9) return `233${digits}`;
-  return digits;
-}
-
-function sameStudentPayment(payment: AnyRow, student: AnyRow, studentId: string, studentName: string, className: string) {
-  const paymentStudentId = String(payment.student_id || payment.studentId || "").trim();
-  const paymentName = normalizeText(payment.student_name || payment.full_name || payment.name);
-  const paymentClass = normalizeText(payment.class_name || payment.className || payment.class);
-  const uuid = String(student.id || "").trim();
+function paymentMatchesStudent(payment: AnyRow, student: AnyRow, studentId: string, studentName: string, className: string) {
+  const paymentStudentId = text(payment.student_id || payment.studentId);
+  const uuid = text(student.id);
+  const paymentName = lower(payment.student_name || payment.full_name || payment.name);
+  const paymentClass = lower(payment.class_name || payment.className || payment.class);
 
   if (studentId && paymentStudentId === studentId) return true;
   if (uuid && paymentStudentId === uuid) return true;
 
-  return Boolean(paymentName) && paymentName === normalizeText(studentName) && (!paymentClass || paymentClass === normalizeText(className));
+  return Boolean(paymentName) && paymentName === lower(studentName) && (!paymentClass || paymentClass === lower(className));
 }
 
 function currentTermPayment(payment: AnyRow, academicYear: string, currentTerm: string) {
-  const pYear = normalizeText(payment.academic_year || payment.year);
-  const pTerm = normalizeText(payment.term || payment.current_term);
-  if (!pYear && !pTerm) return true;
-  const yearOk = !academicYear || !pYear || pYear === normalizeText(academicYear);
-  const termOk = !currentTerm || !pTerm || pTerm === normalizeText(currentTerm);
+  const year = lower(payment.academic_year || payment.year);
+  const term = lower(payment.term || payment.current_term);
+
+  const yearOk = !year || !academicYear || year === lower(academicYear);
+  const termOk = !term || !currentTerm || term === lower(currentTerm);
+
   return yearOk && termOk;
 }
 
 function getPaymentAmount(row: AnyRow) {
-  return numberValue(row.amount_paid || row.amount || row.paid_amount || row.payment_amount);
+  return num(row.amount_paid || row.amount || row.paid_amount || row.payment_amount);
 }
 
-function calculateExpectedFee(params: { student: AnyRow; classRow: AnyRow | null; newStudentItems: AnyRow[] }) {
-  const { student, classRow, newStudentItems } = params;
+function calculateExpected(student: AnyRow, classRow: AnyRow | null, newStudentItems: AnyRow[]) {
   const className = getClassName(student);
-  const levelGroup = getLevelGroup(classRow, className);
-  const isNew = student.is_new === true || normalizeText(student.student_type) === "new";
-  const returningFee = numberValue(classRow?.fee_returning || classRow?.fee_amount || classRow?.amount);
+  const levelGroup = text(classRow?.fee_level_group) || getLevelGroupFromClassName(className);
+  const isNew = student.is_new === true || lower(student.student_type) === "new";
+
+  const continuingFee = num(classRow?.fee_returning || classRow?.fee_amount || classRow?.amount);
   const newItemsTotal = newStudentItems
-    .filter((item) => String(item.level_group || "").trim() === levelGroup && item.is_active !== false)
-    .reduce((sum, item) => sum + numberValue(item.amount), 0);
-  const fallbackNewFee = numberValue(classRow?.fee_new || classRow?.new_student_fee);
+    .filter((item) => text(item.level_group) === levelGroup && item.is_active !== false)
+    .reduce((sum, item) => sum + num(item.amount), 0);
+  const newFee = newItemsTotal || num(classRow?.fee_new || classRow?.new_student_fee);
 
-  let baseFee = isNew ? newItemsTotal || fallbackNewFee : returningFee;
-  let setupLabel = isNew ? "New Student" : "Continuing";
+  let baseFee = isNew ? newFee : continuingFee;
 
-  const scholarship = normalizeText(student.scholarship_type || student.scholarship || student.fee_type);
-  const customAmount = numberValue(student.scholarship_amount || student.custom_fee_amount || student.custom_fee || student.special_fee_amount);
+  const scholarship = lower(student.scholarship_type || student.scholarship || student.fee_type);
+  const customAmount = num(student.scholarship_amount || student.custom_fee_amount || student.custom_fee || student.special_fee_amount);
 
-  if (scholarship === "full" || scholarship === "full scholarship") {
-    baseFee = 0;
-    setupLabel = "Full Scholarship";
-  } else if (scholarship === "half" || scholarship === "half scholarship") {
-    baseFee = baseFee / 2;
-    setupLabel = "Half Scholarship";
-  } else if (scholarship === "custom" || scholarship === "custom amount" || scholarship === "special") {
-    baseFee = customAmount;
-    setupLabel = "Custom Fee";
-  } else if (customAmount > 0 && Boolean(student.has_custom_fee || student.custom_fee_amount || student.custom_fee)) {
-    baseFee = customAmount;
-    setupLabel = "Custom Fee";
-  }
+  if (scholarship === "full" || scholarship === "full scholarship") baseFee = 0;
+  else if (scholarship === "half" || scholarship === "half scholarship") baseFee = baseFee / 2;
+  else if (scholarship === "custom" || scholarship === "custom amount" || scholarship === "special") baseFee = customAmount;
+  else if (customAmount > 0 && Boolean(student.has_custom_fee || student.custom_fee_amount || student.custom_fee)) baseFee = customAmount;
 
-  const arrears = numberValue(student.arrears || student.previous_balance || student.old_balance);
-  const expected = Math.max(baseFee + arrears, 0);
-  return { expected, setupLabel, levelGroup };
+  const arrears = num(student.arrears || student.previous_balance || student.old_balance);
+
+  return Math.max(baseFee + arrears, 0);
 }
 
-function buildParentLink(params: { baseUrl: string; linkMode: LinkMode; customPath: string; studentId: string }) {
-  const base = (params.baseUrl || "https://jefsemvision.cc").replace(/\/$/, "");
-  const id = encodeURIComponent(params.studentId || "");
-
-  if (params.linkMode === "fee") return `${base}/parent/fee/${id}`;
-  if (params.linkMode === "report") return `${base}/parent/report/${id}`;
-  if (params.linkMode === "parent") return `${base}/parent/${id}`;
-
-  const path = params.customPath.trim() || "/parent/fee/{student_id}";
-  const cleanedPath = path.startsWith("/") ? path : `/${path}`;
-  return `${base}${cleanedPath.replaceAll("{student_id}", id)}`;
+function fillMessage(template: string, data: Recipient, settings: { schoolName: string; academicYear: string; currentTerm: string }) {
+  return template
+    .replaceAll("{student_name}", data.studentName)
+    .replaceAll("{student_id}", data.studentId)
+    .replaceAll("{class_name}", data.className)
+    .replaceAll("{expected}", money(data.expected))
+    .replaceAll("{paid}", money(data.paid))
+    .replaceAll("{balance}", money(data.balance))
+    .replaceAll("{portal_link}", data.parentLink)
+    .replaceAll("{term}", settings.currentTerm || "current term")
+    .replaceAll("{academic_year}", settings.academicYear || "current academic year")
+    .replaceAll("{school_name}", settings.schoolName || "JEFSEM VISION SCHOOL");
 }
 
-function replacePlaceholders(template: string, row: Omit<RecipientRow, "message">, settings: AnyRow | null) {
-  const map: Record<string, string> = {
-    student_name: row.studentName,
-    student_id: row.studentIdValue,
-    class_name: row.classNameValue,
-    level: row.levelGroup,
-    expected: money(row.expected),
-    paid: money(row.paid),
-    balance: money(Math.max(row.balance, 0)),
-    parent_name: row.parentName,
-    parent_phone: row.parentPhone || "-",
-    term: String(settings?.current_term || "-"),
-    academic_year: String(settings?.academic_year || "-"),
-    school_name: String(settings?.school_name || "JEFSEM VISION SCHOOL"),
-    portal_link: row.parentLink,
+function inputStyle(): React.CSSProperties {
+  return {
+    width: "100%",
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: "16px",
+    padding: "14px 16px",
+    fontSize: "16px",
+    outline: "none",
+    background: "#fff",
   };
-
-  return template.replace(/\{(.*?)\}/g, (_, key) => map[String(key).trim()] ?? `{${key}}`);
-}
-
-function whatsappHref(phone: string, message: string) {
-  return phone ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}` : "#";
-}
-
-function smsHref(phone: string, message: string) {
-  return phone ? `sms:${phone}?body=${encodeURIComponent(message)}` : "#";
-}
-
-
-function ActionLink({ href, label }: { href: string; label: string }) {
-  const active = href.endsWith("/fee-reminder");
-  return (
-    <Link
-      href={href}
-      style={{
-        display: "block",
-        textDecoration: "none",
-        color: "#fff",
-        padding: "12px 14px",
-        borderRadius: "14px",
-        background: active ? "rgba(212,160,23,0.24)" : "rgba(255,255,255,0.07)",
-        border: active ? `1px solid ${COLORS.gold}` : "1px solid rgba(255,255,255,0.1)",
-        fontWeight: 800,
-        fontSize: "14px",
-      }}
-    >
-      {label}
-    </Link>
-  );
 }
 
 export default function FeeReminderPage() {
-  const router = useRouter();
-
-  const [checkingUser, setCheckingUser] = useState(true);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
-
-  const [settingsRow, setSettingsRow] = useState<AnyRow | null>(null);
-  const [classes, setClasses] = useState<AnyRow[]>([]);
   const [students, setStudents] = useState<AnyRow[]>([]);
+  const [classes, setClasses] = useState<AnyRow[]>([]);
   const [payments, setPayments] = useState<AnyRow[]>([]);
-  const [newStudentItems, setNewStudentItems] = useState<AnyRow[]>([]);
+  const [newItems, setNewItems] = useState<AnyRow[]>([]);
+  const [settings, setSettings] = useState<AnyRow | null>(null);
 
-  const [groupMode, setGroupMode] = useState<GroupMode>("owing");
-  const [baseUrl, setBaseUrl] = useState("https://jefsemvision.cc");
+  const [sendMode, setSendMode] = useState<SendMode>("owing");
+  const [channel, setChannel] = useState<ChannelMode>("sms");
+  const [selectedClass, setSelectedClass] = useState("");
+  const [selectedLevel, setSelectedLevel] = useState("");
+  const [studentSearch, setStudentSearch] = useState("");
+  const [selectedStudentId, setSelectedStudentId] = useState("");
+  const [messageTemplate, setMessageTemplate] = useState(DEFAULT_MESSAGE);
   const [customPath, setCustomPath] = useState("/parent/fee/{student_id}");
-  const [classFilter, setClassFilter] = useState("all");
-  const [levelFilter, setLevelFilter] = useState("all");
-  const [termMode, setTermMode] = useState("current");
-  const [search, setSearch] = useState("");
-  const [messageTemplate, setMessageTemplate] = useState(DEFAULT_TEMPLATE);
-  const [sendingSms, setSendingSms] = useState(false);
-  const [sendStatus, setSendStatus] = useState("");
-  const [copied, setCopied] = useState("");
+  const [sending, setSending] = useState(false);
+  const [status, setStatus] = useState("");
 
   useEffect(() => {
-    let active = true;
+    async function loadData() {
+      setLoading(true);
 
-    async function loadPage() {
-      try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+      const [studentsRes, classesRes, paymentsRes, settingsRes, newItemsRes] = await Promise.all([
+        supabase.from("students").select("*"),
+        supabase.from("classes").select("*"),
+        supabase.from("fee_payments").select("*"),
+        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
+        supabase.from("new_student_fee_items").select("*"),
+      ]);
 
-        if (!active) return;
-
-        if (!session?.user) {
-          router.replace("/");
-          return;
-        }
-
-        const [teachersRes, settingsRes, classesRes, studentsRes, paymentsRes, newItemsRes] = await Promise.all([
-          supabase.from("teachers").select("*"),
-          supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-          supabase.from("classes").select("*"),
-          supabase.from("students").select("*"),
-          supabase.from("fee_payments").select("*").order("created_at", { ascending: false }),
-          supabase.from("new_student_fee_items").select("*"),
-        ]);
-
-        if (!active) return;
-
-        const userRow =
-          (teachersRes.data || []).find((item) => item.auth_user_id === session.user.id) ||
-          (teachersRes.data || []).find((item) => normalizeText(item.email) === normalizeText(session.user.email)) ||
-          null;
-
-        if (!userRow) {
-          router.replace("/");
-          return;
-        }
-
-        if (getRole(userRow) === "teacher") {
-          router.replace("/fees/teacher");
-          return;
-        }
-
-        setSettingsRow(settingsRes.data || null);
-        setClasses(classesRes.data || []);
-        setStudents((studentsRes.data || []).filter((row) => row.active !== false));
-        setPayments(paymentsRes.data || []);
-        setNewStudentItems(newItemsRes.data || []);
-        setCheckingUser(false);
-        setLoading(false);
-      } catch (error: any) {
-        setLoadError(error?.message || "Failed to load fee reminder page.");
-        setCheckingUser(false);
-        setLoading(false);
-      }
+      setStudents(studentsRes.data || []);
+      setClasses(classesRes.data || []);
+      setPayments(paymentsRes.data || []);
+      setSettings(settingsRes.data || null);
+      setNewItems(newItemsRes.data || []);
+      setLoading(false);
     }
 
-    loadPage();
-    return () => {
-      active = false;
-    };
-  }, [router]);
+    loadData();
+  }, []);
 
-  const academicYear = String(settingsRow?.academic_year || "").trim();
-  const currentTerm = String(settingsRow?.current_term || "").trim();
+  const schoolName = text(settings?.school_name) || "JEFSEM VISION SCHOOL";
+  const academicYear = text(settings?.academic_year);
+  const currentTerm = text(settings?.current_term);
 
   const classMap = useMemo(() => {
     const map = new Map<string, AnyRow>();
-    classes.forEach((row) => {
-      const name = getClassName(row);
-      if (name) map.set(normalizeText(name), row);
-    });
+    classes.forEach((row) => map.set(getClassName(row), row));
     return map;
   }, [classes]);
 
-  const classNames = useMemo(() => {
-    return Array.from(new Set(students.map(getClassName).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b)));
+  const classOptions = useMemo(() => {
+    const values = new Set<string>();
+    students.forEach((student) => {
+      const className = getClassName(student);
+      if (className) values.add(className);
+    });
+    return [...values].sort((a, b) => a.localeCompare(b));
   }, [students]);
 
-  const allRows = useMemo<RecipientRow[]>(() => {
-    const built = students.map((student) => {
-      const studentName = getStudentName(student);
-      const studentIdValue = findRealJvsId(student);
-      const classNameValue = getClassName(student);
-      const classRow = classMap.get(normalizeText(classNameValue)) || null;
-      const expectedInfo = calculateExpectedFee({ student, classRow, newStudentItems });
-      const studentPayments = payments.filter((payment) => {
-        if (!sameStudentPayment(payment, student, studentIdValue, studentName, classNameValue)) return false;
-        if (termMode === "current") return currentTermPayment(payment, academicYear, currentTerm);
-        return true;
-      });
+  const levelOptions = ["Playroom", "KG", "Lower Primary", "Upper Primary", "JHS"];
 
-      const paid = studentPayments.reduce((sum, payment) => sum + getPaymentAmount(payment), 0);
-      const balance = expectedInfo.expected - paid;
-      const parentName = getParentName(student);
-      const parentPhone = getParentPhone(student);
-      const clean = cleanPhone(parentPhone);
-      const parentLink = buildParentLink({ baseUrl, linkMode: "custom", customPath, studentId: studentIdValue });
-
-      const baseRow = {
-        ...student,
-        studentName,
-        studentIdValue,
-        classNameValue,
-        levelGroup: expectedInfo.levelGroup,
-        expected: expectedInfo.expected,
-        paid,
-        balance,
-        parentName,
-        parentPhone,
-        cleanPhone: clean,
-        parentLink,
-        setupLabel: expectedInfo.setupLabel,
-      };
-
-      return { ...baseRow, message: replacePlaceholders(messageTemplate, baseRow, settingsRow) };
-    });
-
-    return built.sort((a, b) => b.balance - a.balance || a.studentName.localeCompare(b.studentName));
-  }, [students, payments, termMode, academicYear, currentTerm, classMap, newStudentItems, baseUrl, customPath, messageTemplate, settingsRow]);
-
-  const recipients = useMemo(() => {
-    const q = normalizeText(search);
-
-    return allRows.filter((row) => {
-      if (groupMode === "owing" && row.balance <= 0) return false;
-      if (groupMode === "class") return classFilter !== "all" && row.classNameValue === classFilter;
-      if (groupMode === "level") return levelFilter !== "all" && row.levelGroup === levelFilter;
-      if (groupMode === "individual") {
-        if (!q) return false;
-        return (
-          normalizeText(row.studentName).includes(q) ||
-          normalizeText(row.studentIdValue).includes(q) ||
-          normalizeText(row.classNameValue).includes(q) ||
-          normalizeText(row.parentPhone).includes(q)
+  const allFinanceRows = useMemo<Recipient[]>(() => {
+    return students
+      .filter((student) => (typeof student.active === "boolean" ? student.active : true))
+      .map((student) => {
+        const studentName = getStudentName(student);
+        const studentId = getStudentId(student);
+        const className = getClassName(student);
+        const classRow = classMap.get(className) || null;
+        const levelGroup = text(classRow?.fee_level_group) || getLevelGroupFromClassName(className);
+        const expected = calculateExpected(student, classRow, newItems);
+        const studentPayments = payments.filter(
+          (payment) => paymentMatchesStudent(payment, student, studentId, studentName, className) && currentTermPayment(payment, academicYear, currentTerm)
         );
-      }
-      return true;
-    });
-  }, [allRows, groupMode, classFilter, levelFilter, search]);
+        const paid = studentPayments.reduce((sum, payment) => sum + getPaymentAmount(payment), 0);
+        const balance = Math.max(expected - paid, 0);
+        const phone = getParentPhone(student);
+        const clean = cleanPhone(phone);
+        const path = customPath || "/parent/fee/{student_id}";
+        const parentLink = `https://jefsemvision.cc${path.startsWith("/") ? path : `/${path}`}`.replaceAll("{student_id}", encodeURIComponent(studentId));
 
-  const validRecipients = useMemo(() => recipients.filter((row) => row.cleanPhone), [recipients]);
-  const firstRecipient = validRecipients[0] || null;
+        return {
+          studentName,
+          studentId,
+          className,
+          levelGroup,
+          phone,
+          cleanPhone: clean,
+          expected,
+          paid,
+          balance,
+          parentLink,
+          message: "",
+        };
+      })
+      .filter((row) => row.studentId || row.studentName)
+      .map((row) => ({
+        ...row,
+        message: fillMessage(messageTemplate, row, { schoolName, academicYear, currentTerm }),
+      }));
+  }, [students, classMap, newItems, payments, academicYear, currentTerm, customPath, messageTemplate, schoolName]);
 
-  const summary = useMemo(() => {
-    return recipients.reduce(
-      (acc, row) => {
-        acc.total += 1;
-        if (row.cleanPhone) acc.withContacts += 1;
-        else acc.noContacts += 1;
-        if (row.balance > 0) acc.owing += 1;
-        acc.balance += Math.max(row.balance, 0);
-        return acc;
-      },
-      { total: 0, withContacts: 0, noContacts: 0, owing: 0, balance: 0 }
-    );
-  }, [recipients]);
+  const individualMatches = useMemo(() => {
+    const q = lower(studentSearch);
+    if (!q) return allFinanceRows.slice(0, 8);
+    return allFinanceRows
+      .filter((row) => lower(`${row.studentName} ${row.studentId} ${row.className}`).includes(q))
+      .slice(0, 8);
+  }, [allFinanceRows, studentSearch]);
 
-  async function copyText(text: string, label: string) {
-    await navigator.clipboard.writeText(text);
-    setCopied(label);
-    setTimeout(() => setCopied(""), 1800);
-  }
+  const selectedRecipients = useMemo(() => {
+    let rows = [...allFinanceRows];
+
+    if (sendMode === "owing") rows = rows.filter((row) => row.balance > 0);
+    if (sendMode === "class") rows = rows.filter((row) => row.className === selectedClass);
+    if (sendMode === "level") rows = rows.filter((row) => row.levelGroup === selectedLevel);
+    if (sendMode === "individual") rows = rows.filter((row) => row.studentId === selectedStudentId);
+
+    return rows;
+  }, [allFinanceRows, sendMode, selectedClass, selectedLevel, selectedStudentId]);
+
+  const canSend = selectedRecipients.filter((row) => row.cleanPhone);
+  const noPhone = selectedRecipients.length - canSend.length;
+  const owingCount = selectedRecipients.filter((row) => row.balance > 0).length;
 
   async function sendSms() {
-    if (!validRecipients.length) {
-      setSendStatus("No valid phone numbers found for this selection.");
+    setStatus("");
+
+    if (!canSend.length) {
+      setStatus("No valid parent phone numbers found.");
       return;
     }
 
-    const confirmed = window.confirm(`Send SMS to ${validRecipients.length} parent contact(s)?`);
-    if (!confirmed) return;
+    setSending(true);
 
     try {
-      setSendingSms(true);
-      setSendStatus("Sending SMS messages...");
+      const recipients = canSend.map((row, index) => ({
+        phone: row.cleanPhone,
+        message: row.message,
+        recipientId: `${row.studentId || "JSMS"}-${index + 1}`,
+        referenceId: `${row.studentId || "JSMS"}-${Date.now()}-${index + 1}`,
+        studentName: row.studentName,
+        studentId: row.studentId,
+      }));
 
       const response = await fetch("/api/beem/send-sms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: validRecipients.map((row) => ({
-            phone: row.cleanPhone,
-            message: row.message,
-            studentName: row.studentName,
-            studentId: row.studentIdValue,
-          })),
-        }),
+        body: JSON.stringify({ recipients }),
       });
 
       const data = await response.json();
-      if (!response.ok || !data.ok) throw new Error(data?.error || `SMS failed. Sent: ${data?.sent || 0}. Failed: ${data?.failed || 0}.`);
-      setSendStatus(`SMS sent. Sent: ${data.sent}. Failed: ${data.failed}.`);
+
+      if (!data.ok) {
+        setStatus(`SMS error: SMS failed. Sent: ${data.sent || 0}. Failed: ${data.failed || 0}. ${data.message || "Check Network response for details."}`);
+      } else {
+        setStatus(`SMS sent. Sent: ${data.sent}. Failed: ${data.failed}.`);
+      }
     } catch (error: any) {
-      setSendStatus(`SMS error: ${error?.message || "Failed to send SMS."}`);
-    } finally {
-      setSendingSms(false);
+      setStatus(`SMS error: ${error?.message || "Failed to send SMS."}`);
     }
+
+    setSending(false);
   }
 
   function sendWhatsapp() {
-    if (!validRecipients.length) {
-      setSendStatus("No valid WhatsApp numbers found for this selection.");
+    if (!canSend.length) {
+      setStatus("No valid parent phone numbers found.");
       return;
     }
 
-    if (validRecipients.length === 1) {
-      window.open(whatsappHref(validRecipients[0].cleanPhone, validRecipients[0].message), "_blank");
+    const links = canSend.map((row) => `https://wa.me/${row.cleanPhone}?text=${encodeURIComponent(row.message)}`);
+
+    if (links.length === 1) {
+      window.open(links[0], "_blank");
+      setStatus("WhatsApp opened for the selected parent.");
       return;
     }
 
-    const confirmed = window.confirm(`This will open WhatsApp links for ${validRecipients.length} contacts. Browser may block some popups. Continue?`);
-    if (!confirmed) return;
-
-    validRecipients.slice(0, 20).forEach((row, index) => {
-      setTimeout(() => window.open(whatsappHref(row.cleanPhone, row.message), "_blank"), index * 450);
-    });
-
-    if (validRecipients.length > 20) {
-      const remaining = validRecipients
-        .slice(20)
-        .map((row) => `${row.studentName} (${row.studentIdValue})\n${whatsappHref(row.cleanPhone, row.message)}`)
-        .join("\n\n");
-      copyText(remaining, "remaining WhatsApp links");
-      setSendStatus("Opened first 20 WhatsApp links and copied the rest.");
-    } else {
-      setSendStatus("WhatsApp links opened.");
-    }
+    navigator.clipboard.writeText(links.join("\n"));
+    window.open(links[0], "_blank");
+    setStatus("WhatsApp links copied. First chat opened. wa.me cannot bulk-send automatically; use SMS for bulk sending.");
   }
 
-  function copyWhatsappLinks() {
-    const text = validRecipients
-      .map((row) => `${row.studentName} (${row.studentIdValue})\n${whatsappHref(row.cleanPhone, row.message)}`)
-      .join("\n\n");
-    copyText(text, "WhatsApp links");
+  async function handleSend() {
+    if (channel === "sms") await sendSms();
+    if (channel === "whatsapp") sendWhatsapp();
+    if (channel === "both") {
+      await sendSms();
+      sendWhatsapp();
+    }
   }
 
   function copyMessages() {
-    const text = recipients.map((row) => `${row.studentName} (${row.studentIdValue}) - ${row.parentPhone || "NO PHONE"}\n${row.message}`).join("\n\n---\n\n");
-    copyText(text, "messages");
+    const content = canSend.map((row) => `${row.studentName} - ${row.cleanPhone}\n${row.message}`).join("\n\n---\n\n");
+    navigator.clipboard.writeText(content);
+    setStatus("Messages copied.");
   }
 
-  if (checkingUser || loading) return <div style={{ padding: "24px" }}>Loading fee reminder...</div>;
-  if (loadError) return <div style={{ padding: "24px", color: COLORS.dangerText }}>Error: {loadError}</div>;
+  if (loading) return <main style={{ padding: 24 }}>Loading fee reminder...</main>;
 
   return (
     <main style={{ minHeight: "100vh", background: COLORS.bg, fontFamily: "Arial, sans-serif", color: COLORS.text }}>
-      <style jsx global>{`
-        @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-        .card { animation: fadeUp 0.35s ease both; transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; }
-        .card:hover { transform: translateY(-3px); box-shadow: 0 18px 35px rgba(15,23,42,0.12) !important; border-color: ${COLORS.gold} !important; }
-        input:focus, select:focus, textarea:focus { outline: none; border-color: ${COLORS.gold} !important; box-shadow: 0 0 0 4px rgba(212,160,23,0.16); }
-        @media (max-width: 980px) { aside { display: none; } section { padding: 18px !important; } .topgrid { grid-template-columns: 1fr !important; } }
-      `}</style>
-
       <div style={{ display: "flex", minHeight: "100vh" }}>
-        <aside style={{ width: "260px", background: COLORS.sidebar, color: "#fff", padding: "22px", position: "sticky", top: 0, height: "100vh" }}>
-          <div style={{ fontSize: "20px", fontWeight: 950, marginBottom: "6px" }}>JVS Fees</div>
-          <div style={{ color: "#cbd5e1", fontSize: "13px", marginBottom: "22px" }}>Fee Reminder</div>
-          <div style={{ display: "grid", gap: "10px" }}>
-            <ActionLink href="/fees/admin" label="📊 Dashboard" />
-            <ActionLink href="/fees/admin/record-payment" label="💰 Record Payment" />
-            <ActionLink href="/fees/admin/student-accounts" label="👨‍🎓 Student Accounts" />
-            <ActionLink href="/fees/admin/debtors" label="🚨 Debtors" />
-            <ActionLink href="/fees/admin/receipts" label="🧾 Receipts" />
-            <ActionLink href="/fees/admin/reports" label="📈 Reports" />
-            <ActionLink href="/fees/admin/fee-reminder" label="📩 Fee Reminder" />
-            <ActionLink href="/fees/admin/fee-structure" label="⚙️ Fee Structure" />
-          </div>
+        <aside style={{ width: 260, background: COLORS.sidebar, color: "#fff", padding: 18, borderRight: `4px solid ${COLORS.gold}` }}>
+          <h2 style={{ margin: "10px 0 4px" }}>JVS Fees</h2>
+          <p style={{ margin: "0 0 20px", opacity: 0.8 }}>Fee Reminder</p>
+          <nav style={{ display: "grid", gap: 10 }}>
+            {[
+              ["Dashboard", "/fees/admin"],
+              ["Record Payment", "/fees/admin/record-payment"],
+              ["Student Accounts", "/fees/admin/student-accounts"],
+              ["Debtors", "/fees/admin/debtors"],
+              ["Receipts", "/fees/admin/receipts"],
+              ["Reports", "/fees/admin/reports"],
+              ["Fee Reminder", "/fees/admin/fee-reminder"],
+              ["Fee Structure", "/fees/admin/fee-structure"],
+            ].map(([label, href]) => (
+              <Link
+                key={href}
+                href={href}
+                style={{
+                  color: "#fff",
+                  textDecoration: "none",
+                  padding: "14px 16px",
+                  borderRadius: 14,
+                  background: href === "/fees/admin/fee-reminder" ? "rgba(212,160,23,.35)" : "rgba(255,255,255,.07)",
+                  border: href === "/fees/admin/fee-reminder" ? `1px solid ${COLORS.gold}` : "1px solid rgba(255,255,255,.08)",
+                  fontWeight: 800,
+                }}
+              >
+                {label}
+              </Link>
+            ))}
+          </nav>
         </aside>
 
-        <section style={{ flex: 1, padding: "26px", maxWidth: "1120px", margin: "0 auto" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", alignItems: "flex-start", marginBottom: "18px" }}>
-            <div>
-              <Link href="/fees/admin" style={{ color: COLORS.muted, textDecoration: "none", fontWeight: 800 }}>← Back to Fees Dashboard</Link>
-              <h1 style={{ fontSize: "32px", margin: "10px 0 4px", fontWeight: 950 }}>Fee Reminder</h1>
-              <p style={{ margin: 0, color: COLORS.muted }}>Select parents, type message, then send by SMS or WhatsApp.</p>
-            </div>
-            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: "18px", padding: "14px 16px", minWidth: "210px" }}>
-              <div style={{ fontSize: "12px", color: COLORS.muted, fontWeight: 900 }}>Current Term</div>
-              <div style={{ fontWeight: 950 }}>{currentTerm || "No term set"}</div>
-              <div style={{ color: COLORS.muted }}>{academicYear || "No academic year set"}</div>
-            </div>
-          </div>
+        <section style={{ flex: 1, padding: 28 }}>
+          <Link href="/fees/admin" style={{ color: COLORS.muted, textDecoration: "none", fontWeight: 800 }}>
+            ← Back to Fees Dashboard
+          </Link>
 
-          <div className="topgrid" style={{ display: "grid", gridTemplateColumns: "360px 1fr", gap: "16px", alignItems: "start" }}>
-            <div className="card" style={cardStyle()}>
-              <h2 style={cardTitle()}>Send To</h2>
-              <select value={groupMode} onChange={(e) => setGroupMode(e.target.value as GroupMode)} style={fieldStyle()}>
+          <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 20, marginTop: 24, marginBottom: 24 }}>
+            <div>
+              <h1 style={{ fontSize: 38, margin: 0 }}>Fee Reminder</h1>
+              <p style={{ margin: "10px 0 0", color: COLORS.muted, fontSize: 18 }}>Select parents, type message, then send by SMS or WhatsApp.</p>
+            </div>
+            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 18, padding: "14px 22px" }}>
+              <b>{currentTerm || "Current Term"}</b>
+              <br />
+              <span style={{ color: COLORS.muted }}>{academicYear || "Academic Year"}</span>
+            </div>
+          </header>
+
+          <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 22, alignItems: "start" }}>
+            <section style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 24, padding: 22 }}>
+              <h2 style={{ marginTop: 0 }}>Send To</h2>
+
+              <label style={{ fontWeight: 800 }}>Recipient group</label>
+              <select value={sendMode} onChange={(e) => setSendMode(e.target.value as SendMode)} style={{ ...inputStyle(), marginTop: 8, marginBottom: 14 }}>
                 <option value="owing">Those owing</option>
                 <option value="all">All students</option>
                 <option value="class">One class</option>
@@ -618,140 +477,138 @@ export default function FeeReminderPage() {
                 <option value="individual">Individual student</option>
               </select>
 
-              {groupMode === "class" && (
-                <select value={classFilter} onChange={(e) => setClassFilter(e.target.value)} style={{ ...fieldStyle(), marginTop: "10px" }}>
-                  <option value="all">Choose class</option>
-                  {classNames.map((name) => <option key={name} value={name}>{name}</option>)}
-                </select>
+              {sendMode === "class" && (
+                <>
+                  <label style={{ fontWeight: 800 }}>Class</label>
+                  <select value={selectedClass} onChange={(e) => setSelectedClass(e.target.value)} style={{ ...inputStyle(), marginTop: 8, marginBottom: 14 }}>
+                    <option value="">Select class</option>
+                    {classOptions.map((className) => (
+                      <option key={className} value={className}>{className}</option>
+                    ))}
+                  </select>
+                </>
               )}
 
-              {groupMode === "level" && (
-                <select value={levelFilter} onChange={(e) => setLevelFilter(e.target.value)} style={{ ...fieldStyle(), marginTop: "10px" }}>
-                  <option value="all">Choose level</option>
-                  {['Playroom', 'KG', 'Lower Primary', 'Upper Primary', 'JHS'].map((level) => <option key={level} value={level}>{level}</option>)}
-                </select>
+              {sendMode === "level" && (
+                <>
+                  <label style={{ fontWeight: 800 }}>Level</label>
+                  <select value={selectedLevel} onChange={(e) => setSelectedLevel(e.target.value)} style={{ ...inputStyle(), marginTop: 8, marginBottom: 14 }}>
+                    <option value="">Select level</option>
+                    {levelOptions.map((level) => (
+                      <option key={level} value={level}>{level}</option>
+                    ))}
+                  </select>
+                </>
               )}
 
-              {groupMode === "individual" && (
-                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Type name, JVS ID or phone" style={{ ...fieldStyle(), marginTop: "10px" }} />
+              {sendMode === "individual" && (
+                <>
+                  <label style={{ fontWeight: 800 }}>Search student</label>
+                  <input value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} placeholder="Search name or JVS ID" style={{ ...inputStyle(), marginTop: 8 }} />
+                  <div style={{ display: "grid", gap: 8, marginTop: 10, maxHeight: 220, overflowY: "auto" }}>
+                    {individualMatches.map((row) => (
+                      <button
+                        key={`${row.studentId}-${row.studentName}`}
+                        onClick={() => setSelectedStudentId(row.studentId)}
+                        style={{
+                          textAlign: "left",
+                          border: `1px solid ${selectedStudentId === row.studentId ? COLORS.gold : COLORS.border}`,
+                          background: selectedStudentId === row.studentId ? "#fff7d6" : "#fff",
+                          borderRadius: 14,
+                          padding: 12,
+                          cursor: "pointer",
+                          fontWeight: 800,
+                        }}
+                      >
+                        {row.studentName} <span style={{ color: COLORS.muted }}>({row.studentId})</span>
+                        <br />
+                        <small style={{ color: COLORS.muted }}>{row.className} • {row.cleanPhone || "No phone"}</small>
+                      </button>
+                    ))}
+                  </div>
+                </>
               )}
 
-              <select value={termMode} onChange={(e) => setTermMode(e.target.value)} style={{ ...fieldStyle(), marginTop: "10px" }}>
-                <option value="current">Current term balance</option>
-                <option value="all">All history balance</option>
+              <label style={{ fontWeight: 800 }}>Channel</label>
+              <select value={channel} onChange={(e) => setChannel(e.target.value as ChannelMode)} style={{ ...inputStyle(), marginTop: 8, marginBottom: 14 }}>
+                <option value="sms">SMS via Beem</option>
+                <option value="whatsapp">WhatsApp link</option>
+                <option value="both">SMS + WhatsApp</option>
               </select>
 
-              <input value={customPath} onChange={(e) => setCustomPath(e.target.value)} placeholder="/parent/fee/{student_id}" style={{ ...fieldStyle(), marginTop: "10px" }} />
-              <div style={{ fontSize: "12px", color: COLORS.muted, marginTop: "8px", lineHeight: 1.4 }}>
-                Parent link example: {baseUrl}/parent/fee/JVS123456
-              </div>
-            </div>
+              <label style={{ fontWeight: 800 }}>Parent fee link path</label>
+              <input value={customPath} onChange={(e) => setCustomPath(e.target.value)} style={{ ...inputStyle(), marginTop: 8 }} />
+              <small style={{ color: COLORS.muted }}>Example: https://jefsemvision.cc/parent/fee/JVS123456</small>
+            </section>
 
-            <div className="card" style={cardStyle()}>
-              <h2 style={cardTitle()}>Message</h2>
-              <textarea value={messageTemplate} onChange={(e) => setMessageTemplate(e.target.value)} rows={8} style={{ ...fieldStyle(), resize: "vertical", lineHeight: 1.5 }} />
-              <div style={{ color: COLORS.muted, fontSize: "12px", marginTop: "8px" }}>
-                Placeholders: {'{student_name}'}, {'{student_id}'}, {'{class_name}'}, {'{balance}'}, {'{portal_link}'}, {'{term}'}, {'{academic_year}'}, {'{school_name}'}.
-              </div>
-            </div>
+            <section style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 24, padding: 22 }}>
+              <h2 style={{ marginTop: 0 }}>Message</h2>
+              <textarea value={messageTemplate} onChange={(e) => setMessageTemplate(e.target.value)} rows={9} style={{ ...inputStyle(), resize: "vertical", lineHeight: 1.5 }} />
+              <p style={{ color: COLORS.muted, marginTop: 10 }}>
+                Placeholders: {"{student_name}"}, {"{student_id}"}, {"{class_name}"}, {"{balance}"}, {"{portal_link}"}, {"{term}"}, {"{academic_year}"}, {"{school_name}"}
+              </p>
+            </section>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "12px", margin: "16px 0" }}>
-            <SummaryCard label="Selected" value={summary.total} />
-            <SummaryCard label="Can Send" value={summary.withContacts} />
-            <SummaryCard label="No Phone" value={summary.noContacts} danger />
-            <SummaryCard label="Owing" value={summary.owing} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 18, marginTop: 22 }}>
+            <Summary title="Selected" value={selectedRecipients.length} />
+            <Summary title="Can Send" value={canSend.length} />
+            <Summary title="No Phone" value={noPhone} danger />
+            <Summary title="Owing" value={owingCount} danger />
           </div>
 
-          <div className="card" style={cardStyle()}>
-            <h2 style={cardTitle()}>Send</h2>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "10px" }}>
-              <button onClick={sendSms} disabled={sendingSms} style={{ ...solidButton(), opacity: sendingSms ? 0.6 : 1 }}>
-                {sendingSms ? "Sending SMS..." : `Send SMS (${validRecipients.length})`}
+          <section style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 24, padding: 22, marginTop: 22 }}>
+            <h2 style={{ marginTop: 0 }}>Send</h2>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <button onClick={handleSend} disabled={sending || !canSend.length} style={buttonStyle(COLORS.gold, "#111827", sending || !canSend.length)}>
+                {sending ? "Sending..." : channel === "sms" ? `Send SMS (${canSend.length})` : channel === "whatsapp" ? `Send WhatsApp (${canSend.length})` : `Send Both (${canSend.length})`}
               </button>
-              <button onClick={sendWhatsapp} style={{ ...solidButton(), background: "#16a34a", color: "#fff", boxShadow: "0 12px 25px rgba(22,163,74,0.22)" }}>
-                Send WhatsApp ({validRecipients.length})
+              <button onClick={sendWhatsapp} disabled={!canSend.length} style={buttonStyle("#16a34a", "#fff", !canSend.length)}>
+                Open WhatsApp
               </button>
-              <button onClick={copyWhatsappLinks} style={outlineButton()}>Copy WhatsApp Links</button>
-              <button onClick={copyMessages} style={outlineButton()}>Copy Messages</button>
+              <button onClick={copyMessages} disabled={!canSend.length} style={buttonStyle("#fff", COLORS.text, !canSend.length)}>
+                Copy Messages
+              </button>
             </div>
-            {sendStatus && <div style={{ marginTop: "12px", fontWeight: 900, color: sendStatus.startsWith("SMS error") ? COLORS.dangerText : COLORS.successText }}>{sendStatus}</div>}
-            {copied && <div style={{ marginTop: "12px", fontWeight: 900, color: COLORS.successText }}>Copied {copied}.</div>}
-          </div>
+            {status && <p style={{ margin: "16px 0 0", color: status.toLowerCase().includes("error") ? COLORS.danger : COLORS.success, fontWeight: 800 }}>{status}</p>}
+          </section>
 
-          <div className="card" style={{ ...cardStyle(), marginTop: "16px" }}>
-            <h2 style={cardTitle()}>Preview</h2>
-            {firstRecipient ? (
-              <div style={{ background: "#f8fafc", border: `1px solid ${COLORS.border}`, borderRadius: "16px", padding: "14px", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-                {firstRecipient.message}
+          <section style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 24, padding: 22, marginTop: 22 }}>
+            <h2 style={{ marginTop: 0 }}>Preview</h2>
+            {canSend[0] ? (
+              <div style={{ whiteSpace: "pre-wrap", color: COLORS.text, lineHeight: 1.6 }}>
+                <b>{canSend[0].studentName}</b> • {canSend[0].cleanPhone}
+                <br /><br />
+                {canSend[0].message}
               </div>
             ) : (
-              <div style={{ color: COLORS.muted }}>No valid parent contact selected.</div>
+              <p style={{ color: COLORS.muted }}>No recipient with phone selected.</p>
             )}
-          </div>
+          </section>
         </section>
       </div>
     </main>
   );
 }
 
-function SummaryCard({ label, value, danger = false }: { label: string; value: string | number; danger?: boolean }) {
+function Summary({ title, value, danger = false }: { title: string; value: number; danger?: boolean }) {
   return (
-    <div className="card" style={cardStyle()}>
-      <div style={{ color: COLORS.muted, fontWeight: 900, fontSize: "13px" }}>{label}</div>
-      <div style={{ fontWeight: 950, fontSize: "24px", marginTop: "6px", color: danger ? COLORS.dangerText : COLORS.text }}>{value}</div>
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 22, padding: 22 }}>
+      <p style={{ margin: 0, color: COLORS.muted, fontWeight: 800 }}>{title}</p>
+      <h2 style={{ margin: "10px 0 0", fontSize: 32, color: danger ? COLORS.danger : COLORS.text }}>{value}</h2>
     </div>
   );
 }
 
-function cardStyle(): CSSProperties {
+function buttonStyle(bg: string, color: string, disabled = false): React.CSSProperties {
   return {
-    background: COLORS.card,
-    border: `1px solid ${COLORS.border}`,
-    borderRadius: "24px",
-    padding: "18px",
-    boxShadow: "0 10px 25px rgba(15,23,42,0.07)",
-  };
-}
-
-function cardTitle(): CSSProperties {
-  return { margin: "0 0 14px", fontSize: "18px", fontWeight: 950 };
-}
-
-function fieldStyle(): CSSProperties {
-  return {
-    width: "100%",
-    border: `1px solid ${COLORS.border}`,
-    borderRadius: "14px",
-    padding: "12px 13px",
-    background: "#fff",
-    color: COLORS.text,
-    fontWeight: 700,
-    boxSizing: "border-box",
-  };
-}
-
-function solidButton(): CSSProperties {
-  return {
-    border: "none",
-    background: COLORS.gold,
-    color: COLORS.text,
-    borderRadius: "14px",
-    padding: "13px 18px",
-    fontWeight: 950,
-    cursor: "pointer",
-    boxShadow: "0 12px 25px rgba(212,160,23,0.25)",
-  };
-}
-
-function outlineButton(): CSSProperties {
-  return {
-    border: `1px solid ${COLORS.border}`,
-    background: "#fff",
-    color: COLORS.text,
-    borderRadius: "14px",
-    padding: "12px 16px",
+    border: bg === "#fff" ? `1px solid ${COLORS.border}` : "none",
+    background: disabled ? "#e5e7eb" : bg,
+    color: disabled ? COLORS.muted : color,
+    padding: "16px 22px",
+    borderRadius: 16,
+    cursor: disabled ? "not-allowed" : "pointer",
     fontWeight: 900,
-    cursor: "pointer",
+    fontSize: 16,
   };
 }
