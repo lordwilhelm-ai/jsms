@@ -1,131 +1,247 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-type SmsMessage = {
-  phone: string;
-  message: string;
+type SmsRecipient = {
+  phone?: string;
+  dest_addr?: string;
+  message?: string;
+  recipientId?: string;
+  recipient_id?: string;
+  referenceId?: string;
+  reference_id?: string;
   studentName?: string;
   studentId?: string;
 };
 
-function cleanPhoneForBeem(phone: string) {
-  const digits = String(phone || "").replace(/\D/g, "");
-  if (!digits) return "";
-  if (digits.startsWith("233")) return digits;
-  if (digits.startsWith("0") && digits.length === 10) return `233${digits.slice(1)}`;
-  if (digits.length === 9) return `233${digits}`;
-  return digits;
+function cleanPhone(phone: string) {
+  if (!phone) return "";
+
+  let value = String(phone).trim();
+
+  value = value.replace(/\s+/g, "");
+  value = value.replace(/-/g, "");
+  value = value.replace(/\(/g, "");
+  value = value.replace(/\)/g, "");
+
+  if (value.startsWith("+")) {
+    value = value.slice(1);
+  }
+
+  // Ghana local: 024XXXXXXX -> 23324XXXXXXX
+  if (value.startsWith("0") && value.length === 10) {
+    value = `233${value.slice(1)}`;
+  }
+
+  // Ghana without 0: 24XXXXXXX -> 23324XXXXXXX
+  if (value.length === 9 && !value.startsWith("233")) {
+    value = `233${value}`;
+  }
+
+  return value;
 }
 
-function chunkArray<T>(items: T[], size: number) {
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
-  return chunks;
+function makeReferenceId(index: number, recipient?: SmsRecipient) {
+  const base =
+    recipient?.reference_id ||
+    recipient?.referenceId ||
+    recipient?.recipient_id ||
+    recipient?.recipientId ||
+    recipient?.studentId ||
+    `JSMS-${Date.now()}-${index + 1}`;
+
+  return String(base)
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .slice(0, 50);
 }
 
-export async function POST(req: NextRequest) {
+async function sendOneBeemSms(params: {
+  phone: string;
+  message: string;
+  recipientId: string;
+  referenceId: string;
+  studentName?: string;
+  studentId?: string;
+}) {
+  const apiKey = process.env.BEEM_API_KEY;
+  const secretKey = process.env.BEEM_SECRET_KEY;
+  const sourceAddr = process.env.BEEM_SOURCE_ADDR || "Froove";
+  const smsUrl =
+    process.env.BEEM_SMS_URL || "https://apisms.beem.africa/v1/send";
+
+  if (!apiKey || !secretKey) {
+    throw new Error("Missing BEEM_API_KEY or BEEM_SECRET_KEY.");
+  }
+
+  const cleanedPhone = cleanPhone(params.phone);
+
+  if (!cleanedPhone) {
+    return {
+      ok: false,
+      status: 400,
+      count: 1,
+      recipients: [
+        {
+          phone: params.phone,
+          dest_addr: cleanedPhone,
+          studentName: params.studentName || "",
+          studentId: params.studentId || "",
+        },
+      ],
+      response: {
+        message: "Invalid phone number.",
+      },
+    };
+  }
+
+  const auth = Buffer.from(`${apiKey}:${secretKey}`).toString("base64");
+
+  const payload = {
+    source_addr: sourceAddr,
+    encoding: 0,
+    schedule_time: "",
+    message: params.message,
+    recipients: [
+      {
+        recipient_id: params.recipientId,
+        reference_id: params.referenceId,
+        dest_addr: cleanedPhone,
+      },
+    ],
+  };
+
+  const response = await fetch(smsUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const text = await response.text();
+
+  let data: any;
+
   try {
-    const apiKey = process.env.BEEM_API_KEY;
-    const secretKey = process.env.BEEM_SECRET_KEY;
-    const sourceAddr = process.env.BEEM_SOURCE_ADDR || "JEFSEM";
-    const smsUrl = process.env.BEEM_SMS_URL || "https://apisms.beem.africa/v1/send";
+    data = JSON.parse(text);
+  } catch {
+    data = { raw: text };
+  }
 
-    if (!apiKey || !secretKey) {
+  return {
+    ok: response.ok,
+    status: response.status,
+    count: 1,
+    recipients: [
+      {
+        phone: cleanedPhone,
+        dest_addr: cleanedPhone,
+        studentName: params.studentName || "",
+        studentId: params.studentId || "",
+      },
+    ],
+    response: data,
+  };
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+
+    const defaultMessage = String(body?.message || "").trim();
+
+    const recipients: SmsRecipient[] = Array.isArray(body?.recipients)
+      ? body.recipients
+      : [];
+
+    if (!recipients.length) {
       return NextResponse.json(
-        { ok: false, error: "Missing BEEM_API_KEY or BEEM_SECRET_KEY in environment variables." },
-        { status: 500 }
+        {
+          ok: false,
+          total: 0,
+          sent: 0,
+          failed: 0,
+          message: "No recipients provided.",
+        },
+        { status: 400 }
       );
     }
 
-    const body = await req.json();
-    const messages: SmsMessage[] = Array.isArray(body?.messages) ? body.messages : [];
+    const cleanedRecipients = recipients
+      .map((recipient, index) => {
+        const phone = cleanPhone(
+          String(recipient.phone || recipient.dest_addr || "")
+        );
 
-    const cleaned = messages
-      .map((item, index) => ({
-        ...item,
-        id: String(index + 1),
-        dest_addr: cleanPhoneForBeem(item.phone),
-        message: String(item.message || "").trim(),
-      }))
-      .filter((item) => item.dest_addr && item.message);
+        const message = String(recipient.message || defaultMessage || "").trim();
 
-    if (!cleaned.length) {
-      return NextResponse.json({ ok: false, error: "No valid recipients/messages found." }, { status: 400 });
-    }
+        const referenceId = makeReferenceId(index, recipient);
 
-    const auth = Buffer.from(`${apiKey}:${secretKey}`).toString("base64");
-    const results: any[] = [];
-
-    /*
-      Beem accepts one message body per request. Since school fee reminders are personalised
-      per student, we group recipients with identical messages and send each group in batches.
-    */
-    const grouped = new Map<string, typeof cleaned>();
-    cleaned.forEach((item) => {
-      const list = grouped.get(item.message) || [];
-      list.push(item);
-      grouped.set(item.message, list);
-    });
-
-    for (const [message, group] of grouped.entries()) {
-      const chunks = chunkArray(group, 100);
-
-      for (const chunk of chunks) {
-        const payload = {
-          source_addr: sourceAddr,
-          schedule_time: "",
-          encoding: 0,
+        return {
+          phone,
           message,
-          recipients: chunk.map((item, index) => ({
-            recipient_id: item.studentId || item.id || String(index + 1),
-            dest_addr: item.dest_addr,
-          })),
+          recipientId: String(
+            recipient.recipient_id ||
+              recipient.recipientId ||
+              referenceId ||
+              index + 1
+          ),
+          referenceId,
+          studentName: String(recipient.studentName || ""),
+          studentId: String(recipient.studentId || ""),
         };
+      })
+      .filter((item) => item.phone && item.message);
 
-        const response = await fetch(smsUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Basic ${auth}`,
-          },
-          body: JSON.stringify(payload),
-        });
-
-        const text = await response.text();
-        let data: any = null;
-        try {
-          data = text ? JSON.parse(text) : null;
-        } catch {
-          data = { raw: text };
-        }
-
-        results.push({
-          ok: response.ok,
-          status: response.status,
-          count: chunk.length,
-          recipients: chunk.map((item) => ({
-            phone: item.phone,
-            dest_addr: item.dest_addr,
-            studentName: item.studentName,
-            studentId: item.studentId,
-          })),
-          response: data,
-        });
-      }
+    if (!cleanedRecipients.length) {
+      return NextResponse.json(
+        {
+          ok: false,
+          total: 0,
+          sent: 0,
+          failed: 0,
+          message: "No valid phone numbers or messages found.",
+        },
+        { status: 400 }
+      );
     }
 
-    const sent = results.filter((item) => item.ok).reduce((sum, item) => sum + item.count, 0);
-    const failed = cleaned.length - sent;
+    const results = [];
+
+    for (let i = 0; i < cleanedRecipients.length; i++) {
+      const recipient = cleanedRecipients[i];
+
+      const result = await sendOneBeemSms({
+        phone: recipient.phone,
+        message: recipient.message,
+        recipientId: recipient.recipientId,
+        referenceId: recipient.referenceId,
+        studentName: recipient.studentName,
+        studentId: recipient.studentId,
+      });
+
+      results.push(result);
+    }
+
+    const sent = results.filter((item) => item.ok).length;
+    const failed = results.length - sent;
 
     return NextResponse.json({
       ok: failed === 0,
-      total: cleaned.length,
+      total: results.length,
       sent,
       failed,
       results,
     });
   } catch (error: any) {
     return NextResponse.json(
-      { ok: false, error: error?.message || "Failed to send SMS." },
+      {
+        ok: false,
+        total: 0,
+        sent: 0,
+        failed: 0,
+        message: error?.message || "Failed to send SMS.",
+      },
       { status: 500 }
     );
   }
