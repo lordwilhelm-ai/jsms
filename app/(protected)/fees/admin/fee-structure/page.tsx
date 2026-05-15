@@ -159,6 +159,10 @@ function formatMoney(value: number) {
   return `GHS ${Number(value || 0).toFixed(2)}`;
 }
 
+function getErrorMessage(error: any, fallback: string) {
+  return error?.message || error?.details || error?.hint || fallback;
+}
+
 export default function FeesStructurePage() {
   const router = useRouter();
 
@@ -265,7 +269,7 @@ export default function FeesStructurePage() {
 
     void checkAndLoad().catch((error) => {
       console.error(error);
-      setMessage(error instanceof Error ? `Error: ${error.message}` : "Error: Failed to load.");
+      setMessage(`Error: ${getErrorMessage(error, "Failed to load.")}`);
       setCheckingUser(false);
       setLoading(false);
     });
@@ -387,9 +391,7 @@ export default function FeesStructurePage() {
       setMessage(`${level} continuing fees and uniform prices updated.`);
     } catch (error) {
       console.error(error);
-      setMessage(
-        error instanceof Error ? `Error: ${error.message}` : "Error: Failed to save fee structure."
-      );
+      setMessage(`Error: ${getErrorMessage(error, "Failed to save fee structure.")}`);
     } finally {
       setSavingLevel("");
     }
@@ -441,9 +443,7 @@ export default function FeesStructurePage() {
       setMessage("All level fee structures updated.");
     } catch (error) {
       console.error(error);
-      setMessage(
-        error instanceof Error ? `Error: ${error.message}` : "Error: Failed to save all levels."
-      );
+      setMessage(`Error: ${getErrorMessage(error, "Failed to save all levels.")}`);
     } finally {
       setSavingLevel("");
     }
@@ -510,7 +510,7 @@ export default function FeesStructurePage() {
       resetItemForm();
     } catch (error) {
       console.error(error);
-      setMessage(error instanceof Error ? `Error: ${error.message}` : "Error: Failed to save item.");
+      setMessage(`Error: ${getErrorMessage(error, "Failed to save item.")}`);
     } finally {
       setSavingItem(false);
     }
@@ -535,9 +535,7 @@ export default function FeesStructurePage() {
       setMessage(`${item.item_name} removed.`);
     } catch (error) {
       console.error(error);
-      setMessage(
-        error instanceof Error ? `Error: ${error.message}` : "Error: Failed to remove item."
-      );
+      setMessage(`Error: ${getErrorMessage(error, "Failed to remove item.")}`);
     } finally {
       setSavingItem(false);
     }
@@ -576,9 +574,7 @@ export default function FeesStructurePage() {
       setMessage(`Default new student structure added for ${level}. Enter the amounts now.`);
     } catch (error) {
       console.error(error);
-      setMessage(
-        error instanceof Error ? `Error: ${error.message}` : "Error: Failed to add defaults."
-      );
+      setMessage(`Error: ${getErrorMessage(error, "Failed to add defaults.")}`);
     } finally {
       setSeedingLevel("");
     }
@@ -597,10 +593,49 @@ export default function FeesStructurePage() {
         color: COLORS.text,
       }}
     >
-      <div style={{ display: "flex", minHeight: "100vh" }}>
+      <style jsx global>{`
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(16px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes softPulse {
+          0%, 100% { box-shadow: 0 18px 38px rgba(15, 23, 42, 0.08); }
+          50% { box-shadow: 0 22px 48px rgba(212, 160, 23, 0.14); }
+        }
+
+        input:focus {
+          border-color: ${COLORS.gold} !important;
+          box-shadow: 0 0 0 4px rgba(212, 160, 23, 0.16);
+        }
+
+        button, a {
+          transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+        }
+
+        button:hover, a:hover {
+          filter: brightness(0.98);
+        }
+
+        @media (max-width: 900px) {
+          .fee-page-shell { flex-direction: column; }
+          .fee-sidebar {
+            width: auto !important;
+            position: relative !important;
+            min-height: auto !important;
+          }
+          .fee-main { padding: 16px !important; }
+          .fee-grid { grid-template-columns: 1fr !important; }
+          .fee-hero-title { font-size: 24px !important; }
+          .fee-modal-form { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
+
+      <div className="fee-page-shell" style={{ display: "flex", minHeight: "100vh" }}>
         <aside
+          className="fee-sidebar"
           style={{
-            width: "290px",
+            width: "270px",
             background: `linear-gradient(180deg, ${COLORS.sidebar} 0%, ${COLORS.sidebarSoft} 100%)`,
             color: "#fff",
             padding: "24px 18px",
@@ -654,7 +689,7 @@ export default function FeesStructurePage() {
           </div>
         </aside>
 
-        <section style={{ flex: 1, padding: "24px" }}>
+        <section className="fee-main" style={{ flex: 1, padding: "28px", maxWidth: "1500px" }}>
           <div
             style={{
               background: `linear-gradient(135deg, ${COLORS.sidebar} 0%, #1f2937 100%)`,
@@ -676,7 +711,7 @@ export default function FeesStructurePage() {
               }}
             >
               <div>
-                <h2 style={{ margin: 0, fontSize: "30px" }}>Fee Structure Setup</h2>
+                <h2 className="fee-hero-title" style={{ margin: 0, fontSize: "30px" }}>Fee Structure Setup</h2>
                 <p style={{ margin: "8px 0 0", color: "#d1d5db" }}>
                   Manage continuing fees, new student breakdowns, and continuing uniform prices.
                 </p>
@@ -713,10 +748,12 @@ export default function FeesStructurePage() {
           )}
 
           <div
+            className="fee-grid"
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(330px, 1fr))",
-              gap: "18px",
+              gridTemplateColumns: "repeat(auto-fit, minmax(440px, 1fr))",
+              gap: "26px",
+              alignItems: "start",
             }}
           >
             {levelCards.map((card) => {
@@ -725,18 +762,30 @@ export default function FeesStructurePage() {
               return (
                 <div
                   key={card.level}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = "translateY(-7px)";
+                    e.currentTarget.style.boxShadow = "0 26px 55px rgba(15,23,42,0.14)";
+                    e.currentTarget.style.borderColor = COLORS.gold;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "translateY(0)";
+                    e.currentTarget.style.boxShadow = "0 18px 38px rgba(15,23,42,0.08)";
+                    e.currentTarget.style.borderColor = COLORS.border;
+                  }}
                   style={{
                     background: COLORS.card,
-                    borderRadius: "20px",
+                    borderRadius: "26px",
                     border: `1px solid ${COLORS.border}`,
-                    boxShadow: "0 10px 25px rgba(0,0,0,0.06)",
+                    boxShadow: "0 18px 38px rgba(15,23,42,0.08)",
                     overflow: "hidden",
+                    animation: "fadeUp 0.45s ease both",
+                    transition: "transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease",
                   }}
                 >
                   <div
                     style={{
-                      padding: "18px 18px 14px",
-                      background: "#fffaf0",
+                      padding: "20px 20px 16px",
+                      background: `linear-gradient(135deg, #fffaf0 0%, ${COLORS.goldSoft} 100%)`,
                       borderBottom: `1px solid ${COLORS.border}`,
                     }}
                   >
@@ -750,7 +799,7 @@ export default function FeesStructurePage() {
                       }}
                     >
                       <div>
-                        <h3 style={{ margin: 0, color: COLORS.sidebar }}>{card.level}</h3>
+                        <h3 style={{ margin: 0, color: COLORS.sidebar, fontSize: "21px" }}>{card.level}</h3>
                         <p style={{ margin: "6px 0 0", color: COLORS.muted, fontSize: "13px" }}>
                           Classes:{" "}
                           {card.classes.length > 0
@@ -769,14 +818,15 @@ export default function FeesStructurePage() {
                     </div>
                   </div>
 
-                  <div style={{ padding: "18px" }}>
+                  <div style={{ padding: "20px" }}>
                     <div
                       style={{
                         marginBottom: "16px",
-                        padding: "14px",
-                        borderRadius: "14px",
-                        background: "#f9fafb",
+                        padding: "16px",
+                        borderRadius: "18px",
+                        background: "#fbfdff",
                         border: `1px solid ${COLORS.border}`,
+                        boxShadow: "0 8px 20px rgba(15,23,42,0.035)",
                       }}
                     >
                       <p style={sectionTitleStyle}>Continuing Student Fee</p>
@@ -797,10 +847,11 @@ export default function FeesStructurePage() {
                     <div
                       style={{
                         marginBottom: "16px",
-                        padding: "14px",
-                        borderRadius: "14px",
-                        background: "#f9fafb",
+                        padding: "16px",
+                        borderRadius: "18px",
+                        background: "#fbfdff",
                         border: `1px solid ${COLORS.border}`,
+                        boxShadow: "0 8px 20px rgba(15,23,42,0.035)",
                       }}
                     >
                       <div
@@ -849,10 +900,11 @@ export default function FeesStructurePage() {
 
                     <div
                       style={{
-                        padding: "14px",
-                        borderRadius: "14px",
-                        background: "#f9fafb",
+                        padding: "16px",
+                        borderRadius: "18px",
+                        background: "#fbfdff",
                         border: `1px solid ${COLORS.border}`,
+                        boxShadow: "0 8px 20px rgba(15,23,42,0.035)",
                       }}
                     >
                       <p style={sectionTitleStyle}>Continuing Uniform Prices</p>
@@ -863,7 +915,7 @@ export default function FeesStructurePage() {
                       <div
                         style={{
                           display: "grid",
-                          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                          gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
                           gap: "12px",
                         }}
                       >
@@ -965,6 +1017,7 @@ export default function FeesStructurePage() {
                 </p>
 
                 <div
+                  className="fee-modal-form"
                   style={{
                     display: "grid",
                     gridTemplateColumns: "2fr 1fr 1fr auto auto",
@@ -1163,6 +1216,8 @@ const sectionTitleStyle: CSSProperties = {
   margin: "0 0 10px",
   fontWeight: "bold",
   color: COLORS.sidebar,
+  fontSize: "15px",
+  letterSpacing: "0.2px",
 };
 
 const labelStyle: CSSProperties = {
@@ -1175,12 +1230,14 @@ const labelStyle: CSSProperties = {
 
 const inputStyle: CSSProperties = {
   width: "100%",
-  padding: "12px",
-  borderRadius: "12px",
+  padding: "12px 13px",
+  borderRadius: "14px",
   border: `1px solid ${COLORS.border}`,
   fontSize: "14px",
   outline: "none",
   background: "#fff",
+  boxSizing: "border-box",
+  transition: "border-color 0.2s ease, box-shadow 0.2s ease",
 };
 
 const thStyle: CSSProperties = {
@@ -1199,22 +1256,24 @@ const tdStyle: CSSProperties = {
 
 const primaryButtonStyle: CSSProperties = {
   border: "none",
-  background: COLORS.gold,
+  background: `linear-gradient(135deg, ${COLORS.gold} 0%, #f0c34b 100%)`,
   color: COLORS.sidebar,
-  borderRadius: "12px",
-  padding: "12px 16px",
+  borderRadius: "14px",
+  padding: "12px 18px",
   fontWeight: "bold",
   cursor: "pointer",
+  boxShadow: "0 10px 18px rgba(212,160,23,0.22)",
 };
 
 const secondaryButtonStyle: CSSProperties = {
   border: "none",
   background: COLORS.sidebar,
   color: "#fff",
-  borderRadius: "12px",
-  padding: "11px 14px",
+  borderRadius: "14px",
+  padding: "11px 15px",
   fontWeight: "bold",
   cursor: "pointer",
+  boxShadow: "0 10px 18px rgba(15,23,42,0.15)",
 };
 
 const lightButtonStyle: CSSProperties = {
