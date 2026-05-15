@@ -4,10 +4,6 @@ type SmsRecipient = {
   phone?: string;
   dest_addr?: string;
   message?: string;
-  recipientId?: string;
-  recipient_id?: string;
-  referenceId?: string;
-  reference_id?: string;
   studentName?: string;
   studentId?: string;
 };
@@ -33,10 +29,14 @@ function cleanPhone(phone: string) {
   return value;
 }
 
-function makeSafeId(value: string) {
-  return String(value || "")
-    .replace(/[^a-zA-Z0-9_-]/g, "")
-    .slice(0, 40);
+async function readJsonSafe(response: Response) {
+  const text = await response.text();
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
 }
 
 export async function POST(request: Request) {
@@ -60,7 +60,6 @@ export async function POST(request: Request) {
     const body = await request.json();
 
     const defaultMessage = String(body?.message || "").trim();
-
     const recipients: SmsRecipient[] = Array.isArray(body?.recipients)
       ? body.recipients
       : [];
@@ -79,33 +78,21 @@ export async function POST(request: Request) {
     }
 
     const cleanedRecipients = recipients
-      .map((recipient, index) => {
+      .map((recipient) => {
         const phone = cleanPhone(
           String(recipient.phone || recipient.dest_addr || "")
         );
 
         const message = String(recipient.message || defaultMessage || "").trim();
 
-        const rawReference =
-          recipient.reference_id ||
-          recipient.referenceId ||
-          recipient.recipient_id ||
-          recipient.recipientId ||
-          recipient.studentId ||
-          `JSMS-${Date.now()}-${index + 1}`;
-
-        const referenceId = makeSafeId(String(rawReference));
-
         return {
           phone,
           message,
-          recipientId: String(index + 1),
-          referenceId,
           studentName: String(recipient.studentName || ""),
           studentId: String(recipient.studentId || ""),
         };
       })
-      .filter((item) => item.phone && item.message && item.referenceId);
+      .filter((item) => item.phone && item.message);
 
     if (!cleanedRecipients.length) {
       return NextResponse.json(
@@ -130,14 +117,9 @@ export async function POST(request: Request) {
         encoding: 0,
         schedule_time: "",
         message: recipient.message,
-
-        // Beem is asking for this
-        reference_id: recipient.referenceId,
-
         recipients: [
           {
-            recipient_id: recipient.recipientId,
-            reference_id: recipient.referenceId,
+            recipient_id: 1,
             dest_addr: recipient.phone,
           },
         ],
@@ -153,20 +135,12 @@ export async function POST(request: Request) {
         body: JSON.stringify(payload),
       });
 
-      const text = await response.text();
-
-      let data: any;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = { raw: text };
-      }
+      const data = await readJsonSafe(response);
 
       results.push({
         ok: response.ok,
         status: response.status,
         count: 1,
-        reference_id: recipient.referenceId,
         recipients: [
           {
             phone: recipient.phone,
