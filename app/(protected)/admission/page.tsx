@@ -467,7 +467,6 @@ export default function AdmissionAdminPage() {
             role="admin"
             userId={null}
             teacherId={null}
-            deviceName="Admin Device"
           />
 
           <button style={styles.refreshBtn} onClick={loadAll} disabled={busy}>

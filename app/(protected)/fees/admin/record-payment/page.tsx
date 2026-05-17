@@ -473,9 +473,6 @@ export default function RecordPaymentPage() {
           amountPaid: amount,
           outstandingBalance,
           receiptNumber: receiptNo,
-          academicYear,
-          term: currentTerm,
-          actionUrl: "/fees/admin/record-payment",
         });
       } catch (notifyError) {
         console.warn("Payment saved, but notification failed:", notifyError);
