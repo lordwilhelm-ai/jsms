@@ -114,6 +114,14 @@ function greeting() {
   return "Good Evening";
 }
 
+function greetingEmoji() {
+  const hour = new Date().getHours();
+
+  if (hour < 12) return "🌤️";
+  if (hour < 17) return "☀️";
+  return "🌙";
+}
+
 function classLabel(row: ClassRow) {
   return row.class_name || row.name || "Class";
 }
@@ -724,14 +732,13 @@ export default function TeacherDashboardPageClient() {
         transition={{ duration: 0.3 }}
       >
         <div>
-          <p style={styles.heroLabel}>{greeting()}</p>
-          <h2 style={styles.heroTitle}>{teacherFirstName}, your school tools are ready.</h2>
-          <p style={styles.heroText}>
-            Track your work, open your modules, and keep up with school updates.
-          </p>
+          <p style={styles.heroLabel}>Teacher Dashboard</p>
+          <h2 style={styles.heroTitle}>
+            {greetingEmoji()} {greeting()}, {teacherFirstName}
+          </h2>
         </div>
 
-        <div style={styles.heroBadge}>✨</div>
+        <div style={styles.heroBadge}>{greetingEmoji()}</div>
       </motion.section>
 
       <section style={styles.alertStack}>
@@ -746,6 +753,7 @@ export default function TeacherDashboardPageClient() {
             key={card.href}
             initial={{ opacity: 0, y: 18, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
+            whileTap={{ scale: 0.96, y: 2 }}
             transition={{ delay: index * 0.045, duration: 0.28 }}
           >
             <Link href={card.href} style={{ textDecoration: "none" }}>
@@ -1333,23 +1341,27 @@ const styles: Record<string, CSSProperties> = {
     gap: 12,
   },
   softwareCard: {
-    minHeight: 126,
+    minHeight: 128,
     border: "1px solid",
-    borderRadius: 22,
-    padding: 14,
+    borderRadius: 24,
+    padding: 15,
     display: "grid",
     alignContent: "space-between",
     gap: 12,
-    boxShadow: "0 12px 28px rgba(16,32,22,0.07)",
+    boxShadow:
+      "0 18px 0 rgba(15,42,23,0.05), 0 18px 35px rgba(16,32,22,0.12)",
+    transform: "perspective(700px) translateZ(0)",
+    transition: "transform 0.18s ease, box-shadow 0.18s ease",
   },
   softwareIcon: {
-    width: 43,
-    height: 43,
-    borderRadius: 16,
+    width: 45,
+    height: 45,
+    borderRadius: 17,
     display: "grid",
     placeItems: "center",
-    fontSize: 22,
-    boxShadow: "0 8px 18px rgba(16,32,22,0.08)",
+    fontSize: 23,
+    boxShadow:
+      "inset 0 -4px 0 rgba(15,42,23,0.06), 0 10px 20px rgba(16,32,22,0.12)",
   },
   cardTitle: {
     margin: 0,
