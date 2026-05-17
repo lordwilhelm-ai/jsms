@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { notifyFeePayment } from "@/lib/jsmsNotify";
 
 type AnyRow = Record<string, any>;
 type ScholarshipType = "regular" | "full" | "half" | "custom";
@@ -461,6 +462,24 @@ export default function RecordPaymentPage() {
 
       const { error } = await supabase.from("fee_payments").insert([payload]);
       if (error) throw error;
+
+      const outstandingBalance = Math.max(paymentModal.balance - amount, 0);
+
+      try {
+        await notifyFeePayment({
+          studentId: paymentModal.studentIdValue,
+          studentName: paymentModal.studentName,
+          className: paymentModal.classNameValue,
+          amountPaid: amount,
+          outstandingBalance,
+          receiptNumber: receiptNo,
+          academicYear,
+          term: currentTerm,
+          actionUrl: "/fees/admin/record-payment",
+        });
+      } catch (notifyError) {
+        console.warn("Payment saved, but notification failed:", notifyError);
+      }
 
       setPayments((prev) => [payload, ...prev]);
       setPaymentModal(null);

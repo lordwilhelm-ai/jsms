@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { notifyBookIssued } from "@/lib/jsmsNotify";
 import {
   getUniversalReceiptSuggestions,
   searchUniversalReceipt,
@@ -1155,6 +1156,22 @@ export default function BooksDashboardPage() {
           quantity: Math.max(numberValue(book.quantity) - numberValue(row.quantity_given), 0),
         })
         .eq("id", book.id);
+    }
+
+    for (const row of rows) {
+      try {
+        await notifyBookIssued({
+          studentId: row.student_id,
+          studentName: row.student_name,
+          className: row.class_name || "",
+          bookName:
+            numberValue(row.quantity_given) > 1
+              ? `${row.book_name} x${row.quantity_given}`
+              : row.book_name,
+        });
+      } catch (notifyError) {
+        console.error("Book issued notification failed:", notifyError);
+      }
     }
 
     setPendingIssue(null);

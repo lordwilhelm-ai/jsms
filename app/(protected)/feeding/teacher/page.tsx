@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { notifyFeedingSubmitted } from "@/lib/jsmsNotify";
 
 type Attendance = "present" | "absent";
 type BalanceMap = Record<string, number>;
@@ -27,6 +28,18 @@ function getRole(row: TeacherRow | null) {
   const raw = String(row?.role || "").trim().toLowerCase();
   if (raw === "owner" || raw === "admin" || raw === "headmaster") return raw;
   return "teacher";
+}
+
+function getTeacherName(row: TeacherRow | null) {
+  return String(
+    row?.full_name || row?.name || row?.teacher_name || row?.username || "Teacher"
+  ).trim();
+}
+
+function getTeacherId(row: TeacherRow | null) {
+  return String(
+    row?.teacher_id || row?.teacherId || row?.id || row?.auth_user_id || ""
+  ).trim();
 }
 
 function getAssignedClasses(row: TeacherRow): string[] {
@@ -520,6 +533,13 @@ export default function FeedingTeacherPage() {
 
       const { error: ledgerError } = await supabase.from("balance_ledger").insert(ledgerPayload);
       if (ledgerError) throw ledgerError;
+
+      await notifyFeedingSubmitted({
+        teacherId: getTeacherId(teacher),
+        teacherName: getTeacherName(teacher),
+        className: selectedClass,
+        date: today,
+      });
 
       alert("Daily entry submitted successfully.");
       setAmounts({});

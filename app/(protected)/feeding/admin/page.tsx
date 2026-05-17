@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { notifyFeedingMoneyReceived } from "@/lib/jsmsNotify";
 
 type TeacherRow = Record<string, any>;
 type StudentRow = Record<string, any>;
@@ -37,6 +38,10 @@ function getTeacherName(row: TeacherRow) {
   return String(
     row.full_name || row.name || row.teacher_name || row.username || "Teacher"
   ).trim();
+}
+
+function getTeacherId(row: TeacherRow) {
+  return String(row.id || row.teacher_id || row.teacherId || row.auth_user_id || "").trim();
 }
 
 function getClassName(row: Record<string, any>) {
@@ -278,6 +283,25 @@ export default function FeedingAdminPage() {
       ]);
 
       if (error) throw error;
+
+      const classTeachers = teachers.filter(
+        (teacher) =>
+          isTeacherActive(teacher) && getAssignedClasses(teacher).includes(className)
+      );
+
+      await Promise.all(
+        classTeachers.map((teacher) =>
+          notifyFeedingMoneyReceived({
+            teacherId: getTeacherId(teacher),
+            teacherName: getTeacherName(teacher),
+            className,
+            amount: amountReceived,
+            date: today,
+          }).catch((notifyError) => {
+            console.error("Feeding received notification failed:", notifyError);
+          })
+        )
+      );
 
       await loadDashboardData();
       alert(`${className} money marked as received.`);
