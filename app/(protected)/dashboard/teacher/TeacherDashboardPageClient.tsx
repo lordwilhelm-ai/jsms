@@ -1,17 +1,11 @@
 "use client";
 
-import {
-  ChangeEvent,
-  CSSProperties,
-  ReactNode,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { ChangeEvent, CSSProperties, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import { supabase } from "@/lib/supabase";
 import LogoutButton from "@/app/components/LogoutButton";
+import TeacherAnnouncementBanner from "@/components/TeacherAnnouncementBanner";
 
 type TeacherInfo = {
   id: string;
@@ -24,21 +18,26 @@ type TeacherInfo = {
   password_changed?: boolean | null;
 };
 
-type DutyRow = {
-  id?: string;
-  teacher_id: string;
-  teacher_name?: string | null;
-  week_start_date: string;
-  week_end_date: string;
+type ClassRow = {
+  id: string;
+  name?: string | null;
+  class_name?: string | null;
+  class_order?: number | null;
 };
 
-type AnnouncementRow = {
+type SubjectRow = {
   id: string;
-  title?: string | null;
+  name?: string | null;
+  subject_name?: string | null;
+};
+
+type DutyInfo = {
+  id?: string;
+  status: "today" | "upcoming";
+  title: string;
   message: string;
-  sender_name?: string | null;
-  created_at?: string | null;
-  expires_at?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
 };
 
 const PROFILE_BUCKET = "teacher-photos";
@@ -46,9 +45,9 @@ const PROFILE_BUCKET = "teacher-photos";
 const softwareCards = [
   {
     title: "Attendance",
-    description: "Check in and out",
+    description: "Check in/out",
     href: "/teacher-attendance",
-    emoji: "📊",
+    emoji: "📍",
     bg: "#eef2ff",
     accent: "#4f46e5",
   },
@@ -94,7 +93,7 @@ const softwareCards = [
   },
   {
     title: "Uniforms",
-    description: "Uniforms issued",
+    description: "Uniforms",
     href: "/uniforms/teacher",
     emoji: "👕",
     bg: "#f0fdfa",
@@ -102,13 +101,65 @@ const softwareCards = [
   },
 ];
 
+function firstName(name: string) {
+  const clean = (name || "Teacher").trim();
+  return clean.split(/\s+/)[0] || "Teacher";
+}
+
+function greeting() {
+  const hour = new Date().getHours();
+
+  if (hour < 12) return "Good Morning";
+  if (hour < 17) return "Good Afternoon";
+  return "Good Evening";
+}
+
+function classLabel(row: ClassRow) {
+  return row.class_name || row.name || "Class";
+}
+
+function subjectLabel(row: SubjectRow) {
+  return row.subject_name || row.name || "Subject";
+}
+
+function uniqueCleanList(items: string[]) {
+  return Array.from(
+    new Set(
+      items
+        .map((item) => item.trim())
+        .filter((item) => item && item !== "-" && item.toLowerCase() !== "null")
+    )
+  );
+}
+
+function toDateOnly(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDutyDate(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+async function tableExists(table: string) {
+  const { error } = await supabase.from(table).select("*").limit(1);
+  return !error;
+}
+
 export default function TeacherDashboardPageClient() {
+  const [loading, setLoading] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
-  const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [passwordForced, setPasswordForced] = useState(false);
 
-  const [loading, setLoading] = useState(true);
   const [schoolName, setSchoolName] = useState("School");
   const [authUserId, setAuthUserId] = useState("");
 
@@ -123,9 +174,9 @@ export default function TeacherDashboardPageClient() {
     password_changed: true,
   });
 
-  const [currentDuty, setCurrentDuty] = useState<DutyRow | null>(null);
-  const [nextDuty, setNextDuty] = useState<DutyRow | null>(null);
-  const [announcements, setAnnouncements] = useState<AnnouncementRow[]>([]);
+  const [assignedClasses, setAssignedClasses] = useState<string[]>([]);
+  const [assignedSubjects, setAssignedSubjects] = useState<string[]>([]);
+  const [dutyInfo, setDutyInfo] = useState<DutyInfo | null>(null);
 
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -137,145 +188,308 @@ export default function TeacherDashboardPageClient() {
   const [photoMessage, setPhotoMessage] = useState("");
   const [photoError, setPhotoError] = useState("");
 
-  const firstName = useMemo(
-    () => getFirstName(teacherInfo.full_name || teacherInfo.username || "Teacher"),
+  const teacherFirstName = useMemo(
+    () => firstName(teacherInfo.full_name || teacherInfo.username || "Teacher"),
     [teacherInfo.full_name, teacherInfo.username]
   );
 
   useEffect(() => {
-    let active = true;
-
-    async function loadDashboardData() {
-      try {
-        setLoading(true);
-
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        const currentAuthUserId = session?.user?.id ?? "";
-        if (!active) return;
-
-        setAuthUserId(currentAuthUserId);
-
-        const { data: settings } = await supabase
-          .from("school_settings")
-          .select("school_name")
-          .limit(1)
-          .maybeSingle();
-
-        if (active && settings?.school_name) {
-          setSchoolName(settings.school_name);
-        }
-
-        if (!currentAuthUserId) return;
-
-        const { data: teacher, error: teacherError } = await supabase
-          .from("teachers")
-          .select("*")
-          .eq("auth_user_id", currentAuthUserId)
-          .limit(1)
-          .maybeSingle();
-
-        if (teacherError) throw teacherError;
-
-        if (teacher && active) {
-          const loadedTeacher: TeacherInfo = {
-            id: String(teacher.id || ""),
-            full_name: String(teacher.full_name || teacher.username || "Teacher"),
-            photo_url: teacher.photo_url || null,
-            role: String(teacher.role || "teacher"),
-            teacher_id: String(teacher.teacher_id || ""),
-            username: String(teacher.username || ""),
-            phone: String(teacher.phone || ""),
-            password_changed:
-              typeof teacher.password_changed === "boolean"
-                ? teacher.password_changed
-                : true,
-          };
-
-          setTeacherInfo(loadedTeacher);
-
-          if (loadedTeacher.teacher_id) {
-            localStorage.setItem("jsms_teacher_id", loadedTeacher.teacher_id);
-            localStorage.setItem("teacher_id", loadedTeacher.teacher_id);
-            localStorage.setItem("jsms_role", "teacher");
-          }
-
-          if (loadedTeacher.password_changed === false) {
-            setMustChangePassword(true);
-            setPasswordOpen(true);
-          }
-
-          await Promise.all([
-            loadDutyInfo(loadedTeacher.teacher_id),
-            loadActiveAnnouncements(),
-          ]);
-        }
-      } catch (error) {
-        console.error("Dashboard data load error:", error);
-      } finally {
-        if (active) setLoading(false);
-      }
-    }
-
     loadDashboardData();
-
-    return () => {
-      active = false;
-    };
   }, []);
 
-  async function loadDutyInfo(teacherId: string) {
-    if (!teacherId) return;
+  async function loadDashboardData() {
+    setLoading(true);
 
-    const today = new Date();
-    const todayText = toDateInput(today);
-
-    const { data, error } = await supabase
-      .from("teacher_duty_roster")
-      .select("*")
-      .eq("teacher_id", teacherId)
-      .order("week_start_date", { ascending: true });
-
-    if (error || !data) return;
-
-    const rows = data as DutyRow[];
-
-    const current =
-      rows.find((row) => {
-        return todayText >= row.week_start_date && todayText <= row.week_end_date;
-      }) || null;
-
-    const upcoming =
-      rows.find((row) => {
-        return row.week_start_date > todayText;
-      }) || null;
-
-    setCurrentDuty(current);
-    setNextDuty(upcoming);
-  }
-
-  async function loadActiveAnnouncements() {
     try {
-      const nowIso = new Date().toISOString();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      const { data, error } = await supabase
-        .from("jsms_announcements")
+      const currentAuthUserId = session?.user?.id ?? "";
+      setAuthUserId(currentAuthUserId);
+
+      const { data: settings } = await supabase
+        .from("school_settings")
+        .select("school_name")
+        .limit(1)
+        .maybeSingle();
+
+      if (settings?.school_name) {
+        setSchoolName(settings.school_name);
+      }
+
+      if (!currentAuthUserId) return;
+
+      const { data: teacher, error: teacherError } = await supabase
+        .from("teachers")
         .select("*")
-        .eq("is_deleted", false)
-        .gt("expires_at", nowIso)
-        .order("created_at", { ascending: false })
-        .limit(3);
+        .eq("auth_user_id", currentAuthUserId)
+        .limit(1)
+        .maybeSingle();
 
-      if (error || !data) {
-        setAnnouncements([]);
+      if (teacherError) {
+        console.error("Teacher load error:", teacherError);
         return;
       }
 
-      setAnnouncements(data as AnnouncementRow[]);
+      if (!teacher) return;
+
+      const loadedTeacher: TeacherInfo = {
+        id: teacher.id ?? "",
+        full_name: teacher.full_name ?? teacher.username ?? "Teacher",
+        photo_url: teacher.photo_url ?? null,
+        role: teacher.role ?? "teacher",
+        teacher_id: teacher.teacher_id ?? "",
+        username: teacher.username ?? "",
+        phone: teacher.phone ?? "",
+        password_changed:
+          typeof teacher.password_changed === "boolean"
+            ? teacher.password_changed
+            : typeof teacher.has_changed_password === "boolean"
+              ? teacher.has_changed_password
+              : true,
+      };
+
+      setTeacherInfo(loadedTeacher);
+      saveTeacherForGlobalFeatures(loadedTeacher);
+
+      const assignments = await loadTeacherAssignments(loadedTeacher);
+      setAssignedClasses(assignments.classes);
+      setAssignedSubjects(assignments.subjects);
+
+      const duty = await loadDutyInfo(loadedTeacher);
+      setDutyInfo(duty);
+
+      if (loadedTeacher.password_changed === false) {
+        setPasswordForced(true);
+        setPasswordOpen(true);
+      }
+    } catch (error) {
+      console.error("Dashboard data load error:", error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function saveTeacherForGlobalFeatures(teacher: TeacherInfo) {
+    if (typeof window === "undefined") return;
+
+    const payload = {
+      id: teacher.id,
+      teacher_id: teacher.teacher_id,
+      teacherId: teacher.teacher_id,
+      full_name: teacher.full_name,
+      username: teacher.username,
+      phone: teacher.phone,
+      role: "teacher",
+      photo_url: teacher.photo_url,
+    };
+
+    localStorage.setItem("teacher_id", teacher.teacher_id || "");
+    localStorage.setItem("teacherId", teacher.teacher_id || "");
+    localStorage.setItem("jsms_teacher_id", teacher.teacher_id || "");
+    localStorage.setItem("jsms_role", "teacher");
+    localStorage.setItem("teacher", JSON.stringify(payload));
+    localStorage.setItem("currentTeacher", JSON.stringify(payload));
+  }
+
+  async function loadTeacherAssignments(teacher: TeacherInfo) {
+    const classResults: string[] = [];
+    const subjectResults: string[] = [];
+
+    const classMap = new Map<string, ClassRow>();
+
+    // Correct JSMS mapping:
+    // teacher_class_assignments.teacher_id stores teachers.id UUID.
+    const assignmentTables = ["teacher_class_assignments", "teacher_classes"];
+
+    for (const table of assignmentTables) {
+      try {
+        const { data, error } = await supabase
+          .from(table)
+          .select("class_id")
+          .eq("teacher_id", teacher.id);
+
+        if (!error && data) {
+          const classIds = (data as { class_id: string | null }[])
+            .map((row) => row.class_id)
+            .filter(Boolean) as string[];
+
+          if (classIds.length > 0) {
+            const { data: classesData } = await supabase
+              .from("classes")
+              .select("id, name, class_name, class_order")
+              .in("id", classIds)
+              .order("class_order", { ascending: true });
+
+            (classesData || []).forEach((row: ClassRow) => {
+              classMap.set(row.id, row);
+              classResults.push(classLabel(row));
+            });
+          }
+        }
+      } catch (error) {
+        console.warn(`Could not read ${table}`, error);
+      }
+    }
+
+    // Older fallback from teachers.assigned_classes if used anywhere.
+    try {
+      const { data } = await supabase
+        .from("teachers")
+        .select("assigned_classes")
+        .eq("id", teacher.id)
+        .limit(1)
+        .maybeSingle();
+
+      const raw = (data as { assigned_classes?: unknown } | null)?.assigned_classes;
+
+      if (Array.isArray(raw)) {
+        raw.forEach((item) => classResults.push(String(item)));
+      } else if (typeof raw === "string") {
+        raw.split(",").forEach((item) => classResults.push(item.trim()));
+      }
     } catch {
-      setAnnouncements([]);
+      // ignore
+    }
+
+    const assignedClassIds = Array.from(classMap.keys());
+
+    // If no subject-specific table exists, show subjects attached to assigned classes.
+    if (assignedClassIds.length > 0) {
+      try {
+        const { data: classSubjects, error } = await supabase
+          .from("class_subjects")
+          .select("subject_id, class_id")
+          .in("class_id", assignedClassIds);
+
+        if (!error && classSubjects && classSubjects.length > 0) {
+          const subjectIds = Array.from(
+            new Set(
+              (classSubjects as { subject_id: string | null }[])
+                .map((row) => row.subject_id)
+                .filter(Boolean) as string[]
+            )
+          );
+
+          if (subjectIds.length > 0) {
+            const { data: subjects } = await supabase
+              .from("subjects")
+              .select("id, name, subject_name")
+              .in("id", subjectIds);
+
+            (subjects || []).forEach((row: SubjectRow) => {
+              subjectResults.push(subjectLabel(row));
+            });
+          }
+        }
+      } catch {
+        // subject table may differ. ignore.
+      }
+    }
+
+    // Subject assignment fallbacks, if any exists.
+    const maybeSubjectTables = [
+      "teacher_subject_assignments",
+      "teacher_subjects",
+      "subject_teachers",
+    ];
+
+    for (const table of maybeSubjectTables) {
+      try {
+        const exists = await tableExists(table);
+        if (!exists) continue;
+
+        const { data } = await supabase
+          .from(table)
+          .select("*")
+          .or(`teacher_id.eq.${teacher.id},teacher_id.eq.${teacher.teacher_id}`);
+
+        (data || []).forEach((row: Record<string, unknown>) => {
+          ["subject_name", "subject", "subjects", "assigned_subject", "assigned_subjects"].forEach(
+            (key) => {
+              const value = row[key];
+
+              if (Array.isArray(value)) {
+                value.forEach((item) => subjectResults.push(String(item)));
+              } else if (typeof value === "string") {
+                value.split(",").forEach((item) => subjectResults.push(item.trim()));
+              }
+            }
+          );
+        });
+      } catch {
+        // ignore fallback table errors
+      }
+    }
+
+    return {
+      classes: uniqueCleanList(classResults),
+      subjects: uniqueCleanList(subjectResults),
+    };
+  }
+
+  async function loadDutyInfo(teacher: TeacherInfo): Promise<DutyInfo | null> {
+    if (!teacher.teacher_id) return null;
+
+    try {
+      const { data, error } = await supabase
+        .from("teacher_duty_roster")
+        .select("*")
+        .eq("teacher_id", teacher.teacher_id)
+        .order("week_start_date", { ascending: true })
+        .limit(20);
+
+      if (error || !data || data.length === 0) return null;
+
+      const today = toDateOnly(new Date());
+
+      const rows = data as Array<{
+        id?: string;
+        week_start_date?: string | null;
+        week_end_date?: string | null;
+        duty_date?: string | null;
+        date?: string | null;
+        teacher_name?: string | null;
+      }>;
+
+      const currentDuty = rows.find((row) => {
+        const start = (row.week_start_date || row.duty_date || row.date || "").slice(0, 10);
+        const end = (row.week_end_date || row.duty_date || row.date || "").slice(0, 10);
+        return start && end && today >= start && today <= end;
+      });
+
+      if (currentDuty) {
+        return {
+          id: currentDuty.id,
+          status: "today",
+          title: "You are on duty",
+          message: "Duty is active for this week.",
+          startDate: currentDuty.week_start_date || currentDuty.duty_date || currentDuty.date || null,
+          endDate: currentDuty.week_end_date || currentDuty.duty_date || currentDuty.date || null,
+        };
+      }
+
+      const upcomingDuty = rows.find((row) => {
+        const start = (row.week_start_date || row.duty_date || row.date || "").slice(0, 10);
+        return start && start > today;
+      });
+
+      if (upcomingDuty) {
+        return {
+          id: upcomingDuty.id,
+          status: "upcoming",
+          title: "Upcoming duty",
+          message: "You have duty coming up.",
+          startDate: upcomingDuty.week_start_date || upcomingDuty.duty_date || upcomingDuty.date || null,
+          endDate: upcomingDuty.week_end_date || upcomingDuty.duty_date || upcomingDuty.date || null,
+        };
+      }
+
+      return null;
+    } catch (error) {
+      console.warn("Could not load duty info", error);
+      return null;
     }
   }
 
@@ -286,8 +500,9 @@ export default function TeacherDashboardPageClient() {
     setPhotoError("");
   }
 
-  function openPasswordModal() {
+  function openPasswordModal(force = false) {
     setMenuOpen(false);
+    setPasswordForced(force);
     setPasswordOpen(true);
     setNewPassword("");
     setConfirmPassword("");
@@ -326,32 +541,14 @@ export default function TeacherDashboardPageClient() {
         return;
       }
 
-      const updates: Record<string, unknown> = {
-        password_changed: true,
-        password_changed_at: new Date().toISOString(),
-      };
+      await markPasswordChanged();
 
-      if (teacherInfo.id) {
-        const { error: updateError } = await supabase
-          .from("teachers")
-          .update(updates)
-          .eq("id", teacherInfo.id);
-
-        if (updateError) {
-          setPasswordError(updateError.message);
-          return;
-        }
-      }
-
-      setTeacherInfo((prev) => ({
-        ...prev,
-        password_changed: true,
-      }));
-
-      setMustChangePassword(false);
       setPasswordMessage("Password changed successfully.");
       setNewPassword("");
       setConfirmPassword("");
+
+      setTeacherInfo((prev) => ({ ...prev, password_changed: true }));
+      setPasswordForced(false);
 
       setTimeout(() => {
         setPasswordOpen(false);
@@ -362,6 +559,36 @@ export default function TeacherDashboardPageClient() {
       setPasswordError("Could not change password. Try again.");
     } finally {
       setPasswordLoading(false);
+    }
+  }
+
+  async function markPasswordChanged() {
+    if (!teacherInfo.id && !authUserId) return;
+
+    const updatePayloads: Record<string, unknown>[] = [
+      {
+        password_changed: true,
+        password_changed_at: new Date().toISOString(),
+        force_password_change: false,
+      },
+      {
+        has_changed_password: true,
+        password_changed_at: new Date().toISOString(),
+        force_password_change: false,
+      },
+      {
+        password_changed: true,
+      },
+    ];
+
+    for (const payload of updatePayloads) {
+      const query = supabase.from("teachers").update(payload);
+
+      const { error } = teacherInfo.id
+        ? await query.eq("id", teacherInfo.id)
+        : await query.eq("auth_user_id", authUserId);
+
+      if (!error) return;
     }
   }
 
@@ -422,10 +649,13 @@ export default function TeacherDashboardPageClient() {
         return;
       }
 
-      setTeacherInfo((prev) => ({
-        ...prev,
+      const updatedTeacher = {
+        ...teacherInfo,
         photo_url: photoUrl,
-      }));
+      };
+
+      setTeacherInfo(updatedTeacher);
+      saveTeacherForGlobalFeatures(updatedTeacher);
 
       setPhotoMessage("Profile picture updated.");
     } catch (error) {
@@ -439,1012 +669,870 @@ export default function TeacherDashboardPageClient() {
 
   if (loading) {
     return (
-      <main style={loadingPageStyle}>
-        <div style={loadingCardStyle}>Loading dashboard...</div>
+      <main style={styles.loadingPage}>
+        <motion.div
+          style={styles.loadingCard}
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <div style={styles.loadingIcon}>🎓</div>
+          <h2 style={{ margin: 0 }}>Opening dashboard...</h2>
+        </motion.div>
       </main>
     );
   }
 
   return (
-    <main style={pageStyle}>
-      <header style={topHeaderStyle}>
+    <main style={styles.page}>
+      <div style={styles.bgCircleOne} />
+      <div style={styles.bgCircleTwo} />
+
+      <header style={styles.header}>
         <div style={{ minWidth: 0 }}>
-          <h1 style={schoolTitleStyle}>{schoolName}</h1>
-          <p style={smallMutedStyle}>Teacher Dashboard</p>
+          <p style={styles.schoolName}>{schoolName}</p>
+          <h1 style={styles.pageTitle}>Teacher Dashboard</h1>
         </div>
 
-        <div style={headerActionsStyle}>
-          <ProfileBubble teacherInfo={teacherInfo} />
+        <div style={styles.headerActions}>
+          <div style={styles.avatar}>
+            {teacherInfo.photo_url ? (
+              <img
+                src={teacherInfo.photo_url}
+                alt={teacherInfo.full_name}
+                style={styles.avatarImg}
+              />
+            ) : (
+              <span>{teacherFirstName.charAt(0).toUpperCase()}</span>
+            )}
+          </div>
 
           <button
             type="button"
             onClick={() => setMenuOpen(true)}
+            style={styles.menuButton}
             aria-label="Open menu"
-            style={menuIconButtonStyle}
           >
-            <span style={hamburgerLineStyle} />
-            <span style={hamburgerLineStyle} />
-            <span style={hamburgerLineStyle} />
+            ☰
           </button>
         </div>
       </header>
 
-      <AnimatePresence>
-        {menuOpen && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.18 }}
-              onClick={() => setMenuOpen(false)}
-              style={overlayStyle}
-            />
+      <motion.section
+        style={styles.heroCard}
+        initial={{ opacity: 0, y: 18, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.3 }}
+      >
+        <div>
+          <p style={styles.heroLabel}>{greeting()}</p>
+          <h2 style={styles.heroTitle}>{teacherFirstName}, your school tools are ready.</h2>
+          <p style={styles.heroText}>
+            Track your work, open your modules, and keep up with school updates.
+          </p>
+        </div>
 
-            <motion.aside
-              initial={{ x: "100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "100%" }}
-              transition={{ type: "tween", duration: 0.2 }}
-              style={sideMenuStyle}
-            >
-              <div style={menuHeaderStyle}>
-                <div>
-                  <h2 style={menuTitleStyle}>Menu</h2>
-                  <p style={smallMutedStyle}>Quick actions</p>
+        <div style={styles.heroBadge}>✨</div>
+      </motion.section>
+
+      <section style={styles.alertStack}>
+        {dutyInfo && <DutyCard duty={dutyInfo} />}
+
+        <TeacherAnnouncementBanner />
+      </section>
+
+      <section style={styles.cardGrid}>
+        {softwareCards.map((card, index) => (
+          <motion.div
+            key={card.href}
+            initial={{ opacity: 0, y: 18, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ delay: index * 0.045, duration: 0.28 }}
+          >
+            <Link href={card.href} style={{ textDecoration: "none" }}>
+              <article
+                style={{
+                  ...styles.softwareCard,
+                  background: card.bg,
+                  borderColor: `${card.accent}22`,
+                }}
+              >
+                <div
+                  style={{
+                    ...styles.softwareIcon,
+                    background: "#ffffff",
+                    color: card.accent,
+                  }}
+                >
+                  {card.emoji}
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setMenuOpen(false)}
-                  aria-label="Close menu"
-                  style={closeButtonStyle}
-                >
-                  ×
-                </button>
-              </div>
-
-              <div style={{ padding: "14px", display: "grid", gap: "10px" }}>
-                <LinkItem
-                  href="/dashboard/teacher"
-                  label="🏠 Dashboard"
-                  bg="#eef2ff"
-                  color="#3730a3"
-                  onClick={() => setMenuOpen(false)}
-                />
-
-                <button
-                  type="button"
-                  onClick={openAboutModal}
-                  style={{
-                    ...menuButtonStyle,
-                    background: "#ecfdf5",
-                    color: "#047857",
-                    borderColor: "#a7f3d0",
-                  }}
-                >
-                  👤 About Me
-                </button>
-
-                <button
-                  type="button"
-                  onClick={openPasswordModal}
-                  style={{
-                    ...menuButtonStyle,
-                    background: "#fff7ed",
-                    color: "#c2410c",
-                    borderColor: "#fed7aa",
-                  }}
-                >
-                  🔐 Change Password
-                </button>
-
-                <LogoutButton
-                  onDone={() => {
-                    setMenuOpen(false);
-                    setAboutOpen(false);
-                    setPasswordOpen(false);
-                  }}
-                  style={{
-                    width: "100%",
-                    background: "#b91c1c",
-                    color: "#ffffff",
-                    borderRadius: "16px",
-                    padding: "13px 14px",
-                    fontWeight: 900,
-                    fontSize: "13px",
-                  }}
-                />
-              </div>
-            </motion.aside>
-          </>
-        )}
-      </AnimatePresence>
+                <div>
+                  <h3 style={styles.cardTitle}>{card.title}</h3>
+                  <p style={styles.cardText}>{card.description}</p>
+                </div>
+              </article>
+            </Link>
+          </motion.div>
+        ))}
+      </section>
 
       <AnimatePresence>
-        {aboutOpen && (
-          <BottomSheet title="👤 About Me" onClose={() => setAboutOpen(false)}>
-            <div style={{ display: "grid", gap: "14px" }}>
-              <div style={profileTopStyle}>
-                <div style={profileImageStyle}>
+        {menuOpen && (
+          <ModalShell onClose={() => setMenuOpen(false)}>
+            <motion.div
+              style={styles.sideMenu}
+              initial={{ x: 90, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 90, opacity: 0 }}
+            >
+              <div style={styles.sideTop}>
+                <div style={styles.smallAvatar}>
                   {teacherInfo.photo_url ? (
                     <img
                       src={teacherInfo.photo_url}
                       alt={teacherInfo.full_name}
-                      style={imageCoverStyle}
+                      style={styles.avatarImg}
                     />
                   ) : (
-                    <span style={{ fontSize: "30px" }}>👤</span>
+                    teacherFirstName.charAt(0).toUpperCase()
                   )}
                 </div>
 
-                <div style={{ minWidth: 0 }}>
-                  <h3 style={profileNameStyle}>{teacherInfo.full_name}</h3>
-                  <p style={profileRoleStyle}>{teacherInfo.role}</p>
+                <div>
+                  <b>{teacherFirstName}</b>
+                  <p style={styles.muted}>{teacherInfo.teacher_id || "Teacher"}</p>
                 </div>
               </div>
 
-              <label style={uploadButtonStyle}>
-                {photoLoading ? "⏳ Uploading..." : "📷 Add Profile Picture"}
+              <button style={styles.menuItem} onClick={() => setMenuOpen(false)}>
+                🏠 Dashboard
+              </button>
+              <button style={styles.menuItem} onClick={openAboutModal}>
+                👤 About me
+              </button>
+              <button style={styles.menuItem} onClick={() => openPasswordModal(false)}>
+                🔐 Change password
+              </button>
+
+              <label style={styles.menuItem}>
+                📷 Add profile picture
                 <input
                   type="file"
                   accept="image/*"
+                  hidden
                   onChange={handleProfilePictureUpload}
                   disabled={photoLoading}
-                  style={{ display: "none" }}
                 />
               </label>
 
-              {photoMessage && <SuccessText text={photoMessage} />}
-              {photoError && <ErrorText text={photoError} />}
+              {photoLoading && <p style={styles.helpMessage}>Uploading picture...</p>}
+              {photoMessage && <p style={styles.successMessage}>{photoMessage}</p>}
+              {photoError && <p style={styles.errorMessage}>{photoError}</p>}
 
-              <div style={infoGridStyle}>
-                <InfoRow label="Full Name" value={teacherInfo.full_name} />
-                <InfoRow label="Teacher ID" value={teacherInfo.teacher_id} />
-                <InfoRow label="Username" value={teacherInfo.username} />
-                <InfoRow label="Phone" value={teacherInfo.phone} />
-                <InfoRow label="Role" value={teacherInfo.role} />
+              <div style={styles.logoutWrap}>
+                <LogoutButton />
               </div>
-            </div>
-          </BottomSheet>
+            </motion.div>
+          </ModalShell>
         )}
-      </AnimatePresence>
 
-      <AnimatePresence>
-        {passwordOpen && (
-          <BottomSheet
-            title="🔐 Change Password"
-            onClose={() => {
-              if (!mustChangePassword) setPasswordOpen(false);
-            }}
-            locked={mustChangePassword}
-          >
-            <div style={{ display: "grid", gap: "12px" }}>
-              {mustChangePassword && (
-                <div style={forcePasswordNoticeStyle}>
-                  Change your default password to continue.
+        {aboutOpen && (
+          <ModalShell onClose={() => setAboutOpen(false)}>
+            <motion.div
+              style={styles.modalCard}
+              initial={{ opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 18 }}
+            >
+              <div style={styles.modalHeader}>
+                <h2 style={styles.modalTitle}>About me</h2>
+                <button style={styles.iconButton} onClick={() => setAboutOpen(false)}>
+                  ✕
+                </button>
+              </div>
+
+              <div style={styles.aboutProfile}>
+                <div style={styles.bigAvatar}>
+                  {teacherInfo.photo_url ? (
+                    <img
+                      src={teacherInfo.photo_url}
+                      alt={teacherInfo.full_name}
+                      style={styles.avatarImg}
+                    />
+                  ) : (
+                    teacherFirstName.charAt(0).toUpperCase()
+                  )}
                 </div>
+
+                <div>
+                  <h3 style={{ margin: 0 }}>{teacherInfo.full_name}</h3>
+                  <p style={styles.muted}>{teacherInfo.phone || "No phone saved"}</p>
+                </div>
+              </div>
+
+              <DetailRow label="Teacher ID" value={teacherInfo.teacher_id || "—"} />
+              <DetailRow label="Username" value={teacherInfo.username || "—"} />
+              <DetailRow
+                label="Class(es)"
+                value={assignedClasses.length ? assignedClasses.join(", ") : "Not assigned"}
+              />
+              <DetailRow
+                label="Subject(s)"
+                value={assignedSubjects.length ? assignedSubjects.join(", ") : "Not assigned"}
+              />
+            </motion.div>
+          </ModalShell>
+        )}
+
+        {passwordOpen && (
+          <ModalShell
+            onClose={() => {
+              if (!passwordForced) setPasswordOpen(false);
+            }}
+          >
+            <motion.div
+              style={styles.modalCard}
+              initial={{ opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 18 }}
+            >
+              <div style={styles.modalHeader}>
+                <h2 style={styles.modalTitle}>
+                  {passwordForced ? "Change password to continue" : "Change password"}
+                </h2>
+
+                {!passwordForced && (
+                  <button
+                    style={styles.iconButton}
+                    onClick={() => setPasswordOpen(false)}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {passwordForced && (
+                <p style={styles.forceText}>
+                  Please set your own password before using the dashboard.
+                </p>
               )}
 
-              <div>
-                <label style={labelStyle}>New Password</label>
+              <label style={styles.inputGroup}>
+                <span>New password</span>
                 <input
                   type="password"
                   value={newPassword}
                   onChange={(event) => setNewPassword(event.target.value)}
+                  style={styles.input}
                   placeholder="Enter new password"
-                  style={inputStyle}
                 />
-              </div>
+              </label>
 
-              <div>
-                <label style={labelStyle}>Confirm Password</label>
+              <label style={styles.inputGroup}>
+                <span>Confirm password</span>
                 <input
                   type="password"
                   value={confirmPassword}
                   onChange={(event) => setConfirmPassword(event.target.value)}
+                  style={styles.input}
                   placeholder="Confirm new password"
-                  style={inputStyle}
                 />
-              </div>
+              </label>
 
-              {passwordMessage && <SuccessText text={passwordMessage} />}
-              {passwordError && <ErrorText text={passwordError} />}
+              {passwordError && <p style={styles.errorMessage}>{passwordError}</p>}
+              {passwordMessage && (
+                <p style={styles.successMessage}>{passwordMessage}</p>
+              )}
 
               <button
                 type="button"
                 onClick={handlePasswordChange}
                 disabled={passwordLoading}
-                style={{
-                  border: "none",
-                  background: passwordLoading ? "#9ca3af" : "#111827",
-                  color: "#ffffff",
-                  borderRadius: "16px",
-                  padding: "13px 16px",
-                  fontWeight: 900,
-                  fontSize: "14px",
-                  cursor: passwordLoading ? "not-allowed" : "pointer",
-                  marginTop: "2px",
-                }}
+                style={styles.primaryButton}
               >
-                {passwordLoading ? "Changing..." : "Change Password"}
+                {passwordLoading ? "Saving..." : "Save password"}
               </button>
-            </div>
-          </BottomSheet>
+            </motion.div>
+          </ModalShell>
         )}
       </AnimatePresence>
-
-      <div style={contentWrapStyle}>
-        <motion.section
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.25 }}
-          style={greetingCardStyle}
-        >
-          <div>
-            <p style={greetingMiniStyle}>{getGreeting()}</p>
-            <h2 style={greetingTitleStyle}>{firstName}</h2>
-            <p style={greetingSubStyle}>{formatToday()}</p>
-          </div>
-
-          <div style={greetingIconStyle}>✨</div>
-        </motion.section>
-
-        {(currentDuty || nextDuty || announcements.length > 0) && (
-          <div style={noticeStackStyle}>
-            {currentDuty && (
-              <NoticeCard
-                tone="duty"
-                title="You are on duty this week"
-                message={`${formatDate(currentDuty.week_start_date)} - ${formatDate(
-                  currentDuty.week_end_date
-                )}`}
-              />
-            )}
-
-            {!currentDuty && nextDuty && (
-              <NoticeCard
-                tone="upcoming"
-                title="Upcoming duty"
-                message={`You will be on duty from ${formatDate(
-                  nextDuty.week_start_date
-                )} to ${formatDate(nextDuty.week_end_date)}.`}
-              />
-            )}
-
-            {announcements.map((item) => (
-              <NoticeCard
-                key={item.id}
-                tone="announcement"
-                title={item.title || "Announcement"}
-                message={item.message}
-              />
-            ))}
-          </div>
-        )}
-
-        <div style={modulesGridStyle}>
-          {softwareCards.map((card, index) => (
-            <motion.div
-              key={card.title}
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.25, delay: index * 0.04 }}
-            >
-              <Link href={card.href} style={moduleLinkStyle}>
-                <motion.div
-                  whileTap={{ scale: 0.97 }}
-                  transition={{ type: "spring", stiffness: 260, damping: 18 }}
-                  style={moduleCardStyle}
-                >
-                  <div>
-                    <div
-                      style={{
-                        ...moduleIconStyle,
-                        background: card.bg,
-                      }}
-                    >
-                      {card.emoji}
-                    </div>
-
-                    <h3 style={moduleTitleStyle}>{card.title}</h3>
-                    <p style={moduleDescStyle}>{card.description}</p>
-                  </div>
-
-                  <div style={{ ...openTextStyle, color: card.accent }}>
-                    Open →
-                  </div>
-                </motion.div>
-              </Link>
-            </motion.div>
-          ))}
-        </div>
-      </div>
     </main>
   );
 }
 
-function ProfileBubble({ teacherInfo }: { teacherInfo: TeacherInfo }) {
+function DutyCard({ duty }: { duty: DutyInfo }) {
+  const dateText =
+    duty.startDate && duty.endDate && duty.startDate !== duty.endDate
+      ? `${formatDutyDate(duty.startDate)} - ${formatDutyDate(duty.endDate)}`
+      : formatDutyDate(duty.startDate);
+
   return (
-    <div style={profileBubbleStyle}>
-      {teacherInfo.photo_url ? (
-        <img
-          src={teacherInfo.photo_url}
-          alt={teacherInfo.full_name}
-          style={imageCoverStyle}
-        />
-      ) : (
-        <span style={{ fontSize: "18px" }}>👤</span>
-      )}
+    <motion.article
+      style={{
+        ...styles.dutyCard,
+        borderColor: duty.status === "today" ? "#bbf7d0" : "#fde68a",
+        background:
+          duty.status === "today"
+            ? "linear-gradient(135deg, #ecfdf3, #ffffff)"
+            : "linear-gradient(135deg, #fffbeb, #ffffff)",
+      }}
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+    >
+      <div style={styles.dutyIcon}>{duty.status === "today" ? "🟢" : "🗓️"}</div>
+      <div>
+        <p style={styles.dutyTitle}>{duty.title}</p>
+        <p style={styles.dutyText}>
+          {duty.message}
+          {dateText ? ` ${dateText}` : ""}
+        </p>
+      </div>
+    </motion.article>
+  );
+}
+
+function InfoCard({
+  icon,
+  title,
+  value,
+}: {
+  icon: string;
+  title: string;
+  value: string;
+}) {
+  return (
+    <motion.article
+      style={styles.infoCard}
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+    >
+      <span style={styles.infoIcon}>{icon}</span>
+      <div>
+        <p style={styles.infoTitle}>{title}</p>
+        <p style={styles.infoValue}>{value}</p>
+      </div>
+    </motion.article>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={styles.detailRow}>
+      <span>{label}</span>
+      <b>{value}</b>
     </div>
   );
 }
 
-function NoticeCard({
-  title,
-  message,
-  tone,
+function ModalShell({
+  children,
+  onClose,
 }: {
-  title: string;
-  message: string;
-  tone: "duty" | "upcoming" | "announcement";
+  children: React.ReactNode;
+  onClose: () => void;
 }) {
-  const palette =
-    tone === "duty"
-      ? {
-          bg: "#fff7ed",
-          border: "#fed7aa",
-          title: "#9a3412",
-          icon: "🛡️",
-        }
-      : tone === "upcoming"
-      ? {
-          bg: "#eef2ff",
-          border: "#c7d2fe",
-          title: "#3730a3",
-          icon: "📌",
-        }
-      : {
-          bg: "#ecfdf5",
-          border: "#a7f3d0",
-          title: "#047857",
-          icon: "📢",
-        };
-
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      style={{
-        background: palette.bg,
-        border: `1px solid ${palette.border}`,
-        borderRadius: "18px",
-        padding: "13px",
-        display: "flex",
-        gap: "10px",
-        alignItems: "flex-start",
-      }}
+      style={styles.overlay}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onMouseDown={onClose}
     >
-      <div style={noticeIconStyle}>{palette.icon}</div>
-
-      <div style={{ minWidth: 0 }}>
-        <p style={{ margin: 0, color: palette.title, fontWeight: 900, fontSize: "13px" }}>
-          {title}
-        </p>
-        <p style={noticeMessageStyle}>{message}</p>
-      </div>
+      <div onMouseDown={(event) => event.stopPropagation()}>{children}</div>
     </motion.div>
   );
 }
 
-function BottomSheet({
-  title,
-  children,
-  onClose,
-  locked = false,
-}: {
-  title: string;
-  children: ReactNode;
-  onClose: () => void;
-  locked?: boolean;
-}) {
-  return (
-    <>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.18 }}
-        onClick={locked ? undefined : onClose}
-        style={overlayStyle}
-      />
-
-      <motion.div
-        initial={{ y: "100%" }}
-        animate={{ y: 0 }}
-        exit={{ y: "100%" }}
-        transition={{ type: "tween", duration: 0.22 }}
-        style={bottomSheetStyle}
-      >
-        <div style={sheetHandleStyle} />
-
-        <div style={sheetHeaderStyle}>
-          <h2 style={sheetTitleStyle}>{title}</h2>
-
-          {!locked && (
-            <button type="button" onClick={onClose} style={closeButtonStyle}>
-              ×
-            </button>
-          )}
-        </div>
-
-        <div style={{ padding: "4px 16px 18px" }}>{children}</div>
-      </motion.div>
-    </>
-  );
-}
-
-function LinkItem({
-  href,
-  label,
-  bg,
-  color,
-  onClick,
-}: {
-  href: string;
-  label: string;
-  bg: string;
-  color: string;
-  onClick?: () => void;
-}) {
-  return (
-    <Link
-      href={href}
-      onClick={onClick}
-      style={{
-        textDecoration: "none",
-        background: bg,
-        color,
-        border: "1px solid rgba(0,0,0,0.06)",
-        borderRadius: "16px",
-        padding: "13px 14px",
-        fontWeight: 900,
-        fontSize: "13px",
-        lineHeight: 1.35,
-      }}
-    >
-      {label}
-    </Link>
-  );
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={infoRowStyle}>
-      <p style={infoLabelStyle}>{label}</p>
-      <p style={infoValueStyle}>{value || "-"}</p>
-    </div>
-  );
-}
-
-function SuccessText({ text }: { text: string }) {
-  return <p style={successTextStyle}>{text}</p>;
-}
-
-function ErrorText({ text }: { text: string }) {
-  return <p style={errorTextStyle}>{text}</p>;
-}
-
-function getFirstName(name: string) {
-  return String(name || "Teacher").trim().split(/\s+/)[0] || "Teacher";
-}
-
-function getGreeting() {
-  const hour = new Date().getHours();
-  if (hour < 12) return "Good Morning";
-  if (hour < 17) return "Good Afternoon";
-  return "Good Evening";
-}
-
-function formatToday() {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  }).format(new Date());
-}
-
-function formatDate(value?: string | null) {
-  if (!value) return "-";
-  try {
-    return new Intl.DateTimeFormat("en-GB", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
-}
-
-function toDateInput(date: Date) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-const pageStyle: CSSProperties = {
-  minHeight: "100vh",
-  background: "linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%)",
-  fontFamily: "Arial, sans-serif",
-};
-
-const loadingPageStyle: CSSProperties = {
-  ...pageStyle,
-  display: "grid",
-  placeItems: "center",
-  padding: "16px",
-};
-
-const loadingCardStyle: CSSProperties = {
-  background: "#ffffff",
-  border: "1px solid #e5e7eb",
-  boxShadow: "0 10px 28px rgba(15,23,42,0.08)",
-  borderRadius: "18px",
-  padding: "18px",
-  fontWeight: 900,
-  color: "#111827",
-};
-
-const topHeaderStyle: CSSProperties = {
-  minHeight: "66px",
-  background: "rgba(255,255,255,0.94)",
-  backdropFilter: "blur(14px)",
-  borderBottom: "1px solid #e5e7eb",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  padding: "0 14px",
-  position: "sticky",
-  top: 0,
-  zIndex: 30,
-};
-
-const schoolTitleStyle: CSSProperties = {
-  margin: 0,
-  fontSize: "16px",
-  fontWeight: 900,
-  color: "#111827",
-  whiteSpace: "nowrap",
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  maxWidth: "250px",
-};
-
-const smallMutedStyle: CSSProperties = {
-  margin: "4px 0 0",
-  color: "#6b7280",
-  fontSize: "11px",
-  fontWeight: 800,
-};
-
-const headerActionsStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
-  flexShrink: 0,
-};
-
-const profileBubbleStyle: CSSProperties = {
-  width: "40px",
-  height: "40px",
-  borderRadius: "14px",
-  overflow: "hidden",
-  background: "#eef2ff",
-  border: "1px solid #e0e7ff",
-  display: "grid",
-  placeItems: "center",
-  flexShrink: 0,
-};
-
-const imageCoverStyle: CSSProperties = {
-  width: "100%",
-  height: "100%",
-  objectFit: "cover",
-};
-
-const menuIconButtonStyle: CSSProperties = {
-  border: "none",
-  background: "#f3f4f6",
-  padding: 0,
-  width: "40px",
-  height: "40px",
-  borderRadius: "14px",
-  display: "grid",
-  placeItems: "center",
-  gap: "0",
-  cursor: "pointer",
-};
-
-const hamburgerLineStyle: CSSProperties = {
-  display: "block",
-  width: "21px",
-  height: "2.5px",
-  background: "#111827",
-  borderRadius: "999px",
-  margin: "2px 0",
-};
-
-const contentWrapStyle: CSSProperties = {
-  maxWidth: "520px",
-  margin: "0 auto",
-  padding: "16px 12px 34px",
-};
-
-const greetingCardStyle: CSSProperties = {
-  background: "linear-gradient(135deg, #111827 0%, #1e3a8a 100%)",
-  borderRadius: "26px",
-  padding: "18px",
-  boxShadow: "0 10px 30px rgba(15,23,42,0.18)",
-  marginBottom: "14px",
-  color: "#ffffff",
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: "12px",
-};
-
-const greetingMiniStyle: CSSProperties = {
-  margin: 0,
-  fontSize: "12px",
-  fontWeight: 900,
-  letterSpacing: "0.7px",
-  textTransform: "uppercase",
-  opacity: 0.78,
-};
-
-const greetingTitleStyle: CSSProperties = {
-  margin: "6px 0 0",
-  fontSize: "26px",
-  lineHeight: 1.05,
-  fontWeight: 900,
-};
-
-const greetingSubStyle: CSSProperties = {
-  margin: "8px 0 0",
-  color: "rgba(255,255,255,0.78)",
-  fontSize: "13px",
-  fontWeight: 700,
-};
-
-const greetingIconStyle: CSSProperties = {
-  width: "54px",
-  height: "54px",
-  borderRadius: "20px",
-  display: "grid",
-  placeItems: "center",
-  background: "rgba(255,255,255,0.14)",
-  fontSize: "26px",
-  flexShrink: 0,
-};
-
-const noticeStackStyle: CSSProperties = {
-  display: "grid",
-  gap: "9px",
-  marginBottom: "14px",
-};
-
-const noticeIconStyle: CSSProperties = {
-  width: "36px",
-  height: "36px",
-  borderRadius: "13px",
-  background: "rgba(255,255,255,0.76)",
-  display: "grid",
-  placeItems: "center",
-  fontSize: "18px",
-  flexShrink: 0,
-};
-
-const noticeMessageStyle: CSSProperties = {
-  margin: "5px 0 0",
-  color: "#374151",
-  fontSize: "12px",
-  lineHeight: 1.45,
-  fontWeight: 700,
-};
-
-const modulesGridStyle: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-  gap: "12px",
-};
-
-const moduleLinkStyle: CSSProperties = {
-  textDecoration: "none",
-  color: "inherit",
-  display: "block",
-  height: "100%",
-};
-
-const moduleCardStyle: CSSProperties = {
-  background: "#ffffff",
-  borderRadius: "22px",
-  padding: "14px",
-  minHeight: "150px",
-  boxShadow: "0 6px 18px rgba(15,23,42,0.08)",
-  border: "1px solid #e5e7eb",
-  display: "flex",
-  flexDirection: "column",
-  justifyContent: "space-between",
-};
-
-const moduleIconStyle: CSSProperties = {
-  width: "48px",
-  height: "48px",
-  borderRadius: "16px",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  fontSize: "24px",
-  marginBottom: "12px",
-};
-
-const moduleTitleStyle: CSSProperties = {
-  margin: 0,
-  fontSize: "15px",
-  lineHeight: 1.2,
-  color: "#111827",
-  fontWeight: 900,
-};
-
-const moduleDescStyle: CSSProperties = {
-  margin: "8px 0 0",
-  fontSize: "11px",
-  lineHeight: 1.45,
-  color: "#6b7280",
-  fontWeight: 700,
-};
-
-const openTextStyle: CSSProperties = {
-  marginTop: "12px",
-  fontSize: "11px",
-  fontWeight: 900,
-};
-
-const overlayStyle: CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  background: "rgba(15,23,42,0.42)",
-  zIndex: 40,
-};
-
-const sideMenuStyle: CSSProperties = {
-  position: "fixed",
-  top: 0,
-  right: 0,
-  width: "78%",
-  maxWidth: "300px",
-  height: "100vh",
-  background: "#ffffff",
-  zIndex: 50,
-  boxShadow: "-12px 0 34px rgba(0,0,0,0.18)",
-  display: "flex",
-  flexDirection: "column",
-};
-
-const menuHeaderStyle: CSSProperties = {
-  height: "72px",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  padding: "0 16px",
-  borderBottom: "1px solid #e5e7eb",
-};
-
-const menuTitleStyle: CSSProperties = {
-  margin: 0,
-  fontSize: "17px",
-  color: "#111827",
-  fontWeight: 900,
-};
-
-const menuButtonStyle: CSSProperties = {
-  border: "1px solid #e5e7eb",
-  borderRadius: "16px",
-  padding: "13px 14px",
-  fontWeight: 900,
-  fontSize: "13px",
-  cursor: "pointer",
-  textAlign: "left",
-};
-
-const closeButtonStyle: CSSProperties = {
-  border: "none",
-  background: "#f3f4f6",
-  fontSize: "24px",
-  lineHeight: 1,
-  cursor: "pointer",
-  color: "#111827",
-  width: "34px",
-  height: "34px",
-  borderRadius: "12px",
-};
-
-const bottomSheetStyle: CSSProperties = {
-  position: "fixed",
-  left: 0,
-  right: 0,
-  bottom: 0,
-  width: "100%",
-  maxHeight: "88vh",
-  overflowY: "auto",
-  background: "#ffffff",
-  borderTopLeftRadius: "28px",
-  borderTopRightRadius: "28px",
-  boxShadow: "0 -20px 50px rgba(0,0,0,0.24)",
-  zIndex: 60,
-};
-
-const sheetHandleStyle: CSSProperties = {
-  width: "48px",
-  height: "5px",
-  borderRadius: "999px",
-  background: "#d1d5db",
-  margin: "10px auto 6px",
-};
-
-const sheetHeaderStyle: CSSProperties = {
-  position: "sticky",
-  top: 0,
-  background: "#ffffff",
-  zIndex: 2,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  padding: "10px 16px 14px",
-  borderBottom: "1px solid #f3f4f6",
-};
-
-const sheetTitleStyle: CSSProperties = {
-  margin: 0,
-  color: "#111827",
-  fontSize: "18px",
-  fontWeight: 900,
-};
-
-const profileTopStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: "13px",
-  background: "linear-gradient(135deg, #eef2ff 0%, #ecfeff 100%)",
-  borderRadius: "20px",
-  padding: "13px",
-};
-
-const profileImageStyle: CSSProperties = {
-  width: "72px",
-  height: "72px",
-  borderRadius: "22px",
-  background: "#ffffff",
-  overflow: "hidden",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  flexShrink: 0,
-  border: "1px solid #e5e7eb",
-};
-
-const profileNameStyle: CSSProperties = {
-  margin: 0,
-  color: "#111827",
-  fontSize: "19px",
-  fontWeight: 900,
-  lineHeight: 1.2,
-};
-
-const profileRoleStyle: CSSProperties = {
-  margin: "6px 0 0",
-  color: "#6b7280",
-  fontSize: "13px",
-  fontWeight: 800,
-  textTransform: "capitalize",
-};
-
-const uploadButtonStyle: CSSProperties = {
-  display: "block",
-  background: "#111827",
-  border: "none",
-  borderRadius: "16px",
-  padding: "13px",
-  cursor: "pointer",
-  color: "#ffffff",
-  fontSize: "13px",
-  fontWeight: 900,
-  textAlign: "center",
-};
-
-const infoGridStyle: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-  gap: "10px",
-  background: "#f8fafc",
-  border: "1px solid #e5e7eb",
-  borderRadius: "18px",
-  padding: "10px",
-};
-
-const infoRowStyle: CSSProperties = {
-  background: "#ffffff",
-  border: "1px solid #e5e7eb",
-  borderRadius: "14px",
-  padding: "10px",
-};
-
-const infoLabelStyle: CSSProperties = {
-  margin: 0,
-  fontSize: "9px",
-  color: "#6b7280",
-  marginBottom: "4px",
-  fontWeight: 900,
-  textTransform: "uppercase",
-  letterSpacing: "0.4px",
-};
-
-const infoValueStyle: CSSProperties = {
-  margin: 0,
-  fontSize: "12px",
-  color: "#111827",
-  fontWeight: 800,
-  lineHeight: 1.45,
-};
-
-const labelStyle: CSSProperties = {
-  display: "block",
-  fontSize: "12px",
-  color: "#374151",
-  fontWeight: 900,
-  marginBottom: "6px",
-};
-
-const inputStyle: CSSProperties = {
-  width: "100%",
-  border: "1px solid #d1d5db",
-  borderRadius: "14px",
-  padding: "12px 13px",
-  fontSize: "14px",
-  outline: "none",
-  boxSizing: "border-box",
-};
-
-const successTextStyle: CSSProperties = {
-  margin: 0,
-  background: "#ecfdf5",
-  color: "#047857",
-  border: "1px solid #a7f3d0",
-  borderRadius: "14px",
-  padding: "10px 12px",
-  fontSize: "12px",
-  fontWeight: 800,
-};
-
-const errorTextStyle: CSSProperties = {
-  margin: 0,
-  background: "#fef2f2",
-  color: "#b91c1c",
-  border: "1px solid #fecaca",
-  borderRadius: "14px",
-  padding: "10px 12px",
-  fontSize: "12px",
-  fontWeight: 800,
-};
-
-const forcePasswordNoticeStyle: CSSProperties = {
-  background: "#fff7ed",
-  border: "1px solid #fed7aa",
-  color: "#9a3412",
-  borderRadius: "14px",
-  padding: "10px 12px",
-  fontSize: "12px",
-  fontWeight: 900,
+const styles: Record<string, CSSProperties> = {
+  page: {
+    minHeight: "100vh",
+    position: "relative",
+    overflowX: "hidden",
+    padding: "14px 14px 90px",
+    background:
+      "radial-gradient(circle at top left, #dcfce7 0, transparent 28%), linear-gradient(180deg, #f7f3e8 0%, #eef7ef 45%, #ffffff 100%)",
+    fontFamily: "Inter, Arial, sans-serif",
+    color: "#0f2a17",
+  },
+  loadingPage: {
+    minHeight: "100vh",
+    display: "grid",
+    placeItems: "center",
+    background:
+      "linear-gradient(180deg, #f7f3e8 0%, #eef7ef 45%, #ffffff 100%)",
+    fontFamily: "Inter, Arial, sans-serif",
+  },
+  loadingCard: {
+    background: "#ffffff",
+    borderRadius: 24,
+    padding: 24,
+    boxShadow: "0 18px 55px rgba(16,32,22,0.12)",
+    textAlign: "center",
+  },
+  loadingIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 18,
+    background: "#f4e7bd",
+    display: "grid",
+    placeItems: "center",
+    margin: "0 auto 12px",
+    fontSize: 26,
+  },
+  bgCircleOne: {
+    position: "absolute",
+    top: -80,
+    right: -70,
+    width: 180,
+    height: 180,
+    borderRadius: "999px",
+    background: "rgba(15,122,59,0.13)",
+    pointerEvents: "none",
+  },
+  bgCircleTwo: {
+    position: "absolute",
+    top: 160,
+    left: -100,
+    width: 220,
+    height: 220,
+    borderRadius: "999px",
+    background: "rgba(199,153,47,0.14)",
+    pointerEvents: "none",
+  },
+  header: {
+    position: "relative",
+    zIndex: 2,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 16,
+  },
+  profileRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    minWidth: 0,
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 18,
+    overflow: "hidden",
+    background: "#0f7a3b",
+    color: "#ffffff",
+    display: "grid",
+    placeItems: "center",
+    fontWeight: 900,
+    fontSize: 20,
+    flexShrink: 0,
+    boxShadow: "0 12px 25px rgba(15,122,59,0.22)",
+  },
+  avatarImg: {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+  },
+  schoolName: {
+    margin: 0,
+    color: "#637067",
+    fontSize: 12,
+    fontWeight: 900,
+    maxWidth: 240,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+  },
+  pageTitle: {
+    margin: "4px 0 0",
+    fontSize: 20,
+    lineHeight: 1.1,
+    color: "#0f2a17",
+  },
+  greeting: {
+    margin: "3px 0 0",
+    fontSize: 22,
+    lineHeight: 1.1,
+    color: "#0f2a17",
+  },
+  headerActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    flexShrink: 0,
+  },
+  menuButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    border: "1px solid rgba(15,122,59,0.18)",
+    background: "#ffffff",
+    color: "#0f2a17",
+    fontSize: 22,
+    cursor: "pointer",
+    boxShadow: "0 12px 30px rgba(16,32,22,0.08)",
+  },
+  heroCard: {
+    position: "relative",
+    zIndex: 2,
+    borderRadius: 26,
+    padding: 18,
+    background: "linear-gradient(135deg, #0f7a3b, #0f2a17)",
+    color: "#ffffff",
+    boxShadow: "0 20px 45px rgba(15,42,23,0.22)",
+    marginBottom: 14,
+    overflow: "hidden",
+  },
+  heroLabel: {
+    margin: 0,
+    opacity: 0.8,
+    fontSize: 12,
+    fontWeight: 900,
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+  },
+  heroTitle: {
+    margin: "6px 0 8px",
+    fontSize: 23,
+    lineHeight: 1.2,
+  },
+  heroText: {
+    margin: 0,
+    color: "rgba(255,255,255,0.78)",
+    fontSize: 13,
+    lineHeight: 1.45,
+    maxWidth: 290,
+  },
+  heroBadge: {
+    position: "absolute",
+    right: 18,
+    bottom: 18,
+    width: 54,
+    height: 54,
+    borderRadius: 20,
+    background: "rgba(255,255,255,0.13)",
+    border: "1px solid rgba(255,255,255,0.18)",
+    display: "grid",
+    placeItems: "center",
+    fontSize: 25,
+  },
+  heroStats: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 10,
+  },
+  heroStat: {
+    background: "rgba(255,255,255,0.13)",
+    border: "1px solid rgba(255,255,255,0.16)",
+    borderRadius: 18,
+    padding: 12,
+    display: "grid",
+    gap: 2,
+  },
+  noticeCard: {
+    position: "relative",
+    zIndex: 2,
+    display: "grid",
+    gap: 4,
+    background: "#fff7ed",
+    border: "1px solid #fed7aa",
+    borderRadius: 18,
+    padding: 14,
+    marginBottom: 14,
+    color: "#9a3412",
+    fontSize: 13,
+  },
+  alertStack: {
+    position: "relative",
+    zIndex: 2,
+    display: "grid",
+    gap: 10,
+    marginBottom: 14,
+  },
+  dutyCard: {
+    border: "1px solid",
+    borderRadius: 20,
+    padding: 14,
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    boxShadow: "0 12px 30px rgba(16,32,22,0.07)",
+  },
+  dutyIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    background: "#ffffff",
+    display: "grid",
+    placeItems: "center",
+    fontSize: 20,
+    flexShrink: 0,
+  },
+  dutyTitle: {
+    margin: "0 0 4px",
+    color: "#0f2a17",
+    fontSize: 14,
+    fontWeight: 900,
+  },
+  dutyText: {
+    margin: 0,
+    color: "#526157",
+    fontSize: 12,
+    lineHeight: 1.4,
+    fontWeight: 700,
+  },
+  quickInfoGrid: {
+    position: "relative",
+    zIndex: 2,
+    display: "grid",
+    gridTemplateColumns: "1fr",
+    gap: 10,
+    marginBottom: 14,
+  },
+  infoCard: {
+    background: "rgba(255,255,255,0.92)",
+    border: "1px solid rgba(15,122,59,0.12)",
+    borderRadius: 20,
+    padding: 14,
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 12,
+    boxShadow: "0 12px 30px rgba(16,32,22,0.06)",
+  },
+  infoIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    background: "#f4e7bd",
+    display: "grid",
+    placeItems: "center",
+    fontSize: 20,
+    flexShrink: 0,
+  },
+  infoTitle: {
+    margin: "0 0 4px",
+    color: "#637067",
+    fontSize: 12,
+    fontWeight: 900,
+  },
+  infoValue: {
+    margin: 0,
+    color: "#0f2a17",
+    fontSize: 14,
+    fontWeight: 800,
+    lineHeight: 1.35,
+  },
+  cardGrid: {
+    position: "relative",
+    zIndex: 2,
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 12,
+  },
+  softwareCard: {
+    minHeight: 126,
+    border: "1px solid",
+    borderRadius: 22,
+    padding: 14,
+    display: "grid",
+    alignContent: "space-between",
+    gap: 12,
+    boxShadow: "0 12px 28px rgba(16,32,22,0.07)",
+  },
+  softwareIcon: {
+    width: 43,
+    height: 43,
+    borderRadius: 16,
+    display: "grid",
+    placeItems: "center",
+    fontSize: 22,
+    boxShadow: "0 8px 18px rgba(16,32,22,0.08)",
+  },
+  cardTitle: {
+    margin: 0,
+    color: "#102016",
+    fontSize: 14,
+    lineHeight: 1.15,
+  },
+  cardText: {
+    margin: "5px 0 0",
+    color: "#526157",
+    fontSize: 12,
+    lineHeight: 1.3,
+  },
+  overlay: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 80,
+    background: "rgba(15,23,42,0.36)",
+    backdropFilter: "blur(7px)",
+    display: "grid",
+    placeItems: "center",
+    padding: 16,
+  },
+  sideMenu: {
+    width: "min(88vw, 360px)",
+    maxHeight: "90vh",
+    overflowY: "auto",
+    background: "#ffffff",
+    borderRadius: 24,
+    padding: 18,
+    boxShadow: "0 24px 70px rgba(15,23,42,0.26)",
+    display: "grid",
+    gap: 10,
+  },
+  sideTop: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    paddingBottom: 10,
+    borderBottom: "1px solid #edf2ee",
+    marginBottom: 4,
+  },
+  smallAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 17,
+    overflow: "hidden",
+    background: "#0f7a3b",
+    color: "#ffffff",
+    display: "grid",
+    placeItems: "center",
+    fontWeight: 900,
+  },
+  menuItem: {
+    width: "100%",
+    border: "1px solid #e4ebe6",
+    background: "#f9fbf9",
+    color: "#0f2a17",
+    borderRadius: 16,
+    padding: "13px 14px",
+    textAlign: "left",
+    fontWeight: 900,
+    cursor: "pointer",
+    fontSize: 14,
+  },
+  logoutWrap: {
+    marginTop: 4,
+  },
+  modalCard: {
+    width: "min(92vw, 430px)",
+    maxHeight: "90vh",
+    overflowY: "auto",
+    background: "#ffffff",
+    borderRadius: 24,
+    padding: 20,
+    boxShadow: "0 24px 70px rgba(15,23,42,0.26)",
+  },
+  modalHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 16,
+  },
+  modalTitle: {
+    margin: 0,
+    fontSize: 21,
+    color: "#0f2a17",
+  },
+  iconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 14,
+    border: "1px solid #e5e7eb",
+    background: "#ffffff",
+    cursor: "pointer",
+    fontWeight: 900,
+  },
+  aboutProfile: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 14,
+  },
+  bigAvatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 22,
+    overflow: "hidden",
+    background: "#0f7a3b",
+    color: "#ffffff",
+    display: "grid",
+    placeItems: "center",
+    fontWeight: 900,
+    fontSize: 24,
+    flexShrink: 0,
+  },
+  detailRow: {
+    display: "grid",
+    gap: 5,
+    padding: "12px 0",
+    borderBottom: "1px solid #edf2ee",
+    color: "#526157",
+    fontSize: 13,
+  },
+  inputGroup: {
+    display: "grid",
+    gap: 7,
+    marginBottom: 12,
+    fontSize: 13,
+    fontWeight: 900,
+    color: "#26352b",
+  },
+  input: {
+    width: "100%",
+    padding: "12px 13px",
+    borderRadius: 14,
+    border: "1px solid #ccd8cf",
+    outline: "none",
+    fontSize: 14,
+  },
+  primaryButton: {
+    width: "100%",
+    border: "none",
+    background: "linear-gradient(135deg, #0f7a3b, #0f2a17)",
+    color: "#ffffff",
+    borderRadius: 15,
+    padding: "13px 14px",
+    cursor: "pointer",
+    fontWeight: 900,
+    marginTop: 6,
+  },
+  forceText: {
+    margin: "0 0 14px",
+    background: "#fff7ed",
+    border: "1px solid #fed7aa",
+    color: "#9a3412",
+    borderRadius: 14,
+    padding: 12,
+    fontSize: 13,
+    fontWeight: 800,
+  },
+  muted: {
+    margin: "3px 0 0",
+    color: "#6b7280",
+    fontSize: 12,
+  },
+  helpMessage: {
+    margin: 0,
+    color: "#4b5563",
+    fontSize: 12,
+    fontWeight: 800,
+  },
+  successMessage: {
+    margin: 0,
+    color: "#166534",
+    fontSize: 12,
+    fontWeight: 900,
+  },
+  errorMessage: {
+    margin: 0,
+    color: "#991b1b",
+    fontSize: 12,
+    fontWeight: 900,
+  },
 };
