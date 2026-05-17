@@ -1,5 +1,10 @@
+import ProtectedRoute from "@/app/components/ProtectedRoute";
 import TeacherDashboardPageClient from "./TeacherDashboardPageClient";
 
 export default function TeacherDashboardPage() {
-  return <TeacherDashboardPageClient />;
+  return (
+    <ProtectedRoute>
+      <TeacherDashboardPageClient />
+    </ProtectedRoute>
+  );
 }
