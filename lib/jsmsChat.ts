@@ -45,8 +45,21 @@ export type DirectThread = {
   last_message_at: string | null;
 };
 
-const FICHA_GROUP_NAME = "Staff Room";
+export type JSMSAnnouncement = {
+  id: string;
+  chat_message_id: string | null;
+  title: string;
+  message: string;
+  sender_name: string | null;
+  sender_role: string | null;
+  expires_at: string;
+  is_deleted: boolean;
+  created_at: string;
+};
+
+const STAFF_ROOM_GROUP_NAME = "Staff Room";
 const OLD_GROUP_NAME = "JSMS Staff Room";
+const ANNOUNCEMENTS_GROUP_NAME = "Announcements";
 const PUSH_FUNCTION_URL = "https://mlpbkrukkmdlkwypunqh.supabase.co/functions/v1/send-jsms-push";
 
 function safeJsonParse(value: string | null) {
@@ -156,6 +169,23 @@ function getRoleFromPath(pathname?: string) {
   return "staff";
 }
 
+export function firstName(name: string) {
+  const clean = (name || "Staff").trim();
+  if (!clean) return "Staff";
+  return clean.split(/\s+/)[0] || clean;
+}
+
+export function initials(name: string) {
+  return (
+    name
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((x) => x[0]?.toUpperCase())
+      .join("") || "F"
+  );
+}
+
 export async function getJSMSChatIdentity(pathname?: string): Promise<JSMSChatIdentity> {
   const local = readLocalIdentity();
 
@@ -211,12 +241,15 @@ export async function getJSMSChatIdentity(pathname?: string): Promise<JSMSChatId
   };
 }
 
-export async function getOrCreateFichaGroup() {
-  // Reuse old Staff Room group if it exists, then rename it to Ficha.
+async function getOrCreateGroupByType(params: {
+  name: string;
+  groupType: string;
+  description: string;
+}) {
   const { data: existing, error: existingError } = await supabase
     .from("jsms_chat_groups")
     .select("id, name, group_type")
-    .eq("group_type", "staff_room")
+    .eq("group_type", params.groupType)
     .order("created_at", { ascending: true })
     .limit(1)
     .maybeSingle();
@@ -224,10 +257,10 @@ export async function getOrCreateFichaGroup() {
   if (existingError) throw existingError;
 
   if (existing?.id) {
-    if (existing.name !== FICHA_GROUP_NAME) {
+    if (existing.name !== params.name) {
       await supabase
         .from("jsms_chat_groups")
-        .update({ name: FICHA_GROUP_NAME, description: "Official staff group for teachers, admins and headmaster." })
+        .update({ name: params.name, description: params.description })
         .eq("id", existing.id);
     }
     return existing.id as string;
@@ -236,9 +269,9 @@ export async function getOrCreateFichaGroup() {
   const { data, error } = await supabase
     .from("jsms_chat_groups")
     .insert({
-      name: FICHA_GROUP_NAME,
-      description: "Official staff group for teachers, admins and headmaster.",
-      group_type: "staff_room",
+      name: params.name,
+      description: params.description,
+      group_type: params.groupType,
       is_system_group: true,
       created_by_name: "System",
       is_active: true,
@@ -248,6 +281,46 @@ export async function getOrCreateFichaGroup() {
 
   if (error) throw error;
   return data.id as string;
+}
+
+export async function getOrCreateStaffRoomGroup() {
+  // Reuse old JSMS Staff Room group if it exists, then rename it to Staff Room.
+  const { data: oldGroup } = await supabase
+    .from("jsms_chat_groups")
+    .select("id, name")
+    .eq("name", OLD_GROUP_NAME)
+    .limit(1)
+    .maybeSingle();
+
+  if (oldGroup?.id) {
+    await supabase
+      .from("jsms_chat_groups")
+      .update({
+        name: STAFF_ROOM_GROUP_NAME,
+        description: "Official staff group for teachers, admins and headmaster.",
+        group_type: "staff_room",
+      })
+      .eq("id", oldGroup.id);
+
+    return oldGroup.id as string;
+  }
+
+  return getOrCreateGroupByType({
+    name: STAFF_ROOM_GROUP_NAME,
+    groupType: "staff_room",
+    description: "Official staff group for teachers, admins and headmaster.",
+  });
+}
+
+// Backward-compatible export for older files.
+export const getOrCreateFichaGroup = getOrCreateStaffRoomGroup;
+
+export async function getOrCreateAnnouncementsGroup() {
+  return getOrCreateGroupByType({
+    name: ANNOUNCEMENTS_GROUP_NAME,
+    groupType: "announcements",
+    description: "Official announcement channel. Announcements show on teacher dashboard for 24 hours.",
+  });
 }
 
 export async function fetchGroupMessages(groupId: string) {
@@ -332,11 +405,11 @@ export async function getOrCreateDirectThread(identity: JSMSChatIdentity, contac
     p_one_user_id: identity.userId,
     p_one_teacher_id: identity.teacherId,
     p_one_role: identity.role,
-    p_one_name: identity.name,
+    p_one_name: firstName(identity.name),
     p_two_user_id: null,
     p_two_teacher_id: contact.teacher_id,
     p_two_role: contact.role || "teacher",
-    p_two_name: contact.full_name,
+    p_two_name: firstName(contact.full_name),
   });
 
   if (error) throw error;
@@ -356,7 +429,7 @@ export async function sendGroupMessage(params: {
     p_sender_user_id: params.identity.userId,
     p_sender_teacher_id: params.identity.teacherId,
     p_sender_role: params.identity.role,
-    p_sender_name: params.identity.name,
+    p_sender_name: firstName(params.identity.name),
     p_message: cleanMessage,
     p_message_type: "text",
     p_attachment_url: null,
@@ -381,7 +454,7 @@ export async function sendDirectMessage(params: {
     p_sender_user_id: params.identity.userId,
     p_sender_teacher_id: params.identity.teacherId,
     p_sender_role: params.identity.role,
-    p_sender_name: params.identity.name,
+    p_sender_name: firstName(params.identity.name),
     p_message: cleanMessage,
     p_message_type: "text",
     p_attachment_url: null,
@@ -391,6 +464,189 @@ export async function sendDirectMessage(params: {
   if (error) throw error;
   await runPushSender();
   return data as string;
+}
+
+export async function sendAnnouncement(params: {
+  groupId: string;
+  identity: JSMSChatIdentity;
+  message: string;
+}) {
+  const cleanMessage = params.message.trim();
+  if (!cleanMessage) throw new Error("Announcement is required.");
+
+  const { data: messageRow, error: msgError } = await supabase
+    .from("jsms_chat_messages")
+    .insert({
+      chat_type: "group",
+      group_id: params.groupId,
+      sender_user_id: params.identity.userId,
+      sender_teacher_id: params.identity.teacherId,
+      sender_role: params.identity.role,
+      sender_name: firstName(params.identity.name),
+      message: cleanMessage,
+      message_type: "announcement",
+    })
+    .select("id")
+    .single();
+
+  if (msgError) throw msgError;
+
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: announcementRow, error: announcementError } = await supabase
+    .from("jsms_announcements")
+    .insert({
+      chat_message_id: messageRow.id,
+      title: "Announcement",
+      message: cleanMessage,
+      sender_user_id: params.identity.userId,
+      sender_teacher_id: params.identity.teacherId,
+      sender_name: firstName(params.identity.name),
+      sender_role: params.identity.role,
+      target: "all_staff",
+      expires_at: expiresAt,
+      is_deleted: false,
+    })
+    .select("id")
+    .single();
+
+  if (announcementError) throw announcementError;
+
+  await notifyAllStaffAnnouncement({
+    announcementId: announcementRow.id,
+    messageId: messageRow.id,
+    senderName: firstName(params.identity.name),
+    message: cleanMessage,
+  });
+
+  await runPushSender();
+  return messageRow.id as string;
+}
+
+async function notifyAllStaffAnnouncement(params: {
+  announcementId: string;
+  messageId: string;
+  senderName: string;
+  message: string;
+}) {
+  const preview = params.message.length > 100 ? `${params.message.slice(0, 100)}...` : params.message;
+
+  const { data: teachers } = await supabase
+    .from("teachers")
+    .select("teacher_id, full_name, is_active")
+    .eq("is_active", true);
+
+  for (const teacher of teachers || []) {
+    if (!teacher.teacher_id) continue;
+
+    await supabase.rpc("create_jsms_notification_for_recipient", {
+      p_title: "Announcement",
+      p_message: `${params.senderName}: ${preview}`,
+      p_type: "announcement",
+      p_priority: "high",
+      p_source: "ficha",
+      p_target_type: "teacher",
+      p_recipient_role: "teacher",
+      p_recipient_user_id: null,
+      p_recipient_teacher_id: teacher.teacher_id,
+      p_recipient_class: null,
+      p_recipient_student_id: null,
+      p_sender_user_id: null,
+      p_sender_teacher_id: null,
+      p_sender_name: params.senderName,
+      p_action_url: "/dashboard/teacher",
+      p_metadata: {
+        module: "ficha",
+        chat_type: "announcement",
+        announcement_id: params.announcementId,
+        message_id: params.messageId,
+      },
+      p_push_enabled: true,
+    });
+  }
+
+  await supabase.rpc("create_jsms_notification_for_recipient", {
+    p_title: "Announcement",
+    p_message: `${params.senderName}: ${preview}`,
+    p_type: "announcement",
+    p_priority: "high",
+    p_source: "ficha",
+    p_target_type: "role",
+    p_recipient_role: "headmaster",
+    p_recipient_user_id: null,
+    p_recipient_teacher_id: null,
+    p_recipient_class: null,
+    p_recipient_student_id: null,
+    p_sender_user_id: null,
+    p_sender_teacher_id: null,
+    p_sender_name: params.senderName,
+    p_action_url: "/dashboard/headmaster",
+    p_metadata: {
+      module: "ficha",
+      chat_type: "announcement",
+      announcement_id: params.announcementId,
+      message_id: params.messageId,
+    },
+    p_push_enabled: true,
+  });
+}
+
+export async function fetchAnnouncementByMessageIds(messageIds: string[]) {
+  if (messageIds.length === 0) return new Map<string, JSMSAnnouncement>();
+
+  const { data, error } = await supabase
+    .from("jsms_announcements")
+    .select("*")
+    .in("chat_message_id", messageIds)
+    .eq("is_deleted", false);
+
+  if (error) throw error;
+
+  const map = new Map<string, JSMSAnnouncement>();
+  for (const row of data || []) {
+    if (row.chat_message_id) map.set(row.chat_message_id, row as JSMSAnnouncement);
+  }
+  return map;
+}
+
+export async function fetchActiveTeacherAnnouncements() {
+  const now = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from("jsms_announcements")
+    .select("*")
+    .eq("is_deleted", false)
+    .gt("expires_at", now)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (error) throw error;
+  return (data || []) as JSMSAnnouncement[];
+}
+
+export async function deleteAnnouncement(params: {
+  announcementId: string;
+  messageId?: string | null;
+}) {
+  const { error } = await supabase
+    .from("jsms_announcements")
+    .update({
+      is_deleted: true,
+      deleted_at: new Date().toISOString(),
+    })
+    .eq("id", params.announcementId);
+
+  if (error) throw error;
+
+  if (params.messageId) {
+    await supabase
+      .from("jsms_chat_messages")
+      .update({
+        is_deleted: true,
+        deleted_at: new Date().toISOString(),
+      })
+      .eq("id", params.messageId);
+  }
 }
 
 export async function runPushSender() {
