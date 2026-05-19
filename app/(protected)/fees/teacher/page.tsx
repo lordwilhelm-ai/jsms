@@ -1,76 +1,64 @@
 "use client";
 
-import Link from "next/link";
+import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type AnyRow = Record<string, any>;
 
-type StudentFinanceRow = AnyRow & {
-  className: string;
-  studentId: string;
-  totalOwed: number;
+type FeeStatus = "paid" | "part" | "unpaid";
+
+type AssignedClass = {
+  id: string;
+  name: string;
+};
+
+type StudentFeeRow = AnyRow & {
+  studentIdValue: string;
+  studentNameValue: string;
+  classNameValue: string;
+  photoUrl: string;
+  totalFee: number;
   totalPaid: number;
   balance: number;
-  paymentStatus: "paid" | "part" | "unpaid";
+  status: FeeStatus;
+  paymentHistory: AnyRow[];
 };
 
 const COLORS = {
-  background:
-    "linear-gradient(135deg, #fffdf2 0%, #fff9db 25%, #fef3c7 55%, #fde68a 100%)",
-  primary: "#f59e0b",
-  secondary: "#111827",
-  white: "#ffffff",
-  text: "#111827",
-  muted: "#6b7280",
+  page: "#f8faf8",
+  card: "#ffffff",
+  text: "#102016",
+  muted: "#65746b",
+  green: "#0f7a3b",
+  deep: "#0f2a17",
+  gold: "#c7992f",
+  border: "#dfe8e2",
+  softGreen: "#eaf7ee",
+  softGold: "#fff7df",
+  softRed: "#fee2e2",
+  softBlue: "#eaf2ff",
+  danger: "#991b1b",
 };
 
-function getRole(row: AnyRow | null) {
-  const raw = String(row?.role || "").trim().toLowerCase();
-  if (raw === "owner" || raw === "admin" || raw === "headmaster") return raw;
-  return "teacher";
-}
+const CLASS_ORDER = [
+  "Playroom 1",
+  "Playroom 2",
+  "KG 1",
+  "KG 2",
+  "Class 1",
+  "Class 2",
+  "Class 3",
+  "Class 4",
+  "Class 5",
+  "Class 6",
+  "JHS 1",
+  "JHS 2",
+  "JHS 3",
+];
 
-function getAssignedClasses(row: AnyRow): string[] {
-  if (Array.isArray(row.assigned_classes)) {
-    return row.assigned_classes.map((item: unknown) => String(item).trim()).filter(Boolean);
-  }
-
-  if (typeof row.assigned_classes === "string") {
-    const raw = row.assigned_classes.trim();
-    if (!raw) return [];
-
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return parsed.map((item) => String(item).trim()).filter(Boolean);
-      }
-    } catch {
-      return raw
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
-    }
-  }
-
-  if (typeof row.assigned_class === "string" && row.assigned_class.trim()) {
-    return [row.assigned_class.trim()];
-  }
-
-  if (typeof row.class_name === "string" && row.class_name.trim()) {
-    return [row.class_name.trim()];
-  }
-
-  return [];
-}
-
-function getClassName(row: AnyRow) {
-  return String(row.class_name || row.className || "").trim();
-}
-
-function getStudentIdValue(row: AnyRow) {
-  return String(row.student_id || row.studentId || row.id || "").trim();
+function stringValue(value: unknown) {
+  return String(value || "").trim();
 }
 
 function numberValue(value: unknown) {
@@ -79,420 +67,984 @@ function numberValue(value: unknown) {
 }
 
 function formatMoney(value: number) {
-  return `GHS ${value.toFixed(2)}`;
+  return `GHS ${numberValue(value).toFixed(2)}`;
 }
 
-function getPaymentStatus(balance: number, totalPaid: number): "paid" | "part" | "unpaid" {
-  if (balance <= 0) return "paid";
+function getClassName(row: AnyRow | null | undefined) {
+  return stringValue(row?.class_name || row?.className || row?.name || row?.student_class || row?.class);
+}
+
+function getStudentId(row: AnyRow) {
+  return stringValue(row.student_id || row.studentId || row.student_code || "");
+}
+
+function getStudentName(row: AnyRow) {
+  const combined = [row.first_name, row.other_name, row.last_name].filter(Boolean).join(" ");
+  return stringValue(row.full_name || row.student_name || row.name || combined || "Student");
+}
+
+function getStudentPhoto(row: AnyRow) {
+  return stringValue(
+    row.photo_url ||
+      row.student_photo_url ||
+      row.profile_photo_url ||
+      row.image_url ||
+      row.picture_url ||
+      row.passport_photo_url ||
+      row.avatar_url ||
+      ""
+  );
+}
+
+function initials(name: string) {
+  return (
+    stringValue(name)
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((x) => x[0])
+      .join("")
+      .toUpperCase() || "S"
+  );
+}
+
+function getStudentClassName(student: AnyRow, classMapById: Map<string, AnyRow>) {
+  const direct = getClassName(student);
+  if (direct) return direct;
+
+  const classId = stringValue(student.class_id || student.classId);
+  if (classId && classMapById.has(classId)) return getClassName(classMapById.get(classId));
+
+  return "";
+}
+
+function isActiveStudent(student: AnyRow) {
+  if (typeof student.active === "boolean") return student.active;
+  if (typeof student.is_active === "boolean") return student.is_active;
+  if (typeof student.left_school === "boolean") return !student.left_school;
+  if (student.status) return !["inactive", "left", "withdrawn"].includes(stringValue(student.status).toLowerCase());
+  return true;
+}
+
+function getStudentType(student: AnyRow): "new" | "returning" {
+  const raw = stringValue(student.student_type || student.studentType).toLowerCase();
+  if (raw === "new") return "new";
+  if (student.is_new === true || student.is_new_student === true) return "new";
+  return "returning";
+}
+
+function getStatus(balance: number, totalPaid: number): FeeStatus {
+  if (balance <= 0 && totalPaid > 0) return "paid";
   if (totalPaid > 0) return "part";
   return "unpaid";
 }
 
-function calcStudentFinancials(student: AnyRow, classRow: AnyRow | null, payments: AnyRow[]) {
-  const isNew = Boolean(student.is_new);
-  let baseFee = isNew
-    ? numberValue(classRow?.fee_new)
-    : numberValue(classRow?.fee_returning);
-
-  const scholarshipType = String(student.scholarship_type || "none").trim().toLowerCase();
-
-  if (scholarshipType === "full") baseFee = 0;
-  if (scholarshipType === "half") baseFee = baseFee / 2;
-  if (scholarshipType === "custom") baseFee = numberValue(student.scholarship_amount);
-
-  const feeLacoste = numberValue(classRow?.fee_lacoste);
-  const feeMonWed = numberValue(classRow?.fee_monwed);
-  const feeFriday = numberValue(classRow?.fee_friday);
-  const arrears = numberValue(student.arrears);
-
-  const totalFees = baseFee + feeLacoste + feeMonWed + feeFriday;
-  const totalOwed = totalFees + arrears;
-  const totalPaid = payments.reduce((sum, row) => sum + numberValue(row.amount_paid), 0);
-  const balance = totalOwed - totalPaid;
-  const paymentStatus = getPaymentStatus(balance, totalPaid);
-
-  return {
-    totalOwed,
-    totalPaid,
-    balance,
-    paymentStatus,
-  };
+function statusLabel(status: FeeStatus) {
+  if (status === "paid") return "Paid";
+  if (status === "part") return "Part Paid";
+  return "Not Paid";
 }
 
-function buildReceiptNo(payment: AnyRow) {
-  if (payment.receipt_no) return String(payment.receipt_no);
-  return String(payment.id || "");
+function statusStyle(status: FeeStatus): CSSProperties {
+  if (status === "paid") return { ...styles.statusPill, background: "#dcfce7", color: "#166534" };
+  if (status === "part") return { ...styles.statusPill, background: "#ffedd5", color: "#c2410c" };
+  return { ...styles.statusPill, background: "#fee2e2", color: "#991b1b" };
+}
+
+function sortClasses(rows: AssignedClass[]) {
+  return [...rows].sort((a, b) => {
+    const ai = CLASS_ORDER.indexOf(a.name);
+    const bi = CLASS_ORDER.indexOf(b.name);
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    if (ai !== -1) return -1;
+    if (bi !== -1) return 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function getLatestPayment(history: AnyRow[]) {
+  return [...history].sort((a, b) => {
+    const aTime = new Date(String(a.created_at || a.payment_date || "")).getTime();
+    const bTime = new Date(String(b.created_at || b.payment_date || "")).getTime();
+    return bTime - aTime;
+  })[0];
+}
+
+function getStudentTotalFee(student: AnyRow, latestPayment: AnyRow | undefined, classRow: AnyRow | undefined, feeStructureRow: AnyRow | undefined) {
+  const latestTotal = numberValue(latestPayment?.total_fee);
+  if (latestTotal > 0) return latestTotal;
+
+  const feeStructureAmount = numberValue(feeStructureRow?.amount);
+  if (feeStructureAmount > 0) return feeStructureAmount;
+
+  const studentType = getStudentType(student);
+  if (studentType === "new") {
+    const classNew = numberValue(classRow?.fee_new);
+    if (classNew > 0) return classNew;
+  }
+
+  const classReturning = numberValue(classRow?.fee_returning);
+  if (classReturning > 0) return classReturning;
+
+  return 0;
+}
+
+function getPaymentMethod(row: AnyRow) {
+  return stringValue(row.payment_method || row.method || row.payment_type || "Payment");
+}
+
+function getPaymentDate(row: AnyRow) {
+  const raw = stringValue(row.payment_date || row.created_at);
+  if (!raw) return "";
+  try {
+    return new Date(raw).toLocaleDateString();
+  } catch {
+    return raw;
+  }
 }
 
 export default function FeesTeacherPage() {
-  const router = useRouter();
-
-  const [checkingUser, setCheckingUser] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const [settingsRow, setSettingsRow] = useState<AnyRow | null>(null);
+  const [teacher, setTeacher] = useState<AnyRow | null>(null);
+  const [assignedClasses, setAssignedClasses] = useState<AssignedClass[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState("");
+
+  const [settings, setSettings] = useState<AnyRow | null>(null);
   const [classes, setClasses] = useState<AnyRow[]>([]);
   const [students, setStudents] = useState<AnyRow[]>([]);
   const [payments, setPayments] = useState<AnyRow[]>([]);
-  const [assignedClasses, setAssignedClasses] = useState<string[]>([]);
+  const [feeStructure, setFeeStructure] = useState<AnyRow[]>([]);
+
+  const [query, setQuery] = useState("");
+  const [selectedStudent, setSelectedStudent] = useState<StudentFeeRow | null>(null);
 
   useEffect(() => {
-    let active = true;
+    let mounted = true;
 
-    async function checkAndLoad() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+    async function loadPage() {
+      try {
+        setLoading(true);
+        setError("");
 
-      if (!active) return;
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
-      if (!session?.user) {
-        router.replace("/");
-        return;
+        if (!session?.user) {
+          setError("Please login again.");
+          setLoading(false);
+          return;
+        }
+
+        const [
+          teachersRes,
+          settingsRes,
+          classesRes,
+          assignmentRes,
+          teacherClassesRes,
+          studentsRes,
+          paymentsRes,
+          feeStructureRes,
+        ] = await Promise.all([
+          supabase.from("teachers").select("*"),
+          supabase.from("school_settings").select("*").limit(1).maybeSingle(),
+          supabase.from("classes").select("*"),
+          supabase.from("teacher_class_assignments").select("*"),
+          supabase.from("teacher_classes").select("*"),
+          supabase.from("students").select("*"),
+          supabase.from("fee_payments").select("*").order("created_at", { ascending: false }),
+          supabase.from("fee_structure").select("*"),
+        ]);
+
+        if (!mounted) return;
+
+        if (teachersRes.error) throw teachersRes.error;
+        if (classesRes.error) throw classesRes.error;
+        if (studentsRes.error) throw studentsRes.error;
+        if (paymentsRes.error) throw paymentsRes.error;
+
+        const teacherRows = teachersRes.data || [];
+        const authUser = session.user;
+        const authEmail = stringValue(authUser.email).toLowerCase();
+        const authPhone = stringValue((authUser.user_metadata?.phone as string | undefined) || authUser.phone);
+
+        const foundTeacher =
+          teacherRows.find((row) => stringValue(row.auth_user_id) === authUser.id) ||
+          teacherRows.find((row) => stringValue(row.login_email || row.email).toLowerCase() === authEmail) ||
+          teacherRows.find((row) => stringValue(row.phone || row.teacher_phone || row.contact) === authPhone) ||
+          null;
+
+        if (!foundTeacher) {
+          setError("Teacher account not found.");
+          setLoading(false);
+          return;
+        }
+
+        const classRows = classesRes.data || [];
+        const classById = new Map<string, AnyRow>();
+        classRows.forEach((row) => classById.set(stringValue(row.id), row));
+
+        const teacherUuid = stringValue(foundTeacher.id);
+        const teacherJvst = stringValue(foundTeacher.teacher_id);
+
+        const assignedMap = new Map<string, AssignedClass>();
+
+        function addClassById(classId: string) {
+          const row = classById.get(classId);
+          if (!row) return;
+          const name = getClassName(row);
+          if (!name) return;
+          assignedMap.set(classId, { id: classId, name });
+        }
+
+        (assignmentRes.data || [])
+          .filter((row: AnyRow) => stringValue(row.teacher_id) === teacherUuid || stringValue(row.teacher_id) === teacherJvst)
+          .forEach((row: AnyRow) => addClassById(stringValue(row.class_id)));
+
+        (teacherClassesRes.data || [])
+          .filter((row: AnyRow) => stringValue(row.teacher_id) === teacherUuid || stringValue(row.teacher_id) === teacherJvst)
+          .forEach((row: AnyRow) => addClassById(stringValue(row.class_id)));
+
+        const assignedRaw = foundTeacher.assigned_classes;
+        if (Array.isArray(assignedRaw)) {
+          assignedRaw.forEach((item: any) => {
+            const name = stringValue(item?.class_name || item?.name || item);
+            const match = classRows.find((row) => getClassName(row) === name || stringValue(row.id) === name);
+            if (match) assignedMap.set(stringValue(match.id), { id: stringValue(match.id), name: getClassName(match) });
+          });
+        } else if (typeof assignedRaw === "string" && assignedRaw.trim()) {
+          assignedRaw
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean)
+            .forEach((name) => {
+              const match = classRows.find((row) => getClassName(row) === name || stringValue(row.id) === name);
+              if (match) assignedMap.set(stringValue(match.id), { id: stringValue(match.id), name: getClassName(match) });
+            });
+        }
+
+        const sortedAssigned = sortClasses(Array.from(assignedMap.values()));
+
+        setTeacher(foundTeacher);
+        setSettings(settingsRes.data || null);
+        setClasses(classRows);
+        setStudents(studentsRes.data || []);
+        setPayments(paymentsRes.data || []);
+        setFeeStructure(feeStructureRes.data || []);
+        setAssignedClasses(sortedAssigned);
+        setSelectedClassId((prev) => prev || sortedAssigned[0]?.id || "");
+        setLoading(false);
+      } catch (err: any) {
+        if (!mounted) return;
+        setError(err?.message || "Could not load fees.");
+        setLoading(false);
       }
-
-      const [teachersRes, settingsRes, classesRes, studentsRes, paymentsRes] = await Promise.all([
-        supabase.from("teachers").select("*"),
-        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-        supabase.from("classes").select("*"),
-        supabase.from("students").select("*"),
-        supabase.from("fee_payments").select("*").order("created_at", { ascending: false }),
-      ]);
-
-      if (!active) return;
-
-      if (teachersRes.error || !teachersRes.data || teachersRes.data.length === 0) {
-        router.replace("/");
-        return;
-      }
-
-      const userRow =
-        teachersRes.data.find((item) => item.auth_user_id === session.user.id) ||
-        teachersRes.data.find(
-          (item) =>
-            String(item.email || "").trim().toLowerCase() ===
-            String(session.user.email || "").trim().toLowerCase()
-        ) ||
-        null;
-
-      if (!userRow) {
-        router.replace("/");
-        return;
-      }
-
-      const role = getRole(userRow);
-
-      if (role !== "teacher") {
-        router.replace("/fees/admin");
-        return;
-      }
-
-      setAssignedClasses(getAssignedClasses(userRow));
-      setSettingsRow(settingsRes.data || null);
-      setClasses(classesRes.data || []);
-      setStudents(studentsRes.data || []);
-      setPayments(paymentsRes.data || []);
-
-      setCheckingUser(false);
-      setLoading(false);
     }
 
-    void checkAndLoad();
+    void loadPage();
 
     return () => {
-      active = false;
+      mounted = false;
     };
-  }, [router]);
+  }, []);
 
-  const schoolName = String(settingsRow?.school_name || "JEFSEM VISION SCHOOL");
-  const motto = String(settingsRow?.motto || "Success in Excellence");
-  const academicYear = String(settingsRow?.academic_year || "");
-  const currentTerm = String(settingsRow?.current_term || "");
+  const academicYear = stringValue(settings?.academic_year);
+  const currentTerm = stringValue(settings?.current_term);
 
-  const currentTermPayments = useMemo(() => {
-    return payments.filter(
-      (row) =>
-        String(row.academic_year || "") === academicYear &&
-        String(row.term || "") === currentTerm
-    );
-  }, [payments, academicYear, currentTerm]);
-
-  const classMap = useMemo(() => {
+  const classMapById = useMemo(() => {
     const map = new Map<string, AnyRow>();
-    classes.forEach((row) => map.set(getClassName(row), row));
+    classes.forEach((row) => map.set(stringValue(row.id), row));
     return map;
   }, [classes]);
 
-  const filteredStudents = useMemo<StudentFinanceRow[]>(() => {
-    return students
+  const selectedClass = useMemo(() => {
+    return assignedClasses.find((row) => row.id === selectedClassId) || assignedClasses[0] || null;
+  }, [assignedClasses, selectedClassId]);
+
+  const selectedClassRow = selectedClass ? classMapById.get(selectedClass.id) : null;
+
+  const currentPayments = useMemo(() => {
+    return payments.filter((row) => {
+      const sameAcademicYear = academicYear ? stringValue(row.academic_year) === academicYear : true;
+      const sameTerm = currentTerm ? stringValue(row.term) === currentTerm : true;
+      return sameAcademicYear && sameTerm;
+    });
+  }, [payments, academicYear, currentTerm]);
+
+  const feeStructureForClass = useMemo(() => {
+    if (!selectedClass) return undefined;
+
+    return feeStructure.find((row) => {
+      const sameClass = getClassName(row) === selectedClass.name;
+      const sameAcademicYear = academicYear ? stringValue(row.academic_year) === academicYear : true;
+      const sameTerm = currentTerm ? stringValue(row.term) === currentTerm : true;
+      const active = typeof row.active === "boolean" ? row.active : true;
+      return sameClass && sameAcademicYear && sameTerm && active;
+    });
+  }, [feeStructure, selectedClass, academicYear, currentTerm]);
+
+  const studentRows = useMemo<StudentFeeRow[]>(() => {
+    if (!selectedClass) return [];
+
+    const search = query.trim().toLowerCase();
+
+    const rows = students
       .filter((student) => {
-        const className = getClassName(student);
-        if (!assignedClasses.includes(className)) return false;
-        if (typeof student.active === "boolean") return student.active;
-        return true;
+        if (!isActiveStudent(student)) return false;
+
+        const classId = stringValue(student.class_id || student.classId);
+        const className = getStudentClassName(student, classMapById);
+
+        const belongs =
+          (classId && classId === selectedClass.id) ||
+          (!!className && className === selectedClass.name);
+
+        if (!belongs) return false;
+
+        if (!search) return true;
+
+        const haystack = [
+          getStudentName(student),
+          getStudentId(student),
+          student.parent_name,
+          student.parent_phone,
+          student.father_name,
+          student.mother_name,
+          student.guardian_name,
+          student.guardian_phone,
+        ]
+          .map((x) => stringValue(x).toLowerCase())
+          .join(" ");
+
+        return haystack.includes(search);
       })
       .map((student) => {
-        const studentId = getStudentIdValue(student);
-        const className = getClassName(student);
-        const classRow = classMap.get(className) || null;
-        const studentPayments = currentTermPayments.filter(
-          (row) => String(row.student_id || "") === studentId
-        );
-        const finance = calcStudentFinancials(student, classRow, studentPayments);
+        const studentIdValue = getStudentId(student);
+
+        const history = currentPayments
+          .filter((payment) => stringValue(payment.student_id) === studentIdValue)
+          .sort((a, b) => {
+            const aTime = new Date(String(a.created_at || a.payment_date || "")).getTime();
+            const bTime = new Date(String(b.created_at || b.payment_date || "")).getTime();
+            return bTime - aTime;
+          });
+
+        const latest = getLatestPayment(history);
+        const summedPaid = history.reduce((sum, row) => sum + numberValue(row.amount_paid), 0);
+        const cumulativePaid = numberValue(latest?.cumulative_paid);
+        const totalPaid = cumulativePaid > 0 ? cumulativePaid : summedPaid;
+
+        const totalFee = getStudentTotalFee(student, latest, selectedClassRow || undefined, feeStructureForClass);
+        const latestBalance = latest && latest.balance_after_payment !== null && latest.balance_after_payment !== undefined
+          ? numberValue(latest.balance_after_payment)
+          : NaN;
+        const balance = Number.isFinite(latestBalance) ? latestBalance : Math.max(totalFee - totalPaid, 0);
 
         return {
           ...student,
-          studentId,
-          className,
-          ...finance,
-        } as StudentFinanceRow;
-      })
-      .sort((a, b) =>
-        String(a.full_name || "").localeCompare(String(b.full_name || ""))
-      );
-  }, [students, assignedClasses, classMap, currentTermPayments]);
+          studentIdValue,
+          studentNameValue: getStudentName(student),
+          classNameValue: selectedClass.name,
+          photoUrl: getStudentPhoto(student),
+          totalFee,
+          totalPaid,
+          balance,
+          status: getStatus(balance, totalPaid),
+          paymentHistory: history,
+        };
+      });
 
-  const classSummary = useMemo(() => {
-    return assignedClasses.map((className) => {
-      const classStudents = filteredStudents.filter((row) => row.className === className);
-      const classRow = classMap.get(className);
+    return rows.sort((a, b) => a.studentNameValue.localeCompare(b.studentNameValue));
+  }, [students, selectedClass, classMapById, query, currentPayments, selectedClassRow, feeStructureForClass]);
 
-      return {
-        className,
-        feeReturning: numberValue(classRow?.fee_returning),
-        feeNew: numberValue(classRow?.fee_new),
-        feeLacoste: numberValue(classRow?.fee_lacoste),
-        feeMonWed: numberValue(classRow?.fee_monwed),
-        feeFriday: numberValue(classRow?.fee_friday),
-        students: classStudents.length,
-        totalPaid: classStudents.reduce((sum, row) => sum + row.totalPaid, 0),
-        totalOutstanding: classStudents.reduce((sum, row) => sum + Math.max(row.balance, 0), 0),
-      };
-    });
-  }, [assignedClasses, filteredStudents, classMap]);
+  const summary = useMemo(() => {
+    return {
+      total: studentRows.length,
+      paid: studentRows.filter((row) => row.status === "paid").length,
+      owing: studentRows.filter((row) => row.balance > 0).length,
+      totalBalance: studentRows.reduce((sum, row) => sum + row.balance, 0),
+    };
+  }, [studentRows]);
 
-  const recentPayments = useMemo(() => {
-    return currentTermPayments
-      .filter((row) => assignedClasses.includes(String(row.class_name || "")))
-      .sort((a, b) => {
-        const aDate = new Date(String(a.created_at || a.payment_date || "")).getTime();
-        const bDate = new Date(String(b.created_at || b.payment_date || "")).getTime();
-        return bDate - aDate;
-      })
-      .slice(0, 10);
-  }, [currentTermPayments, assignedClasses]);
-
-  if (checkingUser || loading) {
-    return <div style={{ padding: "24px" }}>Loading teacher fees page...</div>;
+  if (loading) {
+    return (
+      <main style={styles.page}>
+        <div style={styles.centerCard}>Loading fees...</div>
+      </main>
+    );
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: COLORS.background,
-        fontFamily: "Arial, sans-serif",
-        color: COLORS.text,
-      }}
-    >
-      <div
-        style={{
-          background: COLORS.secondary,
-          color: COLORS.white,
-          padding: "20px 24px",
-          borderBottom: `6px solid ${COLORS.primary}`,
-        }}
-      >
-        <div
-          style={{
-            maxWidth: "1400px",
-            margin: "0 auto",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "start",
-            gap: "12px",
-            flexWrap: "wrap",
-          }}
-        >
-          <div>
-            <h1 style={{ margin: 0 }}>Fees Overview</h1>
-            <p style={{ margin: "6px 0 0", fontWeight: "bold" }}>{schoolName}</p>
-            <p style={{ margin: "4px 0 0", opacity: 0.9 }}>{motto}</p>
-            <p style={{ margin: "6px 0 0", fontSize: "13px", opacity: 0.9 }}>
-              <strong>{academicYear || "-"}</strong> • <strong>{currentTerm || "-"}</strong>
-            </p>
-          </div>
-
-          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-            <Link href="/dashboard/teacher" style={topButtonStyle}>
-              Teacher Dashboard
-            </Link>
-          </div>
+    <main style={styles.page}>
+      <header style={styles.header}>
+        <div>
+          <p style={styles.kicker}>Fees</p>
+          <h1 style={styles.title}>Student Fees</h1>
+          <p style={styles.subtle}>
+            {academicYear || "Academic year"} {currentTerm ? `• ${currentTerm}` : ""}
+          </p>
         </div>
-      </div>
+      </header>
 
-      <div style={{ maxWidth: "1400px", margin: "0 auto", padding: "24px" }}>
-        <Section title="Assigned Classes">
-          {classSummary.length === 0 ? (
-            <p style={{ color: COLORS.muted, marginBottom: 0 }}>No assigned class found.</p>
-          ) : (
-            <ReportTable
-              headers={[
-                "Class",
-                "Returning Fee",
-                "New Fee",
-                "Lacoste",
-                "Mon-Wed",
-                "Friday",
-                "Students",
-                "Paid",
-                "Outstanding",
-              ]}
-              rows={classSummary.map((row) => [
-                row.className,
-                formatMoney(row.feeReturning),
-                formatMoney(row.feeNew),
-                formatMoney(row.feeLacoste),
-                formatMoney(row.feeMonWed),
-                formatMoney(row.feeFriday),
-                row.students,
-                formatMoney(row.totalPaid),
-                formatMoney(row.totalOutstanding),
-              ])}
+      {error && <div style={styles.errorBox}>⚠️ {error}</div>}
+
+      {!error && assignedClasses.length === 0 && (
+        <div style={styles.emptyCard}>
+          <div style={styles.emptyIcon}>🏫</div>
+          <h2 style={styles.emptyTitle}>No class assigned</h2>
+          <p style={styles.subtle}>Ask admin to assign your class.</p>
+        </div>
+      )}
+
+      {!error && assignedClasses.length > 0 && (
+        <>
+          <section style={styles.selectorCard}>
+            <label style={styles.field}>
+              <span style={styles.label}>Assigned Class</span>
+              <select
+                style={styles.select}
+                value={selectedClassId}
+                onChange={(e) => {
+                  setSelectedClassId(e.target.value);
+                  setSelectedStudent(null);
+                }}
+              >
+                {assignedClasses.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <input
+              style={styles.search}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search student, ID, or parent..."
             />
-          )}
-        </Section>
+          </section>
 
-        <Section title="Students in Assigned Classes">
-          <ReportTable
-            headers={["Student", "Student ID", "Class", "Total Owed", "Paid", "Balance", "Status"]}
-            rows={filteredStudents.map((row) => [
-              String(row.full_name || "-"),
-              row.studentId,
-              row.className,
-              formatMoney(row.totalOwed),
-              formatMoney(row.totalPaid),
-              formatMoney(row.balance),
-              row.paymentStatus,
-            ])}
-          />
-        </Section>
+          <section style={styles.summaryGrid}>
+            <SummaryCard label="Students" value={summary.total} />
+            <SummaryCard label="Paid" value={summary.paid} />
+            <SummaryCard label="Owing" value={summary.owing} />
+            <SummaryCard label="Balance" value={formatMoney(summary.totalBalance)} />
+          </section>
 
-        <Section title="Recent Payments">
-          <ReportTable
-            headers={["Receipt", "Student", "Class", "Amount", "Type", "Date"]}
-            rows={recentPayments.map((row) => [
-              buildReceiptNo(row),
-              String(row.student_name || "-"),
-              String(row.class_name || "-"),
-              formatMoney(numberValue(row.amount_paid)),
-              String(row.payment_type || "-"),
-              String(row.payment_date || "-"),
-            ])}
-          />
-        </Section>
+          <section style={styles.studentList}>
+            {studentRows.map((student) => (
+              <button
+                type="button"
+                key={student.id || student.studentIdValue}
+                style={styles.studentCard}
+                onClick={() => setSelectedStudent(student)}
+              >
+                <Avatar name={student.studentNameValue} photoUrl={student.photoUrl} />
 
-        <p
-          style={{
-            marginTop: "28px",
-            fontSize: "13px",
-            color: "#666",
-            textAlign: "center",
-          }}
-        >
-          System developed by Lord Wilhelm (0593410452)
-        </p>
-      </div>
+                <div style={styles.studentMain}>
+                  <div style={styles.studentTopLine}>
+                    <h3 style={styles.studentName}>{student.studentNameValue}</h3>
+                    <span style={statusStyle(student.status)}>{statusLabel(student.status)}</span>
+                  </div>
+
+                  <p style={styles.studentId}>ID: {student.studentIdValue || "Not set"}</p>
+
+                  <div style={styles.moneyGrid}>
+                    <MoneyBlock label="Bill" value={student.totalFee} />
+                    <MoneyBlock label="Paid" value={student.totalPaid} />
+                    <MoneyBlock label="Balance" value={student.balance} danger={student.balance > 0} />
+                  </div>
+                </div>
+              </button>
+            ))}
+
+            {studentRows.length === 0 && (
+              <div style={styles.emptyCard}>
+                <div style={styles.emptyIcon}>🧾</div>
+                <h2 style={styles.emptyTitle}>No students found</h2>
+                <p style={styles.subtle}>Try another search or check the selected class.</p>
+              </div>
+            )}
+          </section>
+        </>
+      )}
+
+      {selectedStudent && (
+        <StudentFeeSheet student={selectedStudent} onClose={() => setSelectedStudent(null)} />
+      )}
     </main>
   );
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function Avatar({ name, photoUrl }: { name: string; photoUrl?: string }) {
   return (
-    <div
-      style={{
-        background: COLORS.white,
-        borderRadius: "16px",
-        padding: "18px",
-        boxShadow: "0 8px 22px rgba(0,0,0,0.06)",
-        overflowX: "auto",
-        marginBottom: "20px",
-      }}
-    >
-      <h3 style={{ marginTop: 0, color: COLORS.secondary }}>{title}</h3>
-      {children}
+    <div style={styles.avatar}>
+      {photoUrl ? (
+        <img src={photoUrl} alt={name} style={styles.avatarImg} />
+      ) : (
+        <span>{initials(name)}</span>
+      )}
     </div>
   );
 }
 
-function ReportTable({
-  headers,
-  rows,
-}: {
-  headers: string[];
-  rows: (string | number)[][];
-}) {
-  return rows.length === 0 ? (
-    <p style={{ color: COLORS.muted, marginBottom: 0 }}>No data found.</p>
-  ) : (
-    <table
-      style={{
-        width: "100%",
-        borderCollapse: "collapse",
-        fontSize: "14px",
-      }}
-    >
-      <thead>
-        <tr style={{ background: "#fff7cc" }}>
-          {headers.map((header) => (
-            <th key={header} style={thStyle}>
-              {header}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row, index) => (
-          <tr key={index}>
-            {row.map((cell, cellIndex) => (
-              <td key={cellIndex} style={tdStyle}>
-                {cell}
-              </td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
+function SummaryCard({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div style={styles.summaryCard}>
+      <span style={styles.summaryLabel}>{label}</span>
+      <strong style={styles.summaryValue}>{value}</strong>
+    </div>
   );
 }
 
-const topButtonStyle: React.CSSProperties = {
-  textDecoration: "none",
-  border: "none",
-  borderRadius: "10px",
-  padding: "10px 14px",
-  background: "#1f2937",
-  color: "#ffffff",
-  cursor: "pointer",
-  fontWeight: "bold",
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-};
+function MoneyBlock({ label, value, danger = false }: { label: string; value: number; danger?: boolean }) {
+  return (
+    <div style={styles.moneyBlock}>
+      <span style={styles.moneyLabel}>{label}</span>
+      <strong style={{ ...styles.moneyValue, color: danger ? COLORS.danger : COLORS.deep }}>
+        {formatMoney(value)}
+      </strong>
+    </div>
+  );
+}
 
-const thStyle: React.CSSProperties = {
-  textAlign: "left",
-  padding: "12px",
-  borderBottom: "1px solid #e5e7eb",
-};
+function StudentFeeSheet({ student, onClose }: { student: StudentFeeRow; onClose: () => void }) {
+  return (
+    <div style={styles.sheetOverlay} onClick={onClose}>
+      <section style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.sheetHandle} />
 
-const tdStyle: React.CSSProperties = {
-  padding: "12px",
-  borderBottom: "1px solid #f0f0f0",
+        <div style={styles.sheetHeader}>
+          <div style={styles.profileTop}>
+            <Avatar name={student.studentNameValue} photoUrl={student.photoUrl} />
+            <div>
+              <h2 style={styles.sheetTitle}>{student.studentNameValue}</h2>
+              <p style={styles.studentId}>ID: {student.studentIdValue || "Not set"}</p>
+              <p style={styles.subtle}>{student.classNameValue}</p>
+            </div>
+          </div>
+
+          <button style={styles.closeBtn} onClick={onClose}>
+            Close
+          </button>
+        </div>
+
+        <div style={styles.detailStatusRow}>
+          <span style={statusStyle(student.status)}>{statusLabel(student.status)}</span>
+        </div>
+
+        <div style={styles.sheetMoneyGrid}>
+          <MoneyBlock label="Total Bill" value={student.totalFee} />
+          <MoneyBlock label="Total Paid" value={student.totalPaid} />
+          <MoneyBlock label="Balance" value={student.balance} danger={student.balance > 0} />
+        </div>
+
+        <section style={styles.infoSection}>
+          <h3 style={styles.sectionTitle}>Payment History</h3>
+
+          {student.paymentHistory.length === 0 ? (
+            <p style={styles.subtle}>No fee payment recorded for this term.</p>
+          ) : (
+            <div style={styles.historyList}>
+              {student.paymentHistory.map((payment) => (
+                <div key={payment.id || payment.receipt_no} style={styles.historyItem}>
+                  <div>
+                    <strong style={styles.historyAmount}>{formatMoney(numberValue(payment.amount_paid))}</strong>
+                    <p style={styles.historyMeta}>
+                      {getPaymentMethod(payment)} • {getPaymentDate(payment)}
+                    </p>
+                    {payment.receipt_no && (
+                      <p style={styles.receiptText}>Receipt: {payment.receipt_no}</p>
+                    )}
+                  </div>
+
+                  <div style={styles.historyRight}>
+                    <span style={styles.balanceText}>
+                      Bal: {formatMoney(numberValue(payment.balance_after_payment))}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section style={styles.infoSection}>
+          <h3 style={styles.sectionTitle}>Parent / Guardian</h3>
+
+          <InfoRow label="Parent" value={student.parent_name || student.father_name || student.mother_name || student.guardian_name} />
+          <InfoRow label="Phone" value={student.parent_phone || student.father_phone || student.mother_phone || student.guardian_phone} />
+          <InfoRow label="Emergency" value={student.emergency_contact_phone || student.emergency_contact} />
+        </section>
+      </section>
+    </div>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: any }) {
+  return (
+    <div style={styles.infoRow}>
+      <span style={styles.infoLabel}>{label}</span>
+      <strong style={styles.infoValue}>{stringValue(value) || "—"}</strong>
+    </div>
+  );
+}
+
+const styles: Record<string, CSSProperties> = {
+  page: {
+    minHeight: "100vh",
+    background: `linear-gradient(180deg, ${COLORS.page}, #ffffff)`,
+    padding: "18px 14px 90px",
+    color: COLORS.text,
+    fontFamily: "Inter, Arial, sans-serif",
+  },
+  header: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 14,
+  },
+  kicker: {
+    margin: 0,
+    color: COLORS.green,
+    fontSize: 12,
+    fontWeight: 900,
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+  },
+  title: {
+    margin: "4px 0 2px",
+    color: COLORS.deep,
+    fontSize: 26,
+    lineHeight: 1.1,
+  },
+  subtle: {
+    margin: 0,
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 1.45,
+  },
+  centerCard: {
+    background: COLORS.card,
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 22,
+    padding: 22,
+    boxShadow: "0 16px 35px rgba(16,32,22,0.08)",
+    color: COLORS.muted,
+    fontWeight: 800,
+  },
+  errorBox: {
+    background: "#fff1f2",
+    color: COLORS.danger,
+    border: "1px solid #fecaca",
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 12,
+    fontWeight: 800,
+    fontSize: 13,
+  },
+  selectorCard: {
+    background: COLORS.card,
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 24,
+    padding: 14,
+    boxShadow: "0 18px 40px rgba(16,32,22,0.08)",
+    display: "grid",
+    gap: 10,
+    marginBottom: 12,
+  },
+  field: {
+    display: "grid",
+    gap: 6,
+  },
+  label: {
+    fontSize: 12,
+    fontWeight: 900,
+    color: COLORS.deep,
+  },
+  select: {
+    width: "100%",
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 16,
+    padding: "12px 13px",
+    fontWeight: 800,
+    color: COLORS.deep,
+    background: "#fff",
+    outline: "none",
+  },
+  search: {
+    width: "100%",
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 16,
+    padding: "12px 13px",
+    color: COLORS.deep,
+    background: "#fff",
+    outline: "none",
+    fontWeight: 700,
+  },
+  summaryGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 10,
+    marginBottom: 12,
+  },
+  summaryCard: {
+    background: COLORS.card,
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 18,
+    padding: 13,
+    boxShadow: "0 10px 24px rgba(16,32,22,0.06)",
+  },
+  summaryLabel: {
+    display: "block",
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: 900,
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+  },
+  summaryValue: {
+    display: "block",
+    marginTop: 4,
+    color: COLORS.deep,
+    fontSize: 17,
+    overflowWrap: "anywhere",
+  },
+  studentList: {
+    display: "grid",
+    gap: 12,
+  },
+  studentCard: {
+    width: "100%",
+    textAlign: "left",
+    border: `1px solid ${COLORS.border}`,
+    background: COLORS.card,
+    borderRadius: 24,
+    padding: 13,
+    display: "flex",
+    gap: 12,
+    boxShadow: "0 16px 35px rgba(16,32,22,0.08)",
+    cursor: "pointer",
+  },
+  avatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 20,
+    overflow: "hidden",
+    background: COLORS.softGreen,
+    color: COLORS.green,
+    display: "grid",
+    placeItems: "center",
+    fontWeight: 950,
+    fontSize: 17,
+    flexShrink: 0,
+  },
+  avatarImg: {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+  },
+  studentMain: {
+    minWidth: 0,
+    flex: 1,
+  },
+  studentTopLine: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+  studentName: {
+    margin: 0,
+    color: COLORS.deep,
+    fontSize: 15,
+    lineHeight: 1.25,
+  },
+  studentId: {
+    margin: "4px 0 0",
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: 800,
+  },
+  statusPill: {
+    display: "inline-flex",
+    borderRadius: 999,
+    padding: "5px 8px",
+    fontSize: 10,
+    fontWeight: 950,
+    whiteSpace: "nowrap",
+  },
+  moneyGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: 7,
+    marginTop: 10,
+  },
+  moneyBlock: {
+    background: "#f7faf8",
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 14,
+    padding: 8,
+    minWidth: 0,
+  },
+  moneyLabel: {
+    display: "block",
+    color: COLORS.muted,
+    fontSize: 10,
+    fontWeight: 900,
+    marginBottom: 3,
+  },
+  moneyValue: {
+    display: "block",
+    fontSize: 11,
+    fontWeight: 950,
+    overflowWrap: "anywhere",
+  },
+  emptyCard: {
+    background: COLORS.card,
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 24,
+    padding: 22,
+    textAlign: "center",
+    boxShadow: "0 16px 35px rgba(16,32,22,0.08)",
+  },
+  emptyIcon: {
+    fontSize: 30,
+    marginBottom: 8,
+  },
+  emptyTitle: {
+    margin: "0 0 6px",
+    fontSize: 18,
+    color: COLORS.deep,
+  },
+  sheetOverlay: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 80,
+    background: "rgba(0,0,0,0.35)",
+    display: "flex",
+    alignItems: "flex-end",
+  },
+  sheet: {
+    width: "100%",
+    maxHeight: "92vh",
+    overflowY: "auto",
+    background: "#ffffff",
+    borderRadius: "28px 28px 0 0",
+    padding: "10px 16px 26px",
+    boxShadow: "0 -20px 60px rgba(0,0,0,0.2)",
+  },
+  sheetHandle: {
+    width: 46,
+    height: 5,
+    borderRadius: 999,
+    background: "#d1d5db",
+    margin: "0 auto 14px",
+  },
+  sheetHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 12,
+    alignItems: "flex-start",
+    marginBottom: 12,
+  },
+  profileTop: {
+    display: "flex",
+    gap: 12,
+    alignItems: "center",
+    minWidth: 0,
+  },
+  sheetTitle: {
+    margin: 0,
+    color: COLORS.deep,
+    fontSize: 20,
+    lineHeight: 1.15,
+  },
+  closeBtn: {
+    border: `1px solid ${COLORS.border}`,
+    background: "#fff",
+    color: COLORS.deep,
+    borderRadius: 12,
+    padding: "9px 12px",
+    fontWeight: 900,
+    cursor: "pointer",
+  },
+  detailStatusRow: {
+    marginBottom: 12,
+  },
+  sheetMoneyGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: 8,
+    marginBottom: 14,
+  },
+  infoSection: {
+    borderTop: `1px solid ${COLORS.border}`,
+    paddingTop: 14,
+    marginTop: 14,
+  },
+  sectionTitle: {
+    margin: "0 0 10px",
+    color: COLORS.deep,
+    fontSize: 15,
+  },
+  historyList: {
+    display: "grid",
+    gap: 9,
+  },
+  historyItem: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 10,
+    background: "#f8faf8",
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 16,
+    padding: 11,
+  },
+  historyAmount: {
+    color: COLORS.deep,
+    fontSize: 14,
+  },
+  historyMeta: {
+    margin: "4px 0 0",
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: 700,
+  },
+  receiptText: {
+    margin: "4px 0 0",
+    color: COLORS.green,
+    fontSize: 11,
+    fontWeight: 900,
+  },
+  historyRight: {
+    display: "flex",
+    alignItems: "center",
+  },
+  balanceText: {
+    fontSize: 11,
+    fontWeight: 900,
+    color: COLORS.danger,
+    whiteSpace: "nowrap",
+  },
+  infoRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 12,
+    borderBottom: `1px solid ${COLORS.border}`,
+    padding: "10px 0",
+  },
+  infoLabel: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: 900,
+  },
+  infoValue: {
+    color: COLORS.deep,
+    fontSize: 12,
+    textAlign: "right",
+  },
 };

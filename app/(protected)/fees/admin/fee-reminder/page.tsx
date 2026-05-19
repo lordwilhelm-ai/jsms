@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 type AnyRow = Record<string, any>;
 type SendMode = "owing" | "all" | "class" | "level" | "individual";
 type ChannelMode = "sms" | "whatsapp" | "both";
+type PrintStatus = "all" | "owing" | "cleared";
 
 type Recipient = {
   studentName: string;
@@ -18,6 +19,10 @@ type Recipient = {
   expected: number;
   paid: number;
   balance: number;
+  lastPaymentDate: string;
+  lastPaymentAmount: number;
+  lastReceipt: string;
+  paymentCount: number;
   parentLink: string;
   message: string;
 };
@@ -52,6 +57,19 @@ function num(value: unknown) {
 
 function money(value: number) {
   return `GHS ${Number(value || 0).toFixed(2)}`;
+}
+
+function formatDate(value: unknown) {
+  const raw = text(value);
+  if (!raw) return "";
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+
+  return date.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function getStudentName(row: AnyRow) {
@@ -156,6 +174,22 @@ function getPaymentAmount(row: AnyRow) {
   return num(row.amount_paid || row.amount || row.paid_amount || row.payment_amount);
 }
 
+function getPaymentDate(row: AnyRow) {
+  return (
+    row.payment_date ||
+    row.paid_at ||
+    row.created_at ||
+    row.date_paid ||
+    row.paymentDate ||
+    row.date ||
+    ""
+  );
+}
+
+function getReceiptNumber(row: AnyRow) {
+  return text(row.receipt_no || row.receipt_number || row.receipt || row.reference || row.payment_reference || row.paystack_reference);
+}
+
 function calculateExpected(student: AnyRow, classRow: AnyRow | null, newStudentItems: AnyRow[]) {
   const className = getClassName(student);
   const levelGroup = text(classRow?.fee_level_group) || getLevelGroupFromClassName(className);
@@ -165,8 +199,8 @@ function calculateExpected(student: AnyRow, classRow: AnyRow | null, newStudentI
   const newItemsTotal = newStudentItems
     .filter((item) => text(item.level_group) === levelGroup && item.is_active !== false)
     .reduce((sum, item) => sum + num(item.amount), 0);
-  const newFee = newItemsTotal || num(classRow?.fee_new || classRow?.new_student_fee);
 
+  const newFee = newItemsTotal || num(classRow?.fee_new || classRow?.new_student_fee);
   let baseFee = isNew ? newFee : continuingFee;
 
   const scholarship = lower(student.scholarship_type || student.scholarship || student.fee_type);
@@ -227,6 +261,9 @@ export default function FeeReminderPage() {
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState("");
 
+  const [printClass, setPrintClass] = useState("");
+  const [printStatus, setPrintStatus] = useState<PrintStatus>("all");
+
   useEffect(() => {
     async function loadData() {
       setLoading(true);
@@ -281,15 +318,34 @@ export default function FeeReminderPage() {
         const classRow = classMap.get(className) || null;
         const levelGroup = text(classRow?.fee_level_group) || getLevelGroupFromClassName(className);
         const expected = calculateExpected(student, classRow, newItems);
-        const studentPayments = payments.filter(
-          (payment) => paymentMatchesStudent(payment, student, studentId, studentName, className) && currentTermPayment(payment, academicYear, currentTerm)
-        );
+
+        const studentPayments = payments
+          .filter(
+            (payment) =>
+              paymentMatchesStudent(payment, student, studentId, studentName, className) &&
+              currentTermPayment(payment, academicYear, currentTerm)
+          )
+          .sort((a, b) => {
+            const dateA = new Date(getPaymentDate(a)).getTime() || 0;
+            const dateB = new Date(getPaymentDate(b)).getTime() || 0;
+            return dateB - dateA;
+          });
+
         const paid = studentPayments.reduce((sum, payment) => sum + getPaymentAmount(payment), 0);
         const balance = Math.max(expected - paid, 0);
+
+        const lastPayment = studentPayments[0] || null;
+        const lastPaymentDate = lastPayment ? formatDate(getPaymentDate(lastPayment)) : "";
+        const lastPaymentAmount = lastPayment ? getPaymentAmount(lastPayment) : 0;
+        const lastReceipt = lastPayment ? getReceiptNumber(lastPayment) : "";
+
         const phone = getParentPhone(student);
         const clean = cleanPhone(phone);
         const path = customPath || "/parent/fee/{student_id}";
-        const parentLink = `https://jefsemvision.cc${path.startsWith("/") ? path : `/${path}`}`.replaceAll("{student_id}", encodeURIComponent(studentId));
+        const parentLink = `https://jefsemvision.cc${path.startsWith("/") ? path : `/${path}`}`.replaceAll(
+          "{student_id}",
+          encodeURIComponent(studentId)
+        );
 
         return {
           studentName,
@@ -301,6 +357,10 @@ export default function FeeReminderPage() {
           expected,
           paid,
           balance,
+          lastPaymentDate,
+          lastPaymentAmount,
+          lastReceipt,
+          paymentCount: studentPayments.length,
           parentLink,
           message: "",
         };
@@ -315,6 +375,7 @@ export default function FeeReminderPage() {
   const individualMatches = useMemo(() => {
     const q = lower(studentSearch);
     if (!q) return allFinanceRows.slice(0, 8);
+
     return allFinanceRows
       .filter((row) => lower(`${row.studentName} ${row.studentId} ${row.className}`).includes(q))
       .slice(0, 8);
@@ -330,6 +391,28 @@ export default function FeeReminderPage() {
 
     return rows;
   }, [allFinanceRows, sendMode, selectedClass, selectedLevel, selectedStudentId]);
+
+  const printRows = useMemo(() => {
+    let rows = [...allFinanceRows];
+
+    if (printClass) rows = rows.filter((row) => row.className === printClass);
+    if (printStatus === "owing") rows = rows.filter((row) => row.balance > 0);
+    if (printStatus === "cleared") rows = rows.filter((row) => row.balance <= 0);
+
+    return rows.sort((a, b) => a.studentName.localeCompare(b.studentName));
+  }, [allFinanceRows, printClass, printStatus]);
+
+  const printTotals = useMemo(() => {
+    return printRows.reduce(
+      (sum, row) => {
+        sum.expected += row.expected;
+        sum.paid += row.paid;
+        sum.balance += row.balance;
+        return sum;
+      },
+      { expected: 0, paid: 0, balance: 0 }
+    );
+  }, [printRows]);
 
   const canSend = selectedRecipients.filter((row) => row.cleanPhone);
   const noPhone = selectedRecipients.length - canSend.length;
@@ -397,6 +480,7 @@ export default function FeeReminderPage() {
   async function handleSend() {
     if (channel === "sms") await sendSms();
     if (channel === "whatsapp") sendWhatsapp();
+
     if (channel === "both") {
       await sendSms();
       sendWhatsapp();
@@ -409,14 +493,75 @@ export default function FeeReminderPage() {
     setStatus("Messages copied.");
   }
 
+  function printReport() {
+    if (!printRows.length) {
+      setStatus("No students found for the selected print report.");
+      return;
+    }
+
+    window.print();
+  }
+
   if (loading) return <main style={{ padding: 24 }}>Loading fee reminder...</main>;
 
   return (
     <main style={{ minHeight: "100vh", background: COLORS.bg, fontFamily: "Arial, sans-serif", color: COLORS.text }}>
-      <div style={{ display: "flex", minHeight: "100vh" }}>
+      <style jsx global>{`
+        @media print {
+          body {
+            background: #fff !important;
+          }
+
+          .no-print {
+            display: none !important;
+          }
+
+          .print-area {
+            display: block !important;
+            position: absolute !important;
+            inset: 0 !important;
+            width: 100% !important;
+            padding: 18px !important;
+            background: #fff !important;
+            color: #000 !important;
+          }
+
+          .print-table {
+            width: 100% !important;
+            border-collapse: collapse !important;
+            font-size: 11px !important;
+          }
+
+          .print-table th,
+          .print-table td {
+            border: 1px solid #111 !important;
+            padding: 6px !important;
+            text-align: left !important;
+            vertical-align: top !important;
+          }
+
+          .print-table th {
+            background: #f1f1f1 !important;
+          }
+
+          @page {
+            size: A4 landscape;
+            margin: 10mm;
+          }
+        }
+
+        @media screen {
+          .print-area {
+            display: none;
+          }
+        }
+      `}</style>
+
+      <div className="no-print" style={{ display: "flex", minHeight: "100vh" }}>
         <aside style={{ width: 260, background: COLORS.sidebar, color: "#fff", padding: 18, borderRight: `4px solid ${COLORS.gold}` }}>
           <h2 style={{ margin: "10px 0 4px" }}>JVS Fees</h2>
           <p style={{ margin: "0 0 20px", opacity: 0.8 }}>Fee Reminder</p>
+
           <nav style={{ display: "grid", gap: 10 }}>
             {[
               ["Dashboard", "/fees/admin"],
@@ -455,14 +600,55 @@ export default function FeeReminderPage() {
           <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 20, marginTop: 24, marginBottom: 24 }}>
             <div>
               <h1 style={{ fontSize: 38, margin: 0 }}>Fee Reminder</h1>
-              <p style={{ margin: "10px 0 0", color: COLORS.muted, fontSize: 18 }}>Select parents, type message, then send by SMS or WhatsApp.</p>
+              <p style={{ margin: "10px 0 0", color: COLORS.muted, fontSize: 18 }}>
+                Send fee reminders and print class fee reports straight away.
+              </p>
             </div>
+
             <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 18, padding: "14px 22px" }}>
               <b>{currentTerm || "Current Term"}</b>
               <br />
               <span style={{ color: COLORS.muted }}>{academicYear || "Academic Year"}</span>
             </div>
           </header>
+
+          <section style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 24, padding: 22, marginBottom: 22 }}>
+            <h2 style={{ marginTop: 0 }}>🖨️ Print Class Fee Report</h2>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 14, alignItems: "end" }}>
+              <div>
+                <label style={{ fontWeight: 800 }}>Class</label>
+                <select value={printClass} onChange={(e) => setPrintClass(e.target.value)} style={{ ...inputStyle(), marginTop: 8 }}>
+                  <option value="">All classes</option>
+                  {classOptions.map((className) => (
+                    <option key={className} value={className}>
+                      {className}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontWeight: 800 }}>Status</label>
+                <select value={printStatus} onChange={(e) => setPrintStatus(e.target.value as PrintStatus)} style={{ ...inputStyle(), marginTop: 8 }}>
+                  <option value="all">All students</option>
+                  <option value="owing">Owing only</option>
+                  <option value="cleared">Fully paid only</option>
+                </select>
+              </div>
+
+              <button onClick={printReport} disabled={!printRows.length} style={buttonStyle(COLORS.gold, "#111827", !printRows.length)}>
+                Print Report
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginTop: 18 }}>
+              <Summary title="Students" value={printRows.length} />
+              <MoneySummary title="Fees Due" value={printTotals.expected} />
+              <MoneySummary title="Amount Paid" value={printTotals.paid} />
+              <MoneySummary title="Balance" value={printTotals.balance} danger />
+            </div>
+          </section>
 
           <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 22, alignItems: "start" }}>
             <section style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 24, padding: 22 }}>
@@ -483,7 +669,9 @@ export default function FeeReminderPage() {
                   <select value={selectedClass} onChange={(e) => setSelectedClass(e.target.value)} style={{ ...inputStyle(), marginTop: 8, marginBottom: 14 }}>
                     <option value="">Select class</option>
                     {classOptions.map((className) => (
-                      <option key={className} value={className}>{className}</option>
+                      <option key={className} value={className}>
+                        {className}
+                      </option>
                     ))}
                   </select>
                 </>
@@ -495,7 +683,9 @@ export default function FeeReminderPage() {
                   <select value={selectedLevel} onChange={(e) => setSelectedLevel(e.target.value)} style={{ ...inputStyle(), marginTop: 8, marginBottom: 14 }}>
                     <option value="">Select level</option>
                     {levelOptions.map((level) => (
-                      <option key={level} value={level}>{level}</option>
+                      <option key={level} value={level}>
+                        {level}
+                      </option>
                     ))}
                   </select>
                 </>
@@ -505,6 +695,7 @@ export default function FeeReminderPage() {
                 <>
                   <label style={{ fontWeight: 800 }}>Search student</label>
                   <input value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} placeholder="Search name or JVS ID" style={{ ...inputStyle(), marginTop: 8 }} />
+
                   <div style={{ display: "grid", gap: 8, marginTop: 10, maxHeight: 220, overflowY: "auto" }}>
                     {individualMatches.map((row) => (
                       <button
@@ -522,7 +713,9 @@ export default function FeeReminderPage() {
                       >
                         {row.studentName} <span style={{ color: COLORS.muted }}>({row.studentId})</span>
                         <br />
-                        <small style={{ color: COLORS.muted }}>{row.className} • {row.cleanPhone || "No phone"}</small>
+                        <small style={{ color: COLORS.muted }}>
+                          {row.className} • {row.cleanPhone || "No phone"}
+                        </small>
                       </button>
                     ))}
                   </div>
@@ -543,7 +736,9 @@ export default function FeeReminderPage() {
 
             <section style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 24, padding: 22 }}>
               <h2 style={{ marginTop: 0 }}>Message</h2>
+
               <textarea value={messageTemplate} onChange={(e) => setMessageTemplate(e.target.value)} rows={9} style={{ ...inputStyle(), resize: "vertical", lineHeight: 1.5 }} />
+
               <p style={{ color: COLORS.muted, marginTop: 10 }}>
                 Placeholders: {"{student_name}"}, {"{student_id}"}, {"{class_name}"}, {"{balance}"}, {"{portal_link}"}, {"{term}"}, {"{academic_year}"}, {"{school_name}"}
               </p>
@@ -559,26 +754,36 @@ export default function FeeReminderPage() {
 
           <section style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 24, padding: 22, marginTop: 22 }}>
             <h2 style={{ marginTop: 0 }}>Send</h2>
+
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               <button onClick={handleSend} disabled={sending || !canSend.length} style={buttonStyle(COLORS.gold, "#111827", sending || !canSend.length)}>
                 {sending ? "Sending..." : channel === "sms" ? `Send SMS (${canSend.length})` : channel === "whatsapp" ? `Send WhatsApp (${canSend.length})` : `Send Both (${canSend.length})`}
               </button>
+
               <button onClick={sendWhatsapp} disabled={!canSend.length} style={buttonStyle("#16a34a", "#fff", !canSend.length)}>
                 Open WhatsApp
               </button>
+
               <button onClick={copyMessages} disabled={!canSend.length} style={buttonStyle("#fff", COLORS.text, !canSend.length)}>
                 Copy Messages
               </button>
             </div>
-            {status && <p style={{ margin: "16px 0 0", color: status.toLowerCase().includes("error") ? COLORS.danger : COLORS.success, fontWeight: 800 }}>{status}</p>}
+
+            {status && (
+              <p style={{ margin: "16px 0 0", color: status.toLowerCase().includes("error") ? COLORS.danger : COLORS.success, fontWeight: 800 }}>
+                {status}
+              </p>
+            )}
           </section>
 
           <section style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 24, padding: 22, marginTop: 22 }}>
             <h2 style={{ marginTop: 0 }}>Preview</h2>
+
             {canSend[0] ? (
               <div style={{ whiteSpace: "pre-wrap", color: COLORS.text, lineHeight: 1.6 }}>
                 <b>{canSend[0].studentName}</b> • {canSend[0].cleanPhone}
-                <br /><br />
+                <br />
+                <br />
                 {canSend[0].message}
               </div>
             ) : (
@@ -587,6 +792,79 @@ export default function FeeReminderPage() {
           </section>
         </section>
       </div>
+
+      <section className="print-area">
+        <div style={{ textAlign: "center", marginBottom: 14 }}>
+          <h1 style={{ margin: 0, fontSize: 22 }}>{schoolName}</h1>
+          <h2 style={{ margin: "6px 0", fontSize: 17 }}>School Fees Report</h2>
+          <p style={{ margin: 0, fontSize: 12 }}>
+            {printClass || "All Classes"} • {printStatus === "all" ? "All Students" : printStatus === "owing" ? "Owing Only" : "Fully Paid Only"} • {currentTerm || "Current Term"} • {academicYear || "Academic Year"}
+          </p>
+          <p style={{ margin: "5px 0 0", fontSize: 11 }}>Printed on {formatDate(new Date().toISOString())}</p>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 12, fontSize: 12 }}>
+          <div style={printBoxStyle()}>
+            <b>Students:</b> {printRows.length}
+          </div>
+          <div style={printBoxStyle()}>
+            <b>Fees Due:</b> {money(printTotals.expected)}
+          </div>
+          <div style={printBoxStyle()}>
+            <b>Amount Paid:</b> {money(printTotals.paid)}
+          </div>
+          <div style={printBoxStyle()}>
+            <b>Balance:</b> {money(printTotals.balance)}
+          </div>
+        </div>
+
+        <table className="print-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Student Name</th>
+              <th>Student ID</th>
+              <th>Class</th>
+              <th>Fees Due</th>
+              <th>Amount Paid</th>
+              <th>Balance</th>
+              <th>Status</th>
+              <th>Last Paid</th>
+              <th>Last Amount</th>
+              <th>Receipt</th>
+              <th>Parent Phone</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {printRows.map((row, index) => (
+              <tr key={`${row.studentId}-${row.studentName}`}>
+                <td>{index + 1}</td>
+                <td>{row.studentName}</td>
+                <td>{row.studentId}</td>
+                <td>{row.className}</td>
+                <td>{money(row.expected)}</td>
+                <td>{money(row.paid)}</td>
+                <td>{money(row.balance)}</td>
+                <td>{row.balance > 0 ? "Owing" : "Cleared"}</td>
+                <td>{row.lastPaymentDate || "-"}</td>
+                <td>{row.lastPaymentAmount ? money(row.lastPaymentAmount) : "-"}</td>
+                <td>{row.lastReceipt || "-"}</td>
+                <td>{row.phone || row.cleanPhone || "-"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 60, marginTop: 28, fontSize: 12 }}>
+          <div>
+            <p>Prepared by: ______________________________</p>
+          </div>
+          <div>
+            <p>Checked by: ______________________________</p>
+          </div>
+        </div>
+      </section>
     </main>
   );
 }
@@ -596,6 +874,15 @@ function Summary({ title, value, danger = false }: { title: string; value: numbe
     <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 22, padding: 22 }}>
       <p style={{ margin: 0, color: COLORS.muted, fontWeight: 800 }}>{title}</p>
       <h2 style={{ margin: "10px 0 0", fontSize: 32, color: danger ? COLORS.danger : COLORS.text }}>{value}</h2>
+    </div>
+  );
+}
+
+function MoneySummary({ title, value, danger = false }: { title: string; value: number; danger?: boolean }) {
+  return (
+    <div style={{ background: "#fffaf0", border: `1px solid ${COLORS.border}`, borderRadius: 18, padding: 16 }}>
+      <p style={{ margin: 0, color: COLORS.muted, fontWeight: 800 }}>{title}</p>
+      <h3 style={{ margin: "8px 0 0", color: danger ? COLORS.danger : COLORS.text }}>{money(value)}</h3>
     </div>
   );
 }
@@ -610,5 +897,13 @@ function buttonStyle(bg: string, color: string, disabled = false): React.CSSProp
     cursor: disabled ? "not-allowed" : "pointer",
     fontWeight: 900,
     fontSize: 16,
+  };
+}
+
+function printBoxStyle(): React.CSSProperties {
+  return {
+    border: "1px solid #111",
+    padding: "8px",
+    borderRadius: 4,
   };
 }

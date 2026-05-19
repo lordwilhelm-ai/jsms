@@ -24,6 +24,7 @@ type ClassItem = {
 type SubjectItem = {
   id: string;
   subject_name: string;
+  name?: string | null;
   subject_order: number;
 };
 
@@ -52,6 +53,7 @@ export default function TeachersPage() {
     signatureUrl: "",
     selectedClassIds: [] as string[],
     selectedSubjectIds: [] as string[],
+    subjectIdsByClass: {} as Record<string, string[]>,
   });
 
   const [editForm, setEditForm] = useState({
@@ -66,6 +68,7 @@ export default function TeachersPage() {
     newPassword: "",
     selectedClassIds: [] as string[],
     selectedSubjectIds: [] as string[],
+    subjectIdsByClass: {} as Record<string, string[]>,
   });
 
   const [uploadingAddPhoto, setUploadingAddPhoto] = useState(false);
@@ -104,6 +107,7 @@ export default function TeachersPage() {
       signatureUrl: "",
       selectedClassIds: [],
       selectedSubjectIds: [],
+      subjectIdsByClass: {},
     });
   };
 
@@ -211,7 +215,7 @@ export default function TeachersPage() {
           .order("class_order", { ascending: true }),
         supabase
           .from("subjects")
-          .select("id, subject_name, subject_order")
+          .select("id, subject_name, name, subject_order")
           .order("subject_order", { ascending: true }),
       ]);
 
@@ -244,6 +248,232 @@ export default function TeachersPage() {
     } else {
       setter([...current, value]);
     }
+  }
+
+  function getSubjectLabel(subject: SubjectItem) {
+    return subject.subject_name || subject.name || "Unnamed Subject";
+  }
+
+  function getAllSubjectIds() {
+    return subjects.map((subject) => subject.id).filter(Boolean);
+  }
+
+  function syncSubjectMapForClasses(
+    classIds: string[],
+    currentMap: Record<string, string[]>
+  ) {
+    const allSubjectIds = getAllSubjectIds();
+    const nextMap: Record<string, string[]> = {};
+
+    classIds.forEach((classId) => {
+      nextMap[classId] =
+        currentMap[classId] && currentMap[classId].length > 0
+          ? currentMap[classId]
+          : allSubjectIds;
+    });
+
+    return nextMap;
+  }
+
+  function toggleAddClass(classId: string) {
+    const currentlySelected = addForm.selectedClassIds.includes(classId);
+    const nextClassIds = currentlySelected
+      ? addForm.selectedClassIds.filter((id) => id !== classId)
+      : [...addForm.selectedClassIds, classId];
+
+    const nextSubjectMap = syncSubjectMapForClasses(
+      nextClassIds,
+      addForm.subjectIdsByClass
+    );
+
+    setAddForm({
+      ...addForm,
+      selectedClassIds: nextClassIds,
+      selectedSubjectIds: uniqueSubjectIdsFromMap(nextSubjectMap),
+      subjectIdsByClass: nextSubjectMap,
+    });
+  }
+
+  function toggleEditClass(classId: string) {
+    const currentlySelected = editForm.selectedClassIds.includes(classId);
+    const nextClassIds = currentlySelected
+      ? editForm.selectedClassIds.filter((id) => id !== classId)
+      : [...editForm.selectedClassIds, classId];
+
+    const nextSubjectMap = syncSubjectMapForClasses(
+      nextClassIds,
+      editForm.subjectIdsByClass
+    );
+
+    setEditForm({
+      ...editForm,
+      selectedClassIds: nextClassIds,
+      selectedSubjectIds: uniqueSubjectIdsFromMap(nextSubjectMap),
+      subjectIdsByClass: nextSubjectMap,
+    });
+  }
+
+  function toggleSubjectForAddClass(classId: string, subjectId: string) {
+    const current = addForm.subjectIdsByClass[classId] || [];
+    const nextSubjects = current.includes(subjectId)
+      ? current.filter((id) => id !== subjectId)
+      : [...current, subjectId];
+
+    const nextMap = {
+      ...addForm.subjectIdsByClass,
+      [classId]: nextSubjects,
+    };
+
+    setAddForm({
+      ...addForm,
+      selectedSubjectIds: uniqueSubjectIdsFromMap(nextMap),
+      subjectIdsByClass: nextMap,
+    });
+  }
+
+  function toggleSubjectForEditClass(classId: string, subjectId: string) {
+    const current = editForm.subjectIdsByClass[classId] || [];
+    const nextSubjects = current.includes(subjectId)
+      ? current.filter((id) => id !== subjectId)
+      : [...current, subjectId];
+
+    const nextMap = {
+      ...editForm.subjectIdsByClass,
+      [classId]: nextSubjects,
+    };
+
+    setEditForm({
+      ...editForm,
+      selectedSubjectIds: uniqueSubjectIdsFromMap(nextMap),
+      subjectIdsByClass: nextMap,
+    });
+  }
+
+  function selectAllAddSubjectsForClass(classId: string) {
+    const nextMap = {
+      ...addForm.subjectIdsByClass,
+      [classId]: getAllSubjectIds(),
+    };
+
+    setAddForm({
+      ...addForm,
+      selectedSubjectIds: uniqueSubjectIdsFromMap(nextMap),
+      subjectIdsByClass: nextMap,
+    });
+  }
+
+  function clearAddSubjectsForClass(classId: string) {
+    const nextMap = {
+      ...addForm.subjectIdsByClass,
+      [classId]: [],
+    };
+
+    setAddForm({
+      ...addForm,
+      selectedSubjectIds: uniqueSubjectIdsFromMap(nextMap),
+      subjectIdsByClass: nextMap,
+    });
+  }
+
+  function selectAllEditSubjectsForClass(classId: string) {
+    const nextMap = {
+      ...editForm.subjectIdsByClass,
+      [classId]: getAllSubjectIds(),
+    };
+
+    setEditForm({
+      ...editForm,
+      selectedSubjectIds: uniqueSubjectIdsFromMap(nextMap),
+      subjectIdsByClass: nextMap,
+    });
+  }
+
+  function clearEditSubjectsForClass(classId: string) {
+    const nextMap = {
+      ...editForm.subjectIdsByClass,
+      [classId]: [],
+    };
+
+    setEditForm({
+      ...editForm,
+      selectedSubjectIds: uniqueSubjectIdsFromMap(nextMap),
+      subjectIdsByClass: nextMap,
+    });
+  }
+
+  function uniqueSubjectIdsFromMap(map: Record<string, string[]>) {
+    return Array.from(new Set(Object.values(map).flat().filter(Boolean)));
+  }
+
+  function buildTeacherSubjectRows(
+    teacherId: string,
+    subjectMap: Record<string, string[]>
+  ) {
+    return Object.entries(subjectMap).flatMap(([classId, subjectIds]) =>
+      subjectIds.map((subjectId) => ({
+        teacher_id: teacherId,
+        class_id: classId,
+        subject_id: subjectId,
+      }))
+    );
+  }
+
+  async function saveTeacherSubjectsByClass(
+    teacherId: string,
+    subjectMap: Record<string, string[]>
+  ) {
+    const { error: deleteError } = await supabase
+      .from("teacher_subjects")
+      .delete()
+      .eq("teacher_id", teacherId);
+
+    if (deleteError) throw deleteError;
+
+    const rows = buildTeacherSubjectRows(teacherId, subjectMap);
+
+    if (rows.length === 0) return;
+
+    const { error: insertError } = await supabase
+      .from("teacher_subjects")
+      .insert(rows);
+
+    if (insertError) throw insertError;
+  }
+
+  async function loadTeacherSubjectsByClass(
+    teacherId: string,
+    classIds: string[],
+    fallbackSubjectIds: string[]
+  ) {
+    const { data, error } = await supabase
+      .from("teacher_subjects")
+      .select("class_id, subject_id")
+      .eq("teacher_id", teacherId);
+
+    if (error) {
+      console.error(error);
+    }
+
+    const map: Record<string, string[]> = {};
+
+    (data || []).forEach((row: any) => {
+      const classId = String(row.class_id || "");
+      const subjectId = String(row.subject_id || "");
+
+      if (!classId || !subjectId) return;
+
+      if (!map[classId]) map[classId] = [];
+      map[classId].push(subjectId);
+    });
+
+    if (Object.keys(map).length === 0) {
+      classIds.forEach((classId) => {
+        map[classId] =
+          fallbackSubjectIds.length > 0 ? fallbackSubjectIds : getAllSubjectIds();
+      });
+    }
+
+    return syncSubjectMapForClasses(classIds, map);
   }
 
   async function loadTeacherAssignments(teacherId: string) {
@@ -325,7 +555,7 @@ export default function TeachersPage() {
           body: JSON.stringify({
             teacher_id: createdTeacher.data.id,
             class_ids: addForm.selectedClassIds,
-            subject_ids: addForm.selectedSubjectIds,
+            subject_ids: uniqueSubjectIdsFromMap(addForm.subjectIdsByClass),
           }),
         });
 
@@ -336,6 +566,11 @@ export default function TeachersPage() {
             assignData.error || "Teacher created, but assignments failed."
           );
         }
+
+        await saveTeacherSubjectsByClass(
+          createdTeacher.data.id,
+          addForm.subjectIdsByClass
+        );
       }
 
       await fetchAll();
@@ -355,6 +590,12 @@ export default function TeachersPage() {
   async function openEditModal(teacher: Teacher) {
     const assignments = await loadTeacherAssignments(teacher.id);
 
+    const subjectMap = await loadTeacherSubjectsByClass(
+      teacher.id,
+      assignments.classIds,
+      assignments.subjectIds
+    );
+
     setEditForm({
       id: teacher.id,
       teacherId: teacher.teacher_id,
@@ -366,7 +607,8 @@ export default function TeachersPage() {
       signatureUrl: teacher.signature_url || "",
       newPassword: "",
       selectedClassIds: assignments.classIds,
-      selectedSubjectIds: assignments.subjectIds,
+      selectedSubjectIds: uniqueSubjectIdsFromMap(subjectMap),
+      subjectIdsByClass: subjectMap,
     });
 
     setShowEditModal(true);
@@ -413,7 +655,7 @@ export default function TeachersPage() {
         body: JSON.stringify({
           teacher_id: editForm.id,
           class_ids: editForm.selectedClassIds,
-          subject_ids: editForm.selectedSubjectIds,
+          subject_ids: uniqueSubjectIdsFromMap(editForm.subjectIdsByClass),
         }),
       });
 
@@ -422,6 +664,8 @@ export default function TeachersPage() {
       if (!assignmentResponse.ok) {
         throw new Error(assignmentData.error || "Failed to save assignments.");
       }
+
+      await saveTeacherSubjectsByClass(editForm.id, editForm.subjectIdsByClass);
 
       if (editForm.newPassword.trim()) {
         const passwordResponse = await fetch("/api/teachers/reset-password", {
@@ -918,14 +1162,7 @@ export default function TeachersPage() {
                       <input
                         type="checkbox"
                         checked={addForm.selectedClassIds.includes(item.id)}
-                        onChange={() =>
-                          toggleSelection(
-                            addForm.selectedClassIds,
-                            item.id,
-                            (next) =>
-                              setAddForm({ ...addForm, selectedClassIds: next })
-                          )
-                        }
+                        onChange={() => toggleAddClass(item.id)}
                       />
                       <span>{item.class_name}</span>
                     </label>
@@ -934,26 +1171,64 @@ export default function TeachersPage() {
               </div>
 
               <div style={assignBlockStyle}>
-                <p style={assignTitleStyle}>Assign Subjects</p>
-                <div style={chipGridStyle}>
-                  {subjects.map((item) => (
-                    <label key={item.id} style={chipLabelStyle}>
-                      <input
-                        type="checkbox"
-                        checked={addForm.selectedSubjectIds.includes(item.id)}
-                        onChange={() =>
-                          toggleSelection(
-                            addForm.selectedSubjectIds,
-                            item.id,
-                            (next) =>
-                              setAddForm({ ...addForm, selectedSubjectIds: next })
-                          )
-                        }
-                      />
-                      <span>{item.subject_name}</span>
-                    </label>
-                  ))}
-                </div>
+                <p style={assignTitleStyle}>Assign Subjects by Class</p>
+                <p style={helperTextStyle}>
+                  When you select a class, all subjects are selected automatically.
+                  Untick only the subjects the teacher should not handle for that class.
+                </p>
+
+                {addForm.selectedClassIds.length === 0 ? (
+                  <p style={helperTextStyle}>Select at least one class first.</p>
+                ) : (
+                  <div style={{ display: "grid", gap: "14px" }}>
+                    {addForm.selectedClassIds.map((classId) => {
+                      const classItem = classes.find((item) => item.id === classId);
+                      const selectedForClass =
+                        addForm.subjectIdsByClass[classId] || [];
+
+                      return (
+                        <div key={classId} style={classSubjectBoxStyle}>
+                          <div style={classSubjectHeaderStyle}>
+                            <strong>{classItem?.class_name || "Class"}</strong>
+
+                            <div style={{ display: "flex", gap: "8px" }}>
+                              <button
+                                type="button"
+                                onClick={() => selectAllAddSubjectsForClass(classId)}
+                                style={miniButtonStyle}
+                              >
+                                Select all
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => clearAddSubjectsForClass(classId)}
+                                style={miniDangerButtonStyle}
+                              >
+                                Clear
+                              </button>
+                            </div>
+                          </div>
+
+                          <div style={chipGridStyle}>
+                            {subjects.map((item) => (
+                              <label key={`${classId}-${item.id}`} style={chipLabelStyle}>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedForClass.includes(item.id)}
+                                  onChange={() =>
+                                    toggleSubjectForAddClass(classId, item.id)
+                                  }
+                                />
+                                <span>{getSubjectLabel(item)}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               <div style={modalActionsStyle}>
@@ -1121,14 +1396,7 @@ export default function TeachersPage() {
                       <input
                         type="checkbox"
                         checked={editForm.selectedClassIds.includes(item.id)}
-                        onChange={() =>
-                          toggleSelection(
-                            editForm.selectedClassIds,
-                            item.id,
-                            (next) =>
-                              setEditForm({ ...editForm, selectedClassIds: next })
-                          )
-                        }
+                        onChange={() => toggleEditClass(item.id)}
                       />
                       <span>{item.class_name}</span>
                     </label>
@@ -1137,29 +1405,63 @@ export default function TeachersPage() {
               </div>
 
               <div style={assignBlockStyle}>
-                <p style={assignTitleStyle}>Assigned Subjects</p>
-                <div style={chipGridStyle}>
-                  {subjects.map((item) => (
-                    <label key={item.id} style={chipLabelStyle}>
-                      <input
-                        type="checkbox"
-                        checked={editForm.selectedSubjectIds.includes(item.id)}
-                        onChange={() =>
-                          toggleSelection(
-                            editForm.selectedSubjectIds,
-                            item.id,
-                            (next) =>
-                              setEditForm({
-                                ...editForm,
-                                selectedSubjectIds: next,
-                              })
-                          )
-                        }
-                      />
-                      <span>{item.subject_name}</span>
-                    </label>
-                  ))}
-                </div>
+                <p style={assignTitleStyle}>Assigned Subjects by Class</p>
+                <p style={helperTextStyle}>
+                  Subjects are saved per selected class so Report Card can show the right ones.
+                </p>
+
+                {editForm.selectedClassIds.length === 0 ? (
+                  <p style={helperTextStyle}>Select at least one class first.</p>
+                ) : (
+                  <div style={{ display: "grid", gap: "14px" }}>
+                    {editForm.selectedClassIds.map((classId) => {
+                      const classItem = classes.find((item) => item.id === classId);
+                      const selectedForClass =
+                        editForm.subjectIdsByClass[classId] || [];
+
+                      return (
+                        <div key={classId} style={classSubjectBoxStyle}>
+                          <div style={classSubjectHeaderStyle}>
+                            <strong>{classItem?.class_name || "Class"}</strong>
+
+                            <div style={{ display: "flex", gap: "8px" }}>
+                              <button
+                                type="button"
+                                onClick={() => selectAllEditSubjectsForClass(classId)}
+                                style={miniButtonStyle}
+                              >
+                                Select all
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => clearEditSubjectsForClass(classId)}
+                                style={miniDangerButtonStyle}
+                              >
+                                Clear
+                              </button>
+                            </div>
+                          </div>
+
+                          <div style={chipGridStyle}>
+                            {subjects.map((item) => (
+                              <label key={`${classId}-${item.id}`} style={chipLabelStyle}>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedForClass.includes(item.id)}
+                                  onChange={() =>
+                                    toggleSubjectForEditClass(classId, item.id)
+                                  }
+                                />
+                                <span>{getSubjectLabel(item)}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               <div style={modalActionsStyle}>
@@ -1364,4 +1666,44 @@ const labelStyle: React.CSSProperties = {
   fontSize: "13px",
   fontWeight: 700,
   color: "#111827",
+};
+
+
+const classSubjectBoxStyle: React.CSSProperties = {
+  background: "#ffffff",
+  border: "1px solid #e5e7eb",
+  borderRadius: "16px",
+  padding: "14px",
+};
+
+const classSubjectHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "12px",
+  marginBottom: "12px",
+  color: "#111827",
+  fontSize: "14px",
+};
+
+const miniButtonStyle: React.CSSProperties = {
+  border: "1px solid #bfdbfe",
+  background: "#eff6ff",
+  color: "#1d4ed8",
+  borderRadius: "999px",
+  padding: "7px 10px",
+  fontWeight: 800,
+  fontSize: "11px",
+  cursor: "pointer",
+};
+
+const miniDangerButtonStyle: React.CSSProperties = {
+  border: "1px solid #fecaca",
+  background: "#fff1f2",
+  color: "#b91c1c",
+  borderRadius: "999px",
+  padding: "7px 10px",
+  fontWeight: 800,
+  fontSize: "11px",
+  cursor: "pointer",
 };

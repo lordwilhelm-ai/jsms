@@ -232,7 +232,7 @@ export default function FeedingAdminPage() {
         closuresRes,
       ] = await Promise.all([
         supabase.from("classes").select("*").order("class_order", { ascending: true }),
-        supabase.from("students").select("*"),
+        supabase.from("active_students").select("*"),
         supabase.from("teachers").select("*"),
         supabase.from("daily_entries").select("*").eq("date", today),
         supabase.from("received_money").select("*").eq("date", today),
@@ -560,7 +560,7 @@ export default function FeedingAdminPage() {
     {
       title: "Total Students",
       value: students.length,
-      note: "All student records",
+      note: "Active student records",
     },
     {
       title: "Active Teachers",
@@ -812,34 +812,23 @@ export default function FeedingAdminPage() {
                       <td style={tdStyle}>{row.absent}</td>
                       <td style={tdStyle}>{row.eating}</td>
                       <td style={tdStyle}>GHS {row.money}</td>
+                      <td style={tdStyle}>{row.submitted ? "Yes" : "No"}</td>
+                      <td style={tdStyle}>{row.received ? "Yes" : "No"}</td>
                       <td style={tdStyle}>
-                        <StatusPill ok={row.submitted} okText="Yes" badText="No" />
-                      </td>
-                      <td style={tdStyle}>
-                        <StatusPill ok={row.received} okText="Yes" badText="No" />
-                      </td>
-                      <td style={tdStyle}>
-                        {row.submitted ? (
-                          row.received ? (
-                            <span style={{ color: COLORS.success, fontWeight: "bold" }}>
-                              Received
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() =>
-                                markClassAsReceived(row.className, row.money, row.teacherNames)
-                              }
-                              disabled={receivingClass === row.className}
-                              style={receiveButtonStyle}
-                            >
-                              {receivingClass === row.className
-                                ? "Saving..."
-                                : "Mark as Received"}
-                            </button>
-                          )
-                        ) : (
-                          <span style={{ color: "#777" }}>No Entry Yet</span>
-                        )}
+                        <button
+                          onClick={() => markClassAsReceived(row.className, row.money, row.teacherNames)}
+                          disabled={row.received || receivingClass === row.className}
+                          style={{
+                            ...receiveButtonStyle,
+                            opacity: row.received ? 0.6 : 1,
+                          }}
+                        >
+                          {row.received
+                            ? "Received"
+                            : receivingClass === row.className
+                              ? "Saving..."
+                              : "Mark Received"}
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -851,50 +840,6 @@ export default function FeedingAdminPage() {
 
         <div
           style={{
-            background: COLORS.white,
-            borderRadius: "16px",
-            padding: "18px",
-            boxShadow: "0 8px 22px rgba(0,0,0,0.06)",
-            overflowX: "auto",
-            marginBottom: "24px",
-          }}
-        >
-          <h3 style={{ marginTop: 0, color: COLORS.secondary }}>Received Today</h3>
-
-          {loading ? (
-            <p>Loading received records...</p>
-          ) : receivedRecords.length === 0 ? (
-            <p style={{ color: "#666", marginBottom: 0 }}>
-              No class money has been marked as received today.
-            </p>
-          ) : (
-            <table style={tableStyle}>
-              <thead>
-                <tr style={{ background: "#fff7cc" }}>
-                  <th style={thStyle}>Class</th>
-                  <th style={thStyle}>Teacher(s)</th>
-                  <th style={thStyle}>Amount Received</th>
-                  <th style={thStyle}>Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {receivedRecords.map((row, index) => (
-                  <tr key={row.id || index}>
-                    <td style={tdStyle}>{getClassName(row)}</td>
-                    <td style={tdStyle}>{String(row.teacher_names || row.teacherNames || "-")}</td>
-                    <td style={tdStyle}>
-                      GHS {Number(row.amount_received || row.amountReceived || 0)}
-                    </td>
-                    <td style={tdStyle}>{String(row.date || "-")}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        <div
-          style={{
             display: "grid",
             gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
             gap: "20px",
@@ -902,9 +847,9 @@ export default function FeedingAdminPage() {
           }}
         >
           <DashboardSection
-            title="Students Eating Today"
+            title="Eating Today"
             loading={loading}
-            emptyText="No students marked to eat today."
+            emptyText="No eating records today."
             headers={["Student", "ID", "Class", "Teacher", "Paid", "Balance"]}
             rows={eatingRows.slice(0, 8).map((row: any) => [
               String(row.student_name || row.studentName || "-"),
@@ -998,31 +943,6 @@ function PageLoader({ text }: { text: string }) {
     >
       {text}
     </main>
-  );
-}
-
-function StatusPill({
-  ok,
-  okText,
-  badText,
-}: {
-  ok: boolean;
-  okText: string;
-  badText: string;
-}) {
-  return (
-    <span
-      style={{
-        padding: "6px 10px",
-        borderRadius: "999px",
-        background: ok ? COLORS.successBg : COLORS.dangerBg,
-        color: ok ? COLORS.success : COLORS.danger,
-        fontSize: "12px",
-        fontWeight: "bold",
-      }}
-    >
-      {ok ? okText : badText}
-    </span>
   );
 }
 

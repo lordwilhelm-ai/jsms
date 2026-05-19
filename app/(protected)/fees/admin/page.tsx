@@ -282,7 +282,7 @@ export default function FeesAdminPage() {
           supabase.from("teachers").select("*"),
           supabase.from("school_settings").select("*").limit(1).maybeSingle(),
           supabase.from("classes").select("*"),
-          supabase.from("students").select("*"),
+          supabase.from("active_students").select("*"),
           supabase.from("fee_payments").select("*").order("created_at", { ascending: false }),
         ]);
 
