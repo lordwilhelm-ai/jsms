@@ -91,6 +91,82 @@ function isTeacherActive(row: Record<string, any>) {
   return true;
 }
 
+function isActiveStudent(row: Student) {
+  const status = String(row.status || row.student_status || row.studentStatus || "")
+    .trim()
+    .toLowerCase();
+
+  if (row.left_school === true) return false;
+  if (row.leftSchool === true) return false;
+  if (row.has_left === true) return false;
+  if (row.hasLeft === true) return false;
+  if (row.is_deleted === true) return false;
+  if (row.isDeleted === true) return false;
+  if (row.deleted === true) return false;
+
+  if (row.active === false) return false;
+  if (row.is_active === false) return false;
+  if (row.isActive === false) return false;
+
+  if (
+    status === "inactive" ||
+    status === "left" ||
+    status === "withdrawn" ||
+    status === "transferred" ||
+    status === "deleted" ||
+    status === "disabled"
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+async function sendFeedingSubmissionPush(params: {
+  className: string;
+  date: string;
+  academicYear: string;
+  term: string;
+  totalCollected: number;
+  presentCount: number;
+  absentCount: number;
+  eatingCount: number;
+  ateWithoutPayCount: number;
+  enteredByName: string;
+}) {
+  const title = "Feeding submitted";
+  const message = `${params.className} feeding entry for ${params.date} has been submitted. Present: ${params.presentCount}, Absent: ${params.absentCount}, Eating: ${params.eatingCount}.`;
+
+  await supabase.functions.invoke("send-jsms-push", {
+    body: {
+      title,
+      body: message,
+      message,
+      module: "feeding",
+      type: "feeding_submission",
+      recipient_roles: ["owner", "admin", "headmaster"],
+      recipients: [
+        { role: "owner" },
+        { role: "admin" },
+        { role: "headmaster" },
+      ],
+      data: {
+        class_name: params.className,
+        date: params.date,
+        academic_year: params.academicYear,
+        term: params.term,
+        total_collected: params.totalCollected,
+        present_count: params.presentCount,
+        absent_count: params.absentCount,
+        eating_count: params.eatingCount,
+        ate_without_pay_count: params.ateWithoutPayCount,
+        entered_by_name: params.enteredByName,
+        url: "/feeding/admin/fill-class",
+      },
+    },
+  });
+}
+
 function isDateWithinRange(dateString: string, startDate: string, endDate: string) {
   return dateString >= startDate && dateString <= endDate;
 }
@@ -263,7 +339,7 @@ export default function AdminFillClassPage() {
       if (error) throw error;
 
       const rows = (data || [])
-        .filter((row) => row.active !== false)
+        .filter(isActiveStudent)
         .sort((a, b) => getStudentName(a).localeCompare(getStudentName(b)));
 
       setStudents(rows);
@@ -573,6 +649,23 @@ export default function AdminFillClassPage() {
       await rebuildStudentBalancesFromLedger();
       await loadExistingEntries();
       await loadBalances();
+
+      try {
+        await sendFeedingSubmissionPush({
+          className: selectedClass,
+          date: selectedDate,
+          academicYear,
+          term: currentTerm,
+          totalCollected: summary.totalCollected,
+          presentCount: summary.presentCount,
+          absentCount: summary.absentCount,
+          eatingCount: summary.eatingCount,
+          ateWithoutPayCount: summary.ateWithoutPayCount,
+          enteredByName: "Admin",
+        });
+      } catch (pushError) {
+        console.error("Feeding push notification failed:", pushError);
+      }
 
       alert("Class entry saved and balances rebuilt successfully.");
     } catch (error) {

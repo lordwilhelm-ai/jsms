@@ -13,6 +13,7 @@ type EntryRow = Record<string, any>;
 type ReceivedRow = Record<string, any>;
 type SettingsRow = Record<string, any>;
 type ClosureRow = Record<string, any>;
+type AssignmentRow = Record<string, any>;
 
 const COLORS = {
   background:
@@ -41,11 +42,11 @@ function getTeacherName(row: TeacherRow) {
 }
 
 function getTeacherId(row: TeacherRow) {
-  return String(row.id || row.teacher_id || row.teacherId || row.auth_user_id || "").trim();
+  return String(row.teacher_id || row.teacherId || row.staff_id || row.id || row.auth_user_id || "").trim();
 }
 
 function getClassName(row: Record<string, any>) {
-  return String(row.class_name || row.className || "").trim();
+  return String(row.class_name || row.className || row.name || "").trim();
 }
 
 function getStudentName(row: StudentRow) {
@@ -119,13 +120,157 @@ function dateRange(start: string, end: string) {
   return rows;
 }
 
+function toDateOnly(value: unknown) {
+  if (!value) return "";
+
+  const raw = String(value).trim();
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return "";
+
+  return date.toISOString().split("T")[0];
+}
+
 function isHoliday(date: string, closures: ClosureRow[]) {
   return closures.some((row) => {
     if (!Boolean(row.active ?? true)) return false;
-    const start = String(row.start_date || row.startDate || "");
-    const end = String(row.end_date || row.endDate || "");
+
+    const singleDate = toDateOnly(row.date || row.holiday_date || row.holidayDate);
+    if (singleDate && singleDate === date) return true;
+
+    const start = toDateOnly(row.start_date || row.startDate || row.date);
+    const end = toDateOnly(row.end_date || row.endDate || row.date);
+
     if (!start || !end) return false;
+
     return date >= start && date <= end;
+  });
+}
+
+async function sendFeedingAdminPush(params: {
+  title: string;
+  message: string;
+  type: string;
+  className?: string;
+  amount?: number;
+  date: string;
+}) {
+  await supabase.functions.invoke("send-jsms-push", {
+    body: {
+      title: params.title,
+      body: params.message,
+      message: params.message,
+      module: "feeding",
+      type: params.type,
+      recipient_roles: ["owner", "admin", "headmaster"],
+      recipients: [
+        { role: "owner" },
+        { role: "admin" },
+        { role: "headmaster" },
+      ],
+      data: {
+        class_name: params.className || "",
+        amount: params.amount || 0,
+        date: params.date,
+        url: "/feeding/admin",
+      },
+    },
+  });
+}
+
+function getTeacherMatchKeys(row: TeacherRow) {
+  return [
+    row.id,
+    row.teacher_id,
+    row.teacherId,
+    row.staff_id,
+    row.auth_user_id,
+    row.email,
+    row.phone,
+    row.username,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+}
+
+function getClassMatchKeys(row: ClassRow | null, className: string) {
+  return [
+    row?.id,
+    row?.class_id,
+    row?.classId,
+    row?.uuid,
+    row?.name,
+    row?.class_name,
+    row?.className,
+    className,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+}
+
+function assignmentMatchesClass(assignment: AssignmentRow, classKeys: Set<string>) {
+  const assignmentClassValues = [
+    assignment.class_id,
+    assignment.classId,
+    assignment.class_uuid,
+    assignment.classUuid,
+    assignment.class_name,
+    assignment.className,
+    assignment.name,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  return assignmentClassValues.some((value) => classKeys.has(value));
+}
+
+function assignmentMatchesTeacher(assignment: AssignmentRow, teacherKeys: Set<string>) {
+  const assignmentTeacherValues = [
+    assignment.teacher_id,
+    assignment.teacherId,
+    assignment.teacher_uuid,
+    assignment.teacherUuid,
+    assignment.staff_id,
+    assignment.staffId,
+    assignment.email,
+    assignment.phone,
+    assignment.username,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  return assignmentTeacherValues.some((value) => teacherKeys.has(value));
+}
+
+function getClassTeachersForClass(
+  classRow: ClassRow | null,
+  className: string,
+  teachers: TeacherRow[],
+  assignments: AssignmentRow[]
+) {
+  const classKeys = new Set(getClassMatchKeys(classRow, className));
+
+  return teachers.filter((teacher) => {
+    if (!isTeacherActive(teacher)) return false;
+
+    const assignedClasses = getAssignedClasses(teacher);
+
+    if (
+      assignedClasses.includes(className) ||
+      assignedClasses.some((assignedClass) => classKeys.has(assignedClass))
+    ) {
+      return true;
+    }
+
+    const teacherKeys = new Set(getTeacherMatchKeys(teacher));
+
+    return assignments.some(
+      (assignment) =>
+        assignmentMatchesClass(assignment, classKeys) &&
+        assignmentMatchesTeacher(assignment, teacherKeys)
+    );
   });
 }
 
@@ -143,6 +288,7 @@ export default function FeedingAdminPage() {
   const [receivedRecords, setReceivedRecords] = useState<ReceivedRow[]>([]);
   const [settingsRow, setSettingsRow] = useState<SettingsRow | null>(null);
   const [closures, setClosures] = useState<ClosureRow[]>([]);
+  const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
 
   const [receivingClass, setReceivingClass] = useState("");
   const [syncingAttendance, setSyncingAttendance] = useState(false);
@@ -230,6 +376,9 @@ export default function FeedingAdminPage() {
         receivedRes,
         settingsRes,
         closuresRes,
+        feedingHolidaysRes,
+        ghanaHolidaysRes,
+        assignmentsRes,
       ] = await Promise.all([
         supabase.from("classes").select("*").order("class_order", { ascending: true }),
         supabase.from("active_students").select("*"),
@@ -238,6 +387,9 @@ export default function FeedingAdminPage() {
         supabase.from("received_money").select("*").eq("date", today),
         supabase.from("school_settings").select("*").limit(1).maybeSingle(),
         supabase.from("school_closures").select("*").order("start_date", { ascending: true }),
+        supabase.from("feeding_holidays").select("*"),
+        supabase.from("ghana_public_holidays").select("*"),
+        supabase.from("teacher_class_assignments").select("*"),
       ]);
 
       setClasses(classesRes.data || []);
@@ -246,7 +398,12 @@ export default function FeedingAdminPage() {
       setTodayEntries(entriesRes.data || []);
       setReceivedRecords(receivedRes.data || []);
       setSettingsRow(settingsRes.data || null);
-      setClosures(closuresRes.data || []);
+      setClosures([
+        ...(closuresRes.data || []),
+        ...(!feedingHolidaysRes.error ? feedingHolidaysRes.data || [] : []),
+        ...(!ghanaHolidaysRes.error ? ghanaHolidaysRes.data || [] : []),
+      ]);
+      setAssignments(!assignmentsRes.error ? assignmentsRes.data || [] : []);
     } catch (error) {
       console.error(error);
       alert("Failed to load feeding admin data.");
@@ -284,9 +441,14 @@ export default function FeedingAdminPage() {
 
       if (error) throw error;
 
-      const classTeachers = teachers.filter(
-        (teacher) =>
-          isTeacherActive(teacher) && getAssignedClasses(teacher).includes(className)
+      const classRow =
+        classes.find((item) => getClassName(item) === className) || null;
+
+      const classTeachers = getClassTeachersForClass(
+        classRow,
+        className,
+        teachers,
+        assignments
       );
 
       await Promise.all(
@@ -302,6 +464,19 @@ export default function FeedingAdminPage() {
           })
         )
       );
+
+      try {
+        await sendFeedingAdminPush({
+          title: "Feeding money received",
+          message: `${className} feeding money has been marked as received. Amount: GHS ${amountReceived}.`,
+          type: "feeding_money_received",
+          className,
+          amount: amountReceived,
+          date: today,
+        });
+      } catch (pushError) {
+        console.error("Feeding admin received push failed:", pushError);
+      }
 
       await loadDashboardData();
       alert(`${className} money marked as received.`);
@@ -370,6 +545,17 @@ export default function FeedingAdminPage() {
         });
 
       if (upsertError) throw upsertError;
+
+      try {
+        await sendFeedingAdminPush({
+          title: "Report attendance synced",
+          message: `Feeding attendance has been synced to report card for ${currentTerm}. School days: ${schoolDays.length}.`,
+          type: "feeding_attendance_synced",
+          date: today,
+        });
+      } catch (pushError) {
+        console.error("Attendance sync push failed:", pushError);
+      }
 
       alert("Term attendance synced successfully.");
     } catch (error) {
@@ -466,10 +652,21 @@ export default function FeedingAdminPage() {
       const className = getClassName(classRow);
       const classStudents = students.filter((student) => getClassName(student) === className);
       const classEntries = todayEntries.filter((entry) => getClassName(entry) === className);
-      const classTeachers = teachers.filter(
-        (teacher) =>
-          isTeacherActive(teacher) && getAssignedClasses(teacher).includes(className)
+      const classTeachers = getClassTeachersForClass(
+        classRow,
+        className,
+        teachers,
+        assignments
       );
+
+      if (process.env.NODE_ENV !== "production" && classTeachers.length === 0) {
+        console.log("Feeding teacher assignment debug", {
+          className,
+          classRow,
+          assignments,
+          teacherSamples: teachers.slice(0, 5),
+        });
+      }
 
       const money = classEntries.reduce(
         (sum, entry) => sum + Number(entry.amount_paid_today || entry.amountPaidToday || 0),
@@ -497,7 +694,7 @@ export default function FeedingAdminPage() {
         received: Boolean(received),
       };
     });
-  }, [classes, students, todayEntries, teachers, receivedRecords]);
+  }, [classes, students, todayEntries, teachers, receivedRecords, assignments]);
 
   const eatingRows = useMemo(() => {
     return todayEntries.filter((entry) => Boolean(entry.ate_today ?? entry.ateToday));
@@ -815,20 +1012,28 @@ export default function FeedingAdminPage() {
                       <td style={tdStyle}>{row.submitted ? "Yes" : "No"}</td>
                       <td style={tdStyle}>{row.received ? "Yes" : "No"}</td>
                       <td style={tdStyle}>
-                        <button
-                          onClick={() => markClassAsReceived(row.className, row.money, row.teacherNames)}
-                          disabled={row.received || receivingClass === row.className}
-                          style={{
-                            ...receiveButtonStyle,
-                            opacity: row.received ? 0.6 : 1,
-                          }}
-                        >
-                          {row.received
-                            ? "Received"
-                            : receivingClass === row.className
-                              ? "Saving..."
-                              : "Mark Received"}
-                        </button>
+                        {!row.submitted ? (
+                          <span style={{ color: COLORS.muted, fontWeight: 700 }}>
+                            Not submitted
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() =>
+                              markClassAsReceived(row.className, row.money, row.teacherNames)
+                            }
+                            disabled={row.received || receivingClass === row.className}
+                            style={{
+                              ...receiveButtonStyle,
+                              opacity: row.received ? 0.6 : 1,
+                            }}
+                          >
+                            {row.received
+                              ? "Received"
+                              : receivingClass === row.className
+                                ? "Saving..."
+                                : "Mark Received"}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
