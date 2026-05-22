@@ -3,19 +3,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  FiArrowLeft,
-  FiBarChart2,
   FiBookOpen,
-  FiClipboard,
-  FiEdit3,
+  FiCreditCard,
   FiFileText,
   FiGrid,
+  FiHome,
+  FiMessageSquare,
   FiRefreshCw,
+  FiSettings,
   FiUsers,
+  FiUserCheck,
 } from "react-icons/fi";
 import { supabase } from "@/lib/supabase";
 
-const CLASS_OPTIONS = [
+const CLASS_ORDER = [
   "Playroom 1",
   "Playroom 2",
   "KG 1",
@@ -31,22 +32,70 @@ const CLASS_OPTIONS = [
   "JHS 3",
 ];
 
+const QUICK_ACTIONS = [
+  {
+    title: "Students",
+    subtitle: "Open main JSMS students",
+    icon: FiUsers,
+    path: "/students",
+  },
+  {
+    title: "Teachers",
+    subtitle: "Open main JSMS teachers",
+    icon: FiUserCheck,
+    path: "/teachers",
+  },
+  {
+    title: "Classes",
+    subtitle: "Open main JSMS classes",
+    icon: FiBookOpen,
+    path: "/classes",
+  },
+  {
+    title: "Report Cards",
+    subtitle: "Preview and print reports",
+    icon: FiFileText,
+    path: "/report-card/admin/reports",
+  },
+  {
+    title: "Bills",
+    subtitle: "Report-card payment area",
+    icon: FiCreditCard,
+    path: "/report-card/admin/billing",
+  },
+  {
+    title: "Send Messages",
+    subtitle: "Open JSMS messages",
+    icon: FiMessageSquare,
+    path: "/dashboard/admin",
+  },
+  {
+    title: "Settings",
+    subtitle: "Open main JSMS settings",
+    icon: FiSettings,
+    path: "/settings",
+  },
+  {
+    title: "JSMS Dashboard",
+    subtitle: "Back to main admin",
+    icon: FiGrid,
+    path: "/dashboard/admin",
+  },
+];
+
 type StudentRow = {
   id: string;
   student_id?: string | null;
   jvs_id?: string | null;
-  full_name?: string | null;
-  first_name?: string | null;
-  last_name?: string | null;
   class_name?: string | null;
   is_active?: boolean | null;
   active?: boolean | null;
   left_school?: boolean | null;
+  status?: string | null;
 };
 
 type TeacherRow = {
   id: string;
-  teacher_id?: string | null;
   full_name?: string | null;
   role?: string | null;
 };
@@ -58,20 +107,17 @@ type ClassRow = {
   class_order?: number | null;
 };
 
+type SettingsRow = {
+  school_name?: string | null;
+  current_academic_year?: string | null;
+  academic_year?: string | null;
+  current_term?: string | null;
+};
+
 type ScoreRow = {
   student_id?: string | null;
   class_name?: string | null;
   subject_name?: string | null;
-  academic_year?: string | null;
-  term?: string | null;
-  total_score?: number | string | null;
-  grade?: string | null;
-  playroom_mark?: string | null;
-};
-
-type ReportCardRow = {
-  student_id?: string | null;
-  class_name?: string | null;
   academic_year?: string | null;
   term?: string | null;
 };
@@ -81,27 +127,18 @@ type AttendanceRow = {
   class_name?: string | null;
   academic_year?: string | null;
   term?: string | null;
-  days_present?: number | null;
-  attendance_present?: number | null;
 };
 
-type SettingsRow = {
-  school_name?: string | null;
-  current_academic_year?: string | null;
+type RemarkRow = {
+  student_id?: string | null;
+  class_name?: string | null;
   academic_year?: string | null;
-  current_term?: string | null;
-  term_begins?: string | null;
-  term_ends?: string | null;
+  term?: string | null;
 };
 
-type ClassOverviewRow = {
-  className: string;
-  students: number;
-  teacher: string;
-  resultEntries: number;
-  attendanceEntries: number;
-  remarkEntries: number;
-  readyReports: number;
+type AssignmentRow = {
+  teacher_id?: string | null;
+  class_id?: string | null;
 };
 
 function cleanText(value: unknown) {
@@ -125,24 +162,31 @@ function getStudentReportId(student: StudentRow) {
 }
 
 function isActiveStudent(student: StudentRow) {
+  const status = cleanLower(student.status);
+
   if (student.left_school === true) return false;
   if (student.is_active === false) return false;
   if (student.active === false) return false;
-  return true;
-}
+  if (status === "inactive" || status === "left" || status === "withdrawn") {
+    return false;
+  }
 
-function normalizeSubjectName(score: ScoreRow) {
-  return cleanLower(score.subject_name);
+  return true;
 }
 
 function getClassOrder(className: string, classes: ClassRow[]) {
   const found = classes.find((item) => getClassName(item) === className);
+
   if (found?.class_order !== null && found?.class_order !== undefined) {
     return Number(found.class_order);
   }
 
-  const fallback = CLASS_OPTIONS.indexOf(className);
+  const fallback = CLASS_ORDER.indexOf(className);
   return fallback === -1 ? 999 : fallback;
+}
+
+function formatMoney(value: number) {
+  return `₵${value.toFixed(2)}`;
 }
 
 export default function ReportCardAdminDashboardPage() {
@@ -154,13 +198,13 @@ export default function ReportCardAdminDashboardPage() {
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [scores, setScores] = useState<ScoreRow[]>([]);
-  const [reportCards, setReportCards] = useState<ReportCardRow[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
-  const [teacherAssignments, setTeacherAssignments] = useState<Record<string, string[]>>({});
+  const [remarks, setRemarks] = useState<RemarkRow[]>([]);
+  const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
 
   const academicYear = getAcademicYear(settings);
   const currentTerm = cleanText(settings?.current_term);
-  const schoolName = cleanText(settings?.school_name) || "JEFSEM VISION SCHOOL";
+  const schoolName = cleanText(settings?.school_name) || "Jefsem Vision School";
 
   async function loadDashboardData() {
     setLoading(true);
@@ -171,25 +215,36 @@ export default function ReportCardAdminDashboardPage() {
       teachersRes,
       classesRes,
       scoresRes,
-      cardsRes,
       attendanceRes,
+      remarksRes,
       assignmentsRes,
     ] = await Promise.all([
       supabase
         .from("school_settings")
-        .select("school_name,current_academic_year,academic_year,current_term,term_begins,term_ends")
+        .select("school_name,current_academic_year,academic_year,current_term")
         .order("updated_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
       supabase
         .from("students")
-        .select("id,student_id,jvs_id,full_name,first_name,last_name,class_name,is_active,active,left_school"),
-      supabase.from("teachers").select("id,teacher_id,full_name,role"),
-      supabase.from("classes").select("id,name,class_name,class_order").order("class_order", { ascending: true }),
-      supabase.from("jsms_report_scores").select("student_id,class_name,subject_name,academic_year,term,total_score,grade,playroom_mark"),
-      supabase.from("jsms_report_cards").select("student_id,class_name,academic_year,term"),
-      supabase.from("jsms_report_attendance").select("student_id,class_name,academic_year,term,days_present,attendance_present"),
-      supabase.from("teacher_class_assignments").select("teacher_id,class_id"),
+        .select("id,student_id,jvs_id,class_name,is_active,active,left_school,status"),
+      supabase.from("teachers").select("id,full_name,role"),
+      supabase
+        .from("classes")
+        .select("id,name,class_name,class_order")
+        .order("class_order", { ascending: true }),
+      supabase
+        .from("jsms_report_scores")
+        .select("student_id,class_name,subject_name,academic_year,term"),
+      supabase
+        .from("jsms_report_attendance")
+        .select("student_id,class_name,academic_year,term"),
+      supabase
+        .from("jsms_report_cards")
+        .select("student_id,class_name,academic_year,term"),
+      supabase
+        .from("teacher_class_assignments")
+        .select("teacher_id,class_id"),
     ]);
 
     if (!settingsRes.error) setSettings(settingsRes.data || null);
@@ -197,29 +252,9 @@ export default function ReportCardAdminDashboardPage() {
     if (!teachersRes.error) setTeachers(teachersRes.data || []);
     if (!classesRes.error) setClasses(classesRes.data || []);
     if (!scoresRes.error) setScores(scoresRes.data || []);
-    if (!cardsRes.error) setReportCards(cardsRes.data || []);
     if (!attendanceRes.error) setAttendance(attendanceRes.data || []);
-
-    if (!assignmentsRes.error && assignmentsRes.data && classesRes.data) {
-      const classNameById = new Map<string, string>();
-      (classesRes.data || []).forEach((cls: ClassRow) => {
-        classNameById.set(cls.id, getClassName(cls));
-      });
-
-      const assignmentMap: Record<string, string[]> = {};
-
-      (assignmentsRes.data || []).forEach((row: any) => {
-        const className = classNameById.get(cleanText(row.class_id));
-        const teacherId = cleanText(row.teacher_id);
-
-        if (!className || !teacherId) return;
-
-        if (!assignmentMap[className]) assignmentMap[className] = [];
-        assignmentMap[className].push(teacherId);
-      });
-
-      setTeacherAssignments(assignmentMap);
-    }
+    if (!remarksRes.error) setRemarks(remarksRes.data || []);
+    if (!assignmentsRes.error) setAssignments(assignmentsRes.data || []);
 
     setLoading(false);
   }
@@ -236,14 +271,6 @@ export default function ReportCardAdminDashboardPage() {
     );
   }, [scores, academicYear, currentTerm]);
 
-  const currentCards = useMemo(() => {
-    return reportCards.filter(
-      (row) =>
-        cleanText(row.academic_year) === academicYear &&
-        cleanText(row.term) === currentTerm
-    );
-  }, [reportCards, academicYear, currentTerm]);
-
   const currentAttendance = useMemo(() => {
     return attendance.filter(
       (row) =>
@@ -252,309 +279,346 @@ export default function ReportCardAdminDashboardPage() {
     );
   }, [attendance, academicYear, currentTerm]);
 
+  const currentRemarks = useMemo(() => {
+    return remarks.filter(
+      (row) =>
+        cleanText(row.academic_year) === academicYear &&
+        cleanText(row.term) === currentTerm
+    );
+  }, [remarks, academicYear, currentTerm]);
+
   const classNames = useMemo(() => {
     const fromClasses = classes.map(getClassName).filter(Boolean);
-    const fromStudents = students.map((student) => cleanText(student.class_name)).filter(Boolean);
+    const fromStudents = students
+      .map((student) => cleanText(student.class_name))
+      .filter(Boolean);
 
     return Array.from(new Set([...fromClasses, ...fromStudents])).sort(
       (a, b) => getClassOrder(a, classes) - getClassOrder(b, classes)
     );
   }, [classes, students]);
 
-  const classOverview = useMemo<ClassOverviewRow[]>(() => {
+  const teacherById = useMemo(() => {
+    const map = new Map<string, TeacherRow>();
+
+    teachers.forEach((teacher) => {
+      map.set(teacher.id, teacher);
+    });
+
+    return map;
+  }, [teachers]);
+
+  const classIdToName = useMemo(() => {
+    const map = new Map<string, string>();
+
+    classes.forEach((classRow) => {
+      map.set(classRow.id, getClassName(classRow));
+    });
+
+    return map;
+  }, [classes]);
+
+  const classTeacherMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+
+    assignments.forEach((assignment) => {
+      const className = classIdToName.get(cleanText(assignment.class_id));
+      const teacher = teacherById.get(cleanText(assignment.teacher_id));
+      const teacherName = cleanText(teacher?.full_name);
+
+      if (!className || !teacherName) return;
+
+      if (!map.has(className)) map.set(className, []);
+      map.get(className)?.push(teacherName);
+    });
+
+    return map;
+  }, [assignments, classIdToName, teacherById]);
+
+  const classOverview = useMemo(() => {
     return classNames.map((className) => {
       const classStudents = students.filter((student) => student.class_name === className);
-      const classStudentIds = new Set(classStudents.map(getStudentReportId).filter(Boolean));
 
-      const classScores = currentScores.filter((score) => score.class_name === className);
-      const classCards = currentCards.filter((row) => row.class_name === className);
-      const classAttendance = currentAttendance.filter((row) => row.class_name === className);
-
-      const subjects = Array.from(
-        new Set(classScores.map(normalizeSubjectName).filter(Boolean))
-      );
-
-      const scoreStudentMap = new Map<string, Set<string>>();
-
-      classScores.forEach((score) => {
-        const studentId = cleanText(score.student_id);
-        const subjectName = normalizeSubjectName(score);
-
-        if (!studentId || !subjectName) return;
-
-        if (!scoreStudentMap.has(studentId)) {
-          scoreStudentMap.set(studentId, new Set<string>());
-        }
-
-        scoreStudentMap.get(studentId)?.add(subjectName);
-      });
-
-      const remarkStudentSet = new Set(
-        classCards.map((row) => cleanText(row.student_id)).filter(Boolean)
+      const scoreStudentSet = new Set(
+        currentScores
+          .filter((row) => row.class_name === className)
+          .map((row) => cleanText(row.student_id))
+          .filter(Boolean)
       );
 
       const attendanceStudentSet = new Set(
-        classAttendance.map((row) => cleanText(row.student_id)).filter(Boolean)
+        currentAttendance
+          .filter((row) => row.class_name === className)
+          .map((row) => cleanText(row.student_id))
+          .filter(Boolean)
       );
 
-      let readyReports = 0;
+      const remarkStudentSet = new Set(
+        currentRemarks
+          .filter((row) => row.class_name === className)
+          .map((row) => cleanText(row.student_id))
+          .filter(Boolean)
+      );
 
-      classStudentIds.forEach((studentId) => {
-        const studentSubjects = scoreStudentMap.get(studentId) || new Set<string>();
-        const hasResults =
-          subjects.length > 0 && subjects.every((subject) => studentSubjects.has(subject));
+      let readyCount = 0;
 
-        const hasAttendance = attendanceStudentSet.has(studentId);
-        const hasRemarks = remarkStudentSet.has(studentId);
+      classStudents.forEach((student) => {
+        const studentId = getStudentReportId(student);
 
-        if (hasResults && hasAttendance && hasRemarks) {
-          readyReports += 1;
+        if (
+          scoreStudentSet.has(studentId) &&
+          attendanceStudentSet.has(studentId) &&
+          remarkStudentSet.has(studentId)
+        ) {
+          readyCount += 1;
         }
       });
 
-      const teacherIds = teacherAssignments[className] || [];
-      const classTeachers = teachers.filter((teacher) => teacherIds.includes(teacher.id));
-      const teacherName =
-        classTeachers.map((teacher) => cleanText(teacher.full_name)).filter(Boolean).join(", ") ||
-        "Not assigned";
+      const teacherNames = classTeacherMap.get(className) || [];
 
       return {
         className,
-        students: classStudents.length,
-        teacher: teacherName,
-        resultEntries: classScores.length,
-        attendanceEntries: attendanceStudentSet.size,
-        remarkEntries: remarkStudentSet.size,
-        readyReports,
+        teacher: teacherNames.join(", ") || "Not assigned",
+        totalStudents: classStudents.length,
+        readyCount,
       };
     });
   }, [
     classNames,
     students,
     currentScores,
-    currentCards,
     currentAttendance,
-    teacherAssignments,
-    teachers,
+    currentRemarks,
+    classTeacherMap,
   ]);
 
   const reportsReady = useMemo(() => {
-    return classOverview.reduce((sum, row) => sum + row.readyReports, 0);
+    return classOverview.reduce((sum, item) => sum + item.readyCount, 0);
   }, [classOverview]);
 
-  const stats = [
-    {
-      title: "Total Students",
-      value: loading ? "..." : students.length,
-      subtext: "Active students only",
-      icon: FiUsers,
-      soft: "bg-sky-50 text-sky-600",
-    },
-    {
-      title: "Total Teachers",
-      value: loading ? "..." : teachers.filter((teacher) => cleanLower(teacher.role) === "teacher").length,
-      subtext: "Teacher accounts",
-      icon: FiBookOpen,
-      soft: "bg-emerald-50 text-emerald-600",
-    },
-    {
-      title: "Reports Ready",
-      value: loading ? "..." : reportsReady,
-      subtext: "Results + attendance + remarks",
-      icon: FiFileText,
-      soft: "bg-violet-50 text-violet-600",
-    },
-    {
-      title: "Score Entries",
-      value: loading ? "..." : currentScores.length,
-      subtext: `${currentTerm || "Current term"} entries`,
-      icon: FiBarChart2,
-      soft: "bg-amber-50 text-amber-600",
-    },
-  ];
+  const teacherCount = useMemo(() => {
+    return teachers.filter((teacher) => cleanLower(teacher.role) === "teacher").length;
+  }, [teachers]);
+
+  const amountDue = students.length * 2;
 
   return (
-    <div className="space-y-6">
-      <div className="relative overflow-hidden rounded-[28px] border border-sky-100 bg-gradient-to-br from-white via-sky-50 to-emerald-50 p-6 shadow-sm">
-        <div className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-sky-200/40" />
-        <div className="pointer-events-none absolute -bottom-14 left-8 h-36 w-36 rounded-full bg-emerald-200/40" />
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <aside className="fixed left-0 top-0 z-20 hidden h-screen w-[275px] border-r border-slate-200 bg-white lg:block">
+        <div className="flex h-[92px] items-center gap-3 border-b border-slate-200 px-6">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-sky-100 text-sm font-black text-sky-700">
+            JVS
+          </div>
 
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">
-              Report Card Admin
-            </p>
-
-            <h1 className="mt-2 text-2xl font-extrabold text-gray-900 md:text-3xl">
+            <h2 className="text-lg font-black leading-tight text-slate-900">
               {schoolName}
-            </h1>
+            </h2>
+            <p className="text-sm text-slate-500">Admin Portal</p>
+          </div>
+        </div>
 
-            <p className="mt-2 text-sm font-semibold text-slate-500">
-              {academicYear || "Academic Year"} • {currentTerm || "Current Term"}
+        <nav className="space-y-2 px-4 py-5">
+          <button
+            type="button"
+            onClick={() => router.push("/report-card/admin")}
+            className="flex w-full items-center gap-3 rounded-2xl bg-sky-500 px-4 py-4 text-left text-sm font-bold text-white"
+          >
+            <FiHome size={19} />
+            Dashboard
+          </button>
+
+          {QUICK_ACTIONS.map((item) => {
+            const Icon = item.icon;
+
+            return (
+              <button
+                key={item.title}
+                type="button"
+                onClick={() => router.push(item.path)}
+                className="flex w-full items-center gap-3 rounded-2xl px-4 py-4 text-left text-sm font-bold text-slate-700 transition hover:bg-sky-50 hover:text-sky-700"
+              >
+                <Icon size={19} />
+                {item.title}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="absolute bottom-5 left-4 right-4 rounded-2xl bg-slate-50 p-4">
+          <p className="text-sm font-bold text-slate-600">JVS Report Card System</p>
+          <p className="mt-2 text-sm font-black text-emerald-600">Access Active</p>
+        </div>
+      </aside>
+
+      <main className="lg:ml-[275px]">
+        <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-5 py-5 backdrop-blur">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-black text-slate-900">Admin Dashboard</h1>
+              <p className="mt-1 text-sm text-slate-500">
+                Manage students, teachers, classes, report cards, bills, messages and settings
+              </p>
+            </div>
+
+            <div className="text-left sm:text-right">
+              <p className="font-bold text-slate-900">Admin</p>
+              <p className="text-sm text-slate-500">{schoolName}</p>
+            </div>
+          </div>
+        </header>
+
+        <div className="space-y-6 p-5 md:p-8">
+          <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-2xl font-black text-slate-900">
+              Welcome to {schoolName}
+            </h2>
+            <p className="mt-3 text-slate-500">
+              Manage students, teachers, classes, report cards and billing from one place.
             </p>
-          </div>
 
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => router.push("/dashboard/admin")}
-              className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-slate-800"
-            >
-              <FiGrid size={18} />
-              JSMS Dashboard
-            </button>
-
-            <button
-              type="button"
-              onClick={loadDashboardData}
-              className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-black text-sky-700 shadow-sm ring-1 ring-sky-100 hover:bg-sky-50"
-            >
-              <FiRefreshCw size={18} />
-              Refresh
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-        {stats.map((item) => {
-          const Icon = item.icon;
-
-          return (
-            <div
-              key={item.title}
-              className="rounded-[24px] border border-gray-200 bg-white p-5 shadow-sm"
-            >
-              <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-2xl ${item.soft}`}>
-                <Icon size={22} />
-              </div>
-
-              <p className="text-sm font-semibold text-gray-500">{item.title}</p>
-              <h2 className="mt-2 text-3xl font-black text-gray-900">{item.value}</h2>
-              <p className="mt-2 text-xs font-semibold text-gray-400">{item.subtext}</p>
+            <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+              <span className="rounded-full bg-sky-50 px-3 py-2 font-bold text-sky-700">
+                {academicYear || "Academic Year"}
+              </span>
+              <span className="rounded-full bg-emerald-50 px-3 py-2 font-bold text-emerald-700">
+                {currentTerm || "Current Term"}
+              </span>
+              <button
+                type="button"
+                onClick={loadDashboardData}
+                className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-2 font-bold text-slate-700 hover:bg-slate-200"
+              >
+                <FiRefreshCw size={15} />
+                Refresh
+              </button>
             </div>
-          );
-        })}
-      </div>
+          </section>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <button
-          type="button"
-          onClick={() => router.push("/report-card/admin")}
-          className="rounded-[24px] border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-        >
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-50 text-sky-600">
-            <FiBarChart2 size={22} />
-          </div>
-          <h3 className="font-bold text-gray-900">Overview</h3>
-          <p className="mt-2 text-sm text-gray-500">Report readiness by class</p>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => router.push("/report-card/admin/reports")}
-          className="rounded-[24px] border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-        >
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-50 text-violet-600">
-            <FiFileText size={22} />
-          </div>
-          <h3 className="font-bold text-gray-900">View Reports</h3>
-          <p className="mt-2 text-sm text-gray-500">Preview and print report cards</p>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => router.push("/report-card/admin/attendance")}
-          className="rounded-[24px] border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-        >
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
-            <FiClipboard size={22} />
-          </div>
-          <h3 className="font-bold text-gray-900">Attendance</h3>
-          <p className="mt-2 text-sm text-gray-500">Check saved attendance</p>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => router.push("/report-card")}
-          className="rounded-[24px] border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-        >
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-50 text-amber-600">
-            <FiArrowLeft size={22} />
-          </div>
-          <h3 className="font-bold text-gray-900">Module Entry</h3>
-          <p className="mt-2 text-sm text-gray-500">Open report-card redirect page</p>
-        </button>
-      </div>
-
-      <div className="rounded-[28px] border border-gray-200 bg-white p-5 shadow-sm">
-        <div className="mb-4">
-          <h2 className="text-lg font-extrabold text-gray-900">Class Overview</h2>
-          <p className="mt-1 text-sm text-gray-500">
-            Student count, assigned teacher and report readiness by class.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
-          {classOverview.map((item) => (
-            <div
-              key={item.className}
-              className="rounded-3xl border border-gray-200 bg-gray-50 p-4"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-black text-gray-900">
-                    {item.className}
-                  </h3>
-                  <p className="mt-1 text-xs font-semibold text-gray-500">
-                    Teacher: {item.teacher}
-                  </p>
-                </div>
-
-                <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-black text-sky-700">
-                  {item.readyReports} Ready
-                </span>
-              </div>
-
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <div className="rounded-2xl border border-gray-200 bg-white p-3">
-                  <p className="text-xs font-semibold text-gray-500">Students</p>
-                  <p className="mt-1 text-xl font-black text-gray-900">
-                    {loading ? "..." : item.students}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-gray-200 bg-white p-3">
-                  <p className="text-xs font-semibold text-gray-500">Scores</p>
-                  <p className="mt-1 text-xl font-black text-gray-900">
-                    {loading ? "..." : item.resultEntries}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-gray-200 bg-white p-3">
-                  <p className="text-xs font-semibold text-gray-500">Attendance</p>
-                  <p className="mt-1 text-xl font-black text-gray-900">
-                    {loading ? "..." : item.attendanceEntries}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-gray-200 bg-white p-3">
-                  <p className="text-xs font-semibold text-gray-500">Remarks</p>
-                  <p className="mt-1 text-xl font-black text-gray-900">
-                    {loading ? "..." : item.remarkEntries}
-                  </p>
-                </div>
-              </div>
+          <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-sm">
+              <p className="text-sm font-bold text-slate-500">Total Students</p>
+              <h3 className="mt-4 text-4xl font-black tracking-[0.2em] text-slate-900">
+                {loading ? "..." : students.length}
+              </h3>
+              <p className="mt-3 text-sm text-slate-400">Active students only</p>
             </div>
-          ))}
 
-          {classOverview.length === 0 && (
-            <div className="rounded-2xl border border-dashed border-gray-300 p-6 text-sm font-semibold text-gray-500">
-              No class data found.
+            <div className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-sm">
+              <p className="text-sm font-bold text-slate-500">Total Teachers</p>
+              <h3 className="mt-4 text-4xl font-black tracking-[0.2em] text-slate-900">
+                {loading ? "..." : teacherCount}
+              </h3>
+              <p className="mt-3 text-sm text-slate-400">Teachers added</p>
             </div>
-          )}
+
+            <div className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-sm">
+              <p className="text-sm font-bold text-slate-500">Reports Ready</p>
+              <h3 className="mt-4 text-4xl font-black tracking-[0.2em] text-slate-900">
+                {loading ? "..." : reportsReady}
+              </h3>
+              <p className="mt-3 text-sm text-slate-400">Fully ready report cards</p>
+            </div>
+
+            <div className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-sm">
+              <p className="text-sm font-bold text-slate-500">Amount Due</p>
+              <h3 className="mt-4 text-4xl font-black text-slate-900">
+                {loading ? "..." : formatMoney(amountDue)}
+              </h3>
+              <p className="mt-3 text-sm text-slate-400">
+                Active students × ₵2
+              </p>
+            </div>
+          </section>
+
+          <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-5">
+              <h2 className="text-xl font-black text-slate-900">Quick Actions</h2>
+              <p className="mt-2 text-sm text-slate-500">
+                Open the main areas of the report-card module.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+              {QUICK_ACTIONS.map((item) => {
+                const Icon = item.icon;
+
+                return (
+                  <button
+                    key={item.title}
+                    type="button"
+                    onClick={() => router.push(item.path)}
+                    className="rounded-[22px] border border-slate-200 bg-slate-50 p-4 text-left transition hover:-translate-y-0.5 hover:bg-sky-50 hover:shadow-sm"
+                  >
+                    <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-sky-600 shadow-sm">
+                      <Icon size={22} />
+                    </div>
+                    <h3 className="font-black text-slate-900">{item.title}</h3>
+                    <p className="mt-2 text-sm leading-5 text-slate-500">
+                      {item.subtitle}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-5">
+              <h2 className="text-xl font-black text-slate-900">Class Overview</h2>
+              <p className="mt-2 text-sm text-slate-500">
+                Student count, class teacher and report readiness by class
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+              {classOverview.map((item) => (
+                <div
+                  key={item.className}
+                  className="rounded-[20px] border border-slate-200 bg-slate-50 p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-black text-slate-900">
+                        {item.className}
+                      </h3>
+                      <p className="mt-2 text-sm text-slate-500">
+                        Class Teacher: {item.teacher}
+                      </p>
+                    </div>
+
+                    <span className="rounded-full bg-sky-100 px-3 py-2 text-xs font-black text-sky-700">
+                      {item.readyCount} Ready
+                    </span>
+                  </div>
+
+                  <div className="mt-5 grid grid-cols-2 gap-3">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <p className="text-sm text-slate-500">Students</p>
+                      <p className="mt-3 text-2xl font-black text-slate-900">
+                        {loading ? "..." : item.totalStudents}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <p className="text-sm text-slate-500">Reports</p>
+                      <p className="mt-3 text-2xl font-black text-slate-900">
+                        {loading ? "..." : item.readyCount}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {classOverview.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-sm font-semibold text-slate-500">
+                  No class data found.
+                </div>
+              )}
+            </div>
+          </section>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
