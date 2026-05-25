@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type AnyRow = Record<string, any>;
-type ActiveTab = "dashboard" | "income" | "expense" | "transfer" | "reports" | "settings";
+type ActiveTab = "dashboard" | "income" | "expense" | "salary" | "transfer" | "reports" | "settings";
 type ReportMode = "today" | "week" | "month" | "term" | "year" | "custom";
 
 const COLORS = {
@@ -252,6 +252,7 @@ export default function IncomeExpenditurePage() {
 
   const [transactions, setTransactions] = useState<AnyRow[]>([]);
   const [financeItems, setFinanceItems] = useState<AnyRow[]>([]);
+  const [teachers, setTeachers] = useState<AnyRow[]>([]);
   const [feePayments, setFeePayments] = useState<AnyRow[]>([]);
   const [bookPayments, setBookPayments] = useState<AnyRow[]>([]);
   const [uniformPayments, setUniformPayments] = useState<AnyRow[]>([]);
@@ -273,6 +274,13 @@ export default function IncomeExpenditurePage() {
   const [expenseLocation, setExpenseLocation] = useState<"cash" | "bank">("cash");
   const [expenseDate, setExpenseDate] = useState(toIsoDate(new Date()));
   const [expenseDescription, setExpenseDescription] = useState("");
+
+  const [salaryTeacherId, setSalaryTeacherId] = useState("");
+  const [salaryMonth, setSalaryMonth] = useState(toIsoDate(new Date()).slice(0, 7));
+  const [salaryAmount, setSalaryAmount] = useState("");
+  const [salaryLocation, setSalaryLocation] = useState<"cash" | "bank">("cash");
+  const [salaryDate, setSalaryDate] = useState(toIsoDate(new Date()));
+  const [salaryDescription, setSalaryDescription] = useState("");
 
   const [transferFrom, setTransferFrom] = useState<"cash" | "bank">("cash");
   const [transferTo, setTransferTo] = useState<"cash" | "bank">("bank");
@@ -390,6 +398,7 @@ export default function IncomeExpenditurePage() {
         const range = getDateRange("term", settings);
 
         setAdminRow(finalUser);
+        setTeachers(allUsers);
         setSettingsRow(settings);
         setFinanceSettings(financeSetting);
         setOpeningBank(String(financeSetting.opening_bank_balance ?? 0));
@@ -529,6 +538,28 @@ export default function IncomeExpenditurePage() {
   const expenseItemsForCategory = useMemo(() => {
     return expenseItems.filter((item) => String(item.category || "") === expenseCategory);
   }, [expenseItems, expenseCategory]);
+
+  const activeTeachers = useMemo(() => {
+    return teachers
+      .filter((teacher) => String(teacher?.is_active ?? "true") !== "false")
+      .sort((a, b) => getTeacherName(a).localeCompare(getTeacherName(b)));
+  }, [teachers]);
+
+  const selectedSalaryTeacher = useMemo(() => {
+    return activeTeachers.find((teacher) => String(teacher.id) === salaryTeacherId) || null;
+  }, [activeTeachers, salaryTeacherId]);
+
+  const salaryPayments = useMemo(() => {
+    return transactions.filter(
+      (row) =>
+        String(row.type || "") === "expense" &&
+        String(row.category || "").trim().toLowerCase() === "salary"
+    );
+  }, [transactions]);
+
+  const totalSalaryPaid = useMemo(() => {
+    return salaryPayments.reduce((sum, row) => sum + numberValue(row.amount), 0);
+  }, [salaryPayments]);
 
   useEffect(() => {
     const first = incomeItemsForCategory[0]?.item_name;
@@ -698,6 +729,14 @@ export default function IncomeExpenditurePage() {
       .filter((row) => String(row.type || "") === "expense")
       .reduce((sum, row) => sum + numberValue(row.amount), 0);
 
+    const salary = reportTransactions
+      .filter(
+        (row) =>
+          String(row.type || "") === "expense" &&
+          String(row.category || "").trim().toLowerCase() === "salary"
+      )
+      .reduce((sum, row) => sum + numberValue(row.amount), 0);
+
     const transfer = reportTransactions
       .filter((row) => String(row.type || "") === "transfer")
       .reduce((sum, row) => sum + numberValue(row.amount), 0);
@@ -714,6 +753,7 @@ export default function IncomeExpenditurePage() {
       uniforms,
       manualIncome,
       expense,
+      salary,
       transfer,
       totalIncome: fees + admissions + books + uniforms + manualIncome,
     };
@@ -847,6 +887,70 @@ export default function IncomeExpenditurePage() {
     } catch (error: any) {
       console.error(error);
       setMessage(error?.message || "Failed to save expenditure.");
+      setMessageType("error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSaveSalary() {
+    try {
+      setSaving(true);
+      setMessage("");
+
+      const amount = numberValue(salaryAmount);
+      const teacherName = getTeacherName(selectedSalaryTeacher);
+
+      if (!selectedSalaryTeacher) {
+        setMessage("Select the teacher receiving salary.");
+        setMessageType("error");
+        return;
+      }
+
+      if (amount <= 0) {
+        setMessage("Enter a valid salary amount.");
+        setMessageType("error");
+        return;
+      }
+
+      if (!salaryMonth) {
+        setMessage("Select the salary month.");
+        setMessageType("error");
+        return;
+      }
+
+      await ensureFinanceItem("expense", "Salary", "Teacher Salary");
+
+      const monthLabel = new Date(`${salaryMonth}-01T00:00:00`).toLocaleDateString(undefined, {
+        month: "long",
+        year: "numeric",
+      });
+
+      const { error } = await supabase.from("finance_transactions").insert({
+        type: "expense",
+        category: "Salary",
+        item_name: `Salary - ${teacherName}`,
+        amount,
+        money_location: salaryLocation,
+        from_location: null,
+        to_location: null,
+        transaction_date: salaryDate,
+        description:
+          `Salary payment for ${teacherName} - ${monthLabel}` +
+          (salaryDescription.trim() ? ` | ${salaryDescription.trim()}` : ""),
+        recorded_by: adminName,
+      });
+
+      if (error) throw error;
+
+      setSalaryAmount("");
+      setSalaryDescription("");
+      setMessage("Teacher salary payment saved successfully.");
+      setMessageType("success");
+      await reloadData();
+    } catch (error: any) {
+      console.error(error);
+      setMessage(error?.message || "Failed to save teacher salary payment.");
       setMessageType("error");
     } finally {
       setSaving(false);
@@ -1031,6 +1135,7 @@ export default function IncomeExpenditurePage() {
           <TabButton label="Dashboard" active={activeTab === "dashboard"} onClick={() => setActiveTab("dashboard")} />
           <TabButton label="Add Income" active={activeTab === "income"} onClick={() => setActiveTab("income")} />
           <TabButton label="Add Expenditure" active={activeTab === "expense"} onClick={() => setActiveTab("expense")} />
+          <TabButton label="Teacher Salaries" active={activeTab === "salary"} onClick={() => setActiveTab("salary")} />
           <TabButton label="Transfers" active={activeTab === "transfer"} onClick={() => setActiveTab("transfer")} />
           <TabButton label="Reports" active={activeTab === "reports"} onClick={() => setActiveTab("reports")} />
           <TabButton label="Settings" active={activeTab === "settings"} onClick={() => setActiveTab("settings")} />
@@ -1048,6 +1153,7 @@ export default function IncomeExpenditurePage() {
               <StatCard label="Books Profit" value={formatMoney(financeSummary.bookProfit)} tone="success" />
               <StatCard label="Uniforms Profit" value={formatMoney(financeSummary.uniformProfit)} tone="success" />
               <StatCard label="Total Expenditure" value={formatMoney(financeSummary.expenseTotal)} tone="danger" />
+              <StatCard label="Teacher Salaries Paid" value={formatMoney(totalSalaryPaid)} tone="danger" />
               <StatCard label="Net Income - Expense" value={formatMoney(financeSummary.netBalance)} tone="info" />
             </div>
 
@@ -1298,6 +1404,110 @@ export default function IncomeExpenditurePage() {
           </section>
         )}
 
+        {activeTab === "salary" && (
+          <>
+            <section style={sectionCardStyle}>
+              <h3 style={sectionTitleStyle}>Teacher Salary Payment</h3>
+              <p style={smallTextStyle}>
+                Select a teacher, enter the salary amount, choose where the money was paid from, and save it. It will count as Salary expenditure automatically.
+              </p>
+
+              <div style={formGridStyle}>
+                <label style={labelStyle}>
+                  Teacher
+                  <select
+                    value={salaryTeacherId}
+                    onChange={(e) => setSalaryTeacherId(e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="">Select teacher</option>
+                    {activeTeachers.map((teacher) => (
+                      <option key={String(teacher.id)} value={String(teacher.id)}>
+                        {getTeacherName(teacher)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label style={labelStyle}>
+                  Salary Month
+                  <input
+                    type="month"
+                    value={salaryMonth}
+                    onChange={(e) => setSalaryMonth(e.target.value)}
+                    style={inputStyle}
+                  />
+                </label>
+
+                <label style={labelStyle}>
+                  Amount Paid
+                  <input
+                    value={salaryAmount}
+                    onChange={(e) => setSalaryAmount(e.target.value)}
+                    placeholder="0.00"
+                    style={inputStyle}
+                  />
+                </label>
+
+                <label style={labelStyle}>
+                  Paid From
+                  <select
+                    value={salaryLocation}
+                    onChange={(e) => setSalaryLocation(e.target.value as "cash" | "bank")}
+                    style={inputStyle}
+                  >
+                    <option value="cash">Money at Hand</option>
+                    <option value="bank">Money at Bank</option>
+                  </select>
+                </label>
+
+                <label style={labelStyle}>
+                  Payment Date
+                  <input
+                    type="date"
+                    value={salaryDate}
+                    onChange={(e) => setSalaryDate(e.target.value)}
+                    style={inputStyle}
+                  />
+                </label>
+
+                <label style={labelStyle}>
+                  Note
+                  <input
+                    value={salaryDescription}
+                    onChange={(e) => setSalaryDescription(e.target.value)}
+                    placeholder="Example: Full salary / balance / advance"
+                    style={inputStyle}
+                  />
+                </label>
+              </div>
+
+              <button
+                onClick={handleSaveSalary}
+                disabled={saving}
+                style={{
+                  ...primaryButtonStyle,
+                  opacity: saving ? 0.65 : 1,
+                  cursor: saving ? "not-allowed" : "pointer",
+                }}
+              >
+                {saving ? "Saving..." : "Save Salary Payment"}
+              </button>
+            </section>
+
+            <div style={{ height: "12px" }} />
+
+            <section style={sectionCardStyle}>
+              <h3 style={sectionTitleStyle}>Recent Salary Payments</h3>
+              <TransactionsTable
+                rows={salaryPayments.slice(0, 20)}
+                onDelete={handleDeleteTransaction}
+                saving={saving}
+              />
+            </section>
+          </>
+        )}
+
         {activeTab === "transfer" && (
           <section style={sectionCardStyle}>
             <h3 style={sectionTitleStyle}>Transfer Money</h3>
@@ -1458,6 +1668,7 @@ export default function IncomeExpenditurePage() {
                 <StatCard label="Manual Income" value={formatMoney(reportSummary.manualIncome)} tone="info" />
                 <StatCard label="Total Income" value={formatMoney(reportSummary.totalIncome)} tone="success" />
                 <StatCard label="Expenditure" value={formatMoney(reportSummary.expense)} tone="danger" />
+                <StatCard label="Teacher Salaries" value={formatMoney(reportSummary.salary)} tone="danger" />
                 <StatCard label="Transfers" value={formatMoney(reportSummary.transfer)} tone="warning" />
               </div>
 
