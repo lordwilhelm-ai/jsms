@@ -31,6 +31,8 @@ const COLORS = {
 
 const INCOME_CATEGORIES = ["Admission Forms", "Donations", "Other Income"];
 const EXPENSE_CATEGORIES = ["Salary", "TNT", "Hardware", "Other Expenses"];
+const DEFAULT_OTHER_INCOME_ITEMS = ["Other"];
+const DEFAULT_OTHER_EXPENSE_ITEMS = ["SSNIT", "Other"];
 
 function getRole(row: AnyRow | null) {
   const raw = String(row?.role || "").trim().toLowerCase();
@@ -267,6 +269,7 @@ export default function IncomeExpenditurePage() {
   const [incomeLocation, setIncomeLocation] = useState<"cash" | "bank">("cash");
   const [incomeDate, setIncomeDate] = useState(toIsoDate(new Date()));
   const [incomeDescription, setIncomeDescription] = useState("");
+  const [otherIncomeItemName, setOtherIncomeItemName] = useState("");
 
   const [expenseCategory, setExpenseCategory] = useState("Hardware");
   const [expenseItem, setExpenseItem] = useState("");
@@ -274,6 +277,7 @@ export default function IncomeExpenditurePage() {
   const [expenseLocation, setExpenseLocation] = useState<"cash" | "bank">("cash");
   const [expenseDate, setExpenseDate] = useState(toIsoDate(new Date()));
   const [expenseDescription, setExpenseDescription] = useState("");
+  const [otherExpenseItemName, setOtherExpenseItemName] = useState("");
 
   const [salaryTeacherId, setSalaryTeacherId] = useState("");
   const [salaryMonth, setSalaryMonth] = useState(toIsoDate(new Date()).slice(0, 7));
@@ -539,6 +543,26 @@ export default function IncomeExpenditurePage() {
     return expenseItems.filter((item) => String(item.category || "") === expenseCategory);
   }, [expenseItems, expenseCategory]);
 
+  const incomeItemOptions = useMemo(() => {
+    const savedItems = incomeItemsForCategory
+      .map((item) => String(item.item_name || "").trim())
+      .filter(Boolean);
+
+    const defaultItems = incomeCategory === "Other Income" ? DEFAULT_OTHER_INCOME_ITEMS : [];
+
+    return Array.from(new Set([...defaultItems, ...savedItems]));
+  }, [incomeItemsForCategory, incomeCategory]);
+
+  const expenseItemOptions = useMemo(() => {
+    const savedItems = expenseItemsForCategory
+      .map((item) => String(item.item_name || "").trim())
+      .filter(Boolean);
+
+    const defaultItems = expenseCategory === "Other Expenses" ? DEFAULT_OTHER_EXPENSE_ITEMS : [];
+
+    return Array.from(new Set([...defaultItems, ...savedItems]));
+  }, [expenseItemsForCategory, expenseCategory]);
+
   const activeTeachers = useMemo(() => {
     return teachers
       .filter((teacher) => String(teacher?.is_active ?? "true") !== "false")
@@ -799,6 +823,10 @@ export default function IncomeExpenditurePage() {
       setMessage("");
 
       const amount = numberValue(incomeAmount);
+      const finalIncomeItem =
+        incomeCategory === "Other Income" && incomeItem.trim().toLowerCase() === "other"
+          ? otherIncomeItemName.trim()
+          : incomeItem.trim();
 
       if (amount <= 0) {
         setMessage("Enter a valid income amount.");
@@ -806,18 +834,18 @@ export default function IncomeExpenditurePage() {
         return;
       }
 
-      if (!incomeItem.trim()) {
+      if (!finalIncomeItem) {
         setMessage("Enter or select an income item.");
         setMessageType("error");
         return;
       }
 
-      await ensureFinanceItem("income", incomeCategory, incomeItem);
+      await ensureFinanceItem("income", incomeCategory, finalIncomeItem);
 
       const { error } = await supabase.from("finance_transactions").insert({
         type: "income",
         category: incomeCategory,
-        item_name: incomeItem.trim(),
+        item_name: finalIncomeItem,
         amount,
         money_location: incomeLocation,
         from_location: null,
@@ -831,6 +859,7 @@ export default function IncomeExpenditurePage() {
 
       setIncomeAmount("");
       setIncomeDescription("");
+      setOtherIncomeItemName("");
       setMessage("Income saved successfully.");
       setMessageType("success");
       await reloadData();
@@ -849,6 +878,10 @@ export default function IncomeExpenditurePage() {
       setMessage("");
 
       const amount = numberValue(expenseAmount);
+      const finalExpenseItem =
+        expenseCategory === "Other Expenses" && expenseItem.trim().toLowerCase() === "other"
+          ? otherExpenseItemName.trim()
+          : expenseItem.trim();
 
       if (amount <= 0) {
         setMessage("Enter a valid expense amount.");
@@ -856,18 +889,18 @@ export default function IncomeExpenditurePage() {
         return;
       }
 
-      if (!expenseItem.trim()) {
+      if (!finalExpenseItem) {
         setMessage("Enter or select an expenditure item.");
         setMessageType("error");
         return;
       }
 
-      await ensureFinanceItem("expense", expenseCategory, expenseItem);
+      await ensureFinanceItem("expense", expenseCategory, finalExpenseItem);
 
       const { error } = await supabase.from("finance_transactions").insert({
         type: "expense",
         category: expenseCategory,
-        item_name: expenseItem.trim(),
+        item_name: finalExpenseItem,
         amount,
         money_location: expenseLocation,
         from_location: null,
@@ -881,6 +914,7 @@ export default function IncomeExpenditurePage() {
 
       setExpenseAmount("");
       setExpenseDescription("");
+      setOtherExpenseItemName("");
       setMessage("Expenditure saved successfully.");
       setMessageType("success");
       await reloadData();
@@ -1210,12 +1244,21 @@ export default function IncomeExpenditurePage() {
                   value={incomeCategory}
                   onChange={(e) => {
                     setIncomeCategory(e.target.value);
+                    const nextCategory = e.target.value;
+                    setOtherIncomeItemName("");
                     const first = financeItems.find(
                       (item) =>
                         String(item.type) === "income" &&
-                        String(item.category) === e.target.value
+                        String(item.category) === nextCategory
                     );
-                    setIncomeItem(first ? String(first.item_name) : e.target.value);
+
+                    if (first) {
+                      setIncomeItem(String(first.item_name));
+                    } else if (nextCategory === "Other Income") {
+                      setIncomeItem("Other");
+                    } else {
+                      setIncomeItem(nextCategory);
+                    }
                   }}
                   style={inputStyle}
                 >
@@ -1237,10 +1280,19 @@ export default function IncomeExpenditurePage() {
                   style={inputStyle}
                 />
                 <datalist id="income-items">
-                  {incomeItemsForCategory.map((item) => (
-                    <option key={String(item.id)} value={String(item.item_name)} />
+                  {incomeItemOptions.map((item) => (
+                    <option key={item} value={item} />
                   ))}
                 </datalist>
+
+                {incomeCategory === "Other Income" && incomeItem.trim().toLowerCase() === "other" && (
+                  <input
+                    value={otherIncomeItemName}
+                    onChange={(e) => setOtherIncomeItemName(e.target.value)}
+                    placeholder="Type new income name or item"
+                    style={{ ...inputStyle, marginTop: "8px" }}
+                  />
+                )}
               </label>
 
               <label style={labelStyle}>
@@ -1313,13 +1365,20 @@ export default function IncomeExpenditurePage() {
                 <select
                   value={expenseCategory}
                   onChange={(e) => {
-                    setExpenseCategory(e.target.value);
+                    const nextCategory = e.target.value;
+                    setOtherExpenseItemName("");
+                    setExpenseCategory(nextCategory);
                     const first = financeItems.find(
                       (item) =>
                         String(item.type) === "expense" &&
-                        String(item.category) === e.target.value
+                        String(item.category) === nextCategory
                     );
-                    setExpenseItem(first ? String(first.item_name) : "");
+
+                    if (nextCategory === "Other Expenses") {
+                      setExpenseItem("SSNIT");
+                    } else {
+                      setExpenseItem(first ? String(first.item_name) : "");
+                    }
                   }}
                   style={inputStyle}
                 >
@@ -1341,10 +1400,19 @@ export default function IncomeExpenditurePage() {
                   style={inputStyle}
                 />
                 <datalist id="expense-items">
-                  {expenseItemsForCategory.map((item) => (
-                    <option key={String(item.id)} value={String(item.item_name)} />
+                  {expenseItemOptions.map((item) => (
+                    <option key={item} value={item} />
                   ))}
                 </datalist>
+
+                {expenseCategory === "Other Expenses" && expenseItem.trim().toLowerCase() === "other" && (
+                  <input
+                    value={otherExpenseItemName}
+                    onChange={(e) => setOtherExpenseItemName(e.target.value)}
+                    placeholder="Type new expense name or item"
+                    style={{ ...inputStyle, marginTop: "8px" }}
+                  />
+                )}
               </label>
 
               <label style={labelStyle}>
