@@ -76,6 +76,59 @@ function formatDate(value?: string | null) {
   return d.toLocaleDateString();
 }
 
+function getPaymentAmount(row: AnyRow) {
+  return numberValue(
+    row?.amount_paid ??
+      row?.amount ??
+      row?.total_paid ??
+      row?.payment_amount ??
+      row?.form_amount ??
+      row?.total_amount
+  );
+}
+
+function getPaymentDate(row: AnyRow) {
+  return String(row?.payment_date || row?.created_at || row?.updated_at || "").slice(0, 10);
+}
+
+function getPaymentReceipt(row: AnyRow) {
+  return String(row?.receipt_number || row?.receipt_no || row?.form_receipt_number || row?.id || "");
+}
+
+function isSuccessfulPayment(row: AnyRow) {
+  const status = String(row?.payment_status || row?.status || "paid").trim().toLowerCase();
+
+  return !["failed", "cancelled", "canceled", "reversed", "pending"].includes(status);
+}
+
+function isCurrentTermRow(row: AnyRow, academicYear: string, currentTerm: string) {
+  const rowAcademicYear = String(row?.academic_year || "").trim();
+  const rowTerm = String(row?.term || "").trim();
+
+  if (rowAcademicYear && academicYear && rowAcademicYear !== academicYear) return false;
+  if (rowTerm && currentTerm && rowTerm !== currentTerm) return false;
+
+  return true;
+}
+
+function mergeUniquePayments(rows: AnyRow[]) {
+  const seen = new Set<string>();
+  const finalRows: AnyRow[] = [];
+
+  rows.forEach((row, index) => {
+    const receipt = getPaymentReceipt(row);
+    const key = receipt || `${row?.id || "row"}-${index}`;
+
+    if (seen.has(key)) return;
+
+    seen.add(key);
+    finalRows.push(row);
+  });
+
+  return finalRows;
+}
+
+
 function startOfWeekMonday(date: Date) {
   const copy = new Date(date);
   const day = copy.getDay();
@@ -200,6 +253,10 @@ export default function IncomeExpenditurePage() {
   const [transactions, setTransactions] = useState<AnyRow[]>([]);
   const [financeItems, setFinanceItems] = useState<AnyRow[]>([]);
   const [feePayments, setFeePayments] = useState<AnyRow[]>([]);
+  const [bookPayments, setBookPayments] = useState<AnyRow[]>([]);
+  const [uniformPayments, setUniformPayments] = useState<AnyRow[]>([]);
+  const [admissionPayments, setAdmissionPayments] = useState<AnyRow[]>([]);
+  const [jsmsAdmissionPayments, setJsmsAdmissionPayments] = useState<AnyRow[]>([]);
   const [bookSummary, setBookSummary] = useState<AnyRow | null>(null);
   const [uniformSummary, setUniformSummary] = useState<AnyRow | null>(null);
 
@@ -257,6 +314,10 @@ export default function IncomeExpenditurePage() {
           transactionsRes,
           itemsRes,
           feesRes,
+          bookPaymentsRes,
+          uniformPaymentsRes,
+          admissionPaymentsRes,
+          jsmsAdmissionPaymentsRes,
           booksRes,
           uniformsRes,
         ] = await Promise.all([
@@ -273,6 +334,10 @@ export default function IncomeExpenditurePage() {
             .order("category", { ascending: true })
             .order("item_name", { ascending: true }),
           supabase.from("fee_payments").select("*").order("payment_date", { ascending: false }),
+          supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }),
+          supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }),
+          supabase.from("admission_payments").select("*").order("created_at", { ascending: false }),
+          supabase.from("jsms_admission_payments").select("*").order("created_at", { ascending: false }),
           supabase.from("book_profit_summary").select("*").limit(1).maybeSingle(),
           supabase.from("uniform_profit_summary").select("*").limit(1).maybeSingle(),
         ]);
@@ -285,6 +350,10 @@ export default function IncomeExpenditurePage() {
         if (transactionsRes.error) throw transactionsRes.error;
         if (itemsRes.error) throw itemsRes.error;
         if (feesRes.error) throw feesRes.error;
+        if (bookPaymentsRes.error) throw bookPaymentsRes.error;
+        if (uniformPaymentsRes.error) throw uniformPaymentsRes.error;
+        if (admissionPaymentsRes.error) throw admissionPaymentsRes.error;
+        if (jsmsAdmissionPaymentsRes.error) throw jsmsAdmissionPaymentsRes.error;
         if (booksRes.error) throw booksRes.error;
         if (uniformsRes.error) throw uniformsRes.error;
 
@@ -328,6 +397,10 @@ export default function IncomeExpenditurePage() {
         setTransactions(transactionsRes.data || []);
         setFinanceItems(itemsRes.data || []);
         setFeePayments(feesRes.data || []);
+        setBookPayments(bookPaymentsRes.data || []);
+        setUniformPayments(uniformPaymentsRes.data || []);
+        setAdmissionPayments(admissionPaymentsRes.data || []);
+        setJsmsAdmissionPayments(jsmsAdmissionPaymentsRes.data || []);
         setBookSummary(booksRes.data || null);
         setUniformSummary(uniformsRes.data || null);
         setReportStart(range.start);
@@ -349,8 +422,18 @@ export default function IncomeExpenditurePage() {
   }, [router]);
 
   async function reloadData() {
-    const [financeSettingsRes, transactionsRes, itemsRes, feesRes, booksRes, uniformsRes] =
-      await Promise.all([
+    const [
+      financeSettingsRes,
+      transactionsRes,
+      itemsRes,
+      feesRes,
+      bookPaymentsRes,
+      uniformPaymentsRes,
+      admissionPaymentsRes,
+      jsmsAdmissionPaymentsRes,
+      booksRes,
+      uniformsRes,
+    ] = await Promise.all([
         supabase.from("finance_settings").select("*").limit(1).maybeSingle(),
         supabase
           .from("finance_transactions")
@@ -362,6 +445,10 @@ export default function IncomeExpenditurePage() {
           .order("category", { ascending: true })
           .order("item_name", { ascending: true }),
         supabase.from("fee_payments").select("*").order("payment_date", { ascending: false }),
+        supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }),
+        supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }),
+        supabase.from("admission_payments").select("*").order("created_at", { ascending: false }),
+        supabase.from("jsms_admission_payments").select("*").order("created_at", { ascending: false }),
         supabase.from("book_profit_summary").select("*").limit(1).maybeSingle(),
         supabase.from("uniform_profit_summary").select("*").limit(1).maybeSingle(),
       ]);
@@ -370,6 +457,10 @@ export default function IncomeExpenditurePage() {
     if (transactionsRes.error) throw transactionsRes.error;
     if (itemsRes.error) throw itemsRes.error;
     if (feesRes.error) throw feesRes.error;
+    if (bookPaymentsRes.error) throw bookPaymentsRes.error;
+    if (uniformPaymentsRes.error) throw uniformPaymentsRes.error;
+    if (admissionPaymentsRes.error) throw admissionPaymentsRes.error;
+    if (jsmsAdmissionPaymentsRes.error) throw jsmsAdmissionPaymentsRes.error;
     if (booksRes.error) throw booksRes.error;
     if (uniformsRes.error) throw uniformsRes.error;
 
@@ -377,6 +468,10 @@ export default function IncomeExpenditurePage() {
     setTransactions(transactionsRes.data || []);
     setFinanceItems(itemsRes.data || []);
     setFeePayments(feesRes.data || []);
+    setBookPayments(bookPaymentsRes.data || []);
+    setUniformPayments(uniformPaymentsRes.data || []);
+    setAdmissionPayments(admissionPaymentsRes.data || []);
+    setJsmsAdmissionPayments(jsmsAdmissionPaymentsRes.data || []);
     setBookSummary(booksRes.data || null);
     setUniformSummary(uniformsRes.data || null);
   }
@@ -398,8 +493,26 @@ export default function IncomeExpenditurePage() {
     return currentTermFees.reduce((sum, row) => sum + numberValue(row.amount_paid), 0);
   }, [currentTermFees]);
 
+  const allAdmissionPayments = useMemo(() => {
+    return mergeUniquePayments([...(admissionPayments || []), ...(jsmsAdmissionPayments || [])]).filter(
+      isSuccessfulPayment
+    );
+  }, [admissionPayments, jsmsAdmissionPayments]);
+
+  const currentTermAdmissionPayments = useMemo(() => {
+    return allAdmissionPayments.filter((row) => isCurrentTermRow(row, academicYear, currentTerm));
+  }, [allAdmissionPayments, academicYear, currentTerm]);
+
+  const admissionIncome = useMemo(() => {
+    return currentTermAdmissionPayments.reduce((sum, row) => sum + getPaymentAmount(row), 0);
+  }, [currentTermAdmissionPayments]);
+
   const bookProfit = numberValue(bookSummary?.total_profit);
+  const bookSales = numberValue(bookSummary?.total_sales);
+  const bookCost = numberValue(bookSummary?.total_cost);
   const uniformProfit = numberValue(uniformSummary?.total_profit);
+  const uniformSales = numberValue(uniformSummary?.total_sales);
+  const uniformCost = numberValue(uniformSummary?.total_cost);
 
   const incomeItems = useMemo(() => {
     return financeItems.filter((item) => String(item.type || "") === "income");
@@ -470,13 +583,21 @@ export default function IncomeExpenditurePage() {
       )
       .reduce((sum, row) => sum + numberValue(row.amount), 0);
 
+    const moduleCashIncome = admissionIncome + bookProfit + uniformProfit;
+
     const currentCash =
-      openingCashBalance + schoolFeesIncome + cashIncome - cashExpense - cashToBank + bankToCash;
+      openingCashBalance +
+      schoolFeesIncome +
+      moduleCashIncome +
+      cashIncome -
+      cashExpense -
+      cashToBank +
+      bankToCash;
 
     const currentBank = openingBankBalance + bankIncome - bankExpense + cashToBank - bankToCash;
 
     const totalAvailable = currentCash + currentBank;
-    const totalIncome = schoolFeesIncome + manualIncomeTotal + bookProfit + uniformProfit;
+    const totalIncome = schoolFeesIncome + manualIncomeTotal + admissionIncome + bookProfit + uniformProfit;
     const netBalance = totalIncome - expenseTotal;
 
     return {
@@ -484,8 +605,13 @@ export default function IncomeExpenditurePage() {
       openingCashBalance,
       schoolFeesIncome,
       manualIncomeTotal,
+      admissionIncome,
       bookProfit,
+      bookSales,
+      bookCost,
       uniformProfit,
+      uniformSales,
+      uniformCost,
       totalIncome,
       expenseTotal,
       netBalance,
@@ -495,7 +621,18 @@ export default function IncomeExpenditurePage() {
       cashToBank,
       bankToCash,
     };
-  }, [financeSettings, transactions, schoolFeesIncome, bookProfit, uniformProfit]);
+  }, [
+    financeSettings,
+    transactions,
+    schoolFeesIncome,
+    admissionIncome,
+    bookProfit,
+    bookSales,
+    bookCost,
+    uniformProfit,
+    uniformSales,
+    uniformCost,
+  ]);
 
   const reportRange = useMemo(() => {
     return { start: reportStart, end: reportEnd };
@@ -531,6 +668,27 @@ export default function IncomeExpenditurePage() {
     });
   }, [feePayments, reportRange]);
 
+  const reportAdmissions = useMemo(() => {
+    return allAdmissionPayments.filter((row) => {
+      const date = getPaymentDate(row);
+      return date >= reportRange.start && date <= reportRange.end;
+    });
+  }, [allAdmissionPayments, reportRange]);
+
+  const reportBookPayments = useMemo(() => {
+    return bookPayments.filter((row) => {
+      const date = getPaymentDate(row);
+      return date >= reportRange.start && date <= reportRange.end;
+    });
+  }, [bookPayments, reportRange]);
+
+  const reportUniformPayments = useMemo(() => {
+    return uniformPayments.filter((row) => {
+      const date = getPaymentDate(row);
+      return date >= reportRange.start && date <= reportRange.end;
+    });
+  }, [uniformPayments, reportRange]);
+
   const reportSummary = useMemo(() => {
     const manualIncome = reportTransactions
       .filter((row) => String(row.type || "") === "income")
@@ -545,15 +703,21 @@ export default function IncomeExpenditurePage() {
       .reduce((sum, row) => sum + numberValue(row.amount), 0);
 
     const fees = reportFees.reduce((sum, row) => sum + numberValue(row.amount_paid), 0);
+    const admissions = reportAdmissions.reduce((sum, row) => sum + getPaymentAmount(row), 0);
+    const books = reportBookPayments.reduce((sum, row) => sum + getPaymentAmount(row), 0);
+    const uniforms = reportUniformPayments.reduce((sum, row) => sum + getPaymentAmount(row), 0);
 
     return {
       fees,
+      admissions,
+      books,
+      uniforms,
       manualIncome,
       expense,
       transfer,
-      totalIncome: fees + manualIncome,
+      totalIncome: fees + admissions + books + uniforms + manualIncome,
     };
-  }, [reportTransactions, reportFees]);
+  }, [reportTransactions, reportFees, reportAdmissions, reportBookPayments, reportUniformPayments]);
 
   function handleReportModeChange(nextMode: ReportMode) {
     setReportMode(nextMode);
@@ -841,11 +1005,14 @@ export default function IncomeExpenditurePage() {
               <Link href="/dashboard/admin" style={topButtonStyle}>
                 JSMS Dashboard
               </Link>
-              <Link href="/income-expenditure/books" style={topButtonStyle}>
+              <Link href="/books" style={topButtonStyle}>
                 Books
               </Link>
-              <Link href="/income-expenditure/uniforms" style={topButtonStyle}>
+              <Link href="/uniforms/admin" style={topButtonStyle}>
                 Uniforms
+              </Link>
+              <Link href="/admission" style={topButtonStyle}>
+                Admission
               </Link>
               <button onClick={() => window.print()} style={topButtonStyle}>
                 Print
@@ -877,6 +1044,7 @@ export default function IncomeExpenditurePage() {
               <StatCard label="Total Available" value={formatMoney(financeSummary.totalAvailable)} tone="success" />
               <StatCard label="School Fees" value={formatMoney(financeSummary.schoolFeesIncome)} tone="success" />
               <StatCard label="Manual Income" value={formatMoney(financeSummary.manualIncomeTotal)} tone="info" />
+              <StatCard label="Admission Income" value={formatMoney(financeSummary.admissionIncome)} tone="success" />
               <StatCard label="Books Profit" value={formatMoney(financeSummary.bookProfit)} tone="success" />
               <StatCard label="Uniforms Profit" value={formatMoney(financeSummary.uniformProfit)} tone="success" />
               <StatCard label="Total Expenditure" value={formatMoney(financeSummary.expenseTotal)} tone="danger" />
@@ -890,15 +1058,21 @@ export default function IncomeExpenditurePage() {
               <div style={moduleGridStyle}>
                 <ModuleCard
                   title="Books"
-                  description="Books stock, sales, cost, and profit will be handled here."
-                  href="/income-expenditure/books"
+                  description={`Sales: ${formatMoney(financeSummary.bookSales)} • Cost: ${formatMoney(financeSummary.bookCost)} • Profit: ${formatMoney(financeSummary.bookProfit)}`}
+                  href="/books"
                   emoji="📚"
                 />
                 <ModuleCard
                   title="Uniforms"
-                  description="Uniform stock, sales, cost, and profit will be handled here."
-                  href="/income-expenditure/uniforms"
+                  description={`Sales: ${formatMoney(financeSummary.uniformSales)} • Cost: ${formatMoney(financeSummary.uniformCost)} • Profit: ${formatMoney(financeSummary.uniformProfit)}`}
+                  href="/uniforms/admin"
                   emoji="👕"
+                />
+                <ModuleCard
+                  title="Admission"
+                  description={`Admission income: ${formatMoney(financeSummary.admissionIncome)}`}
+                  href="/admission"
+                  emoji="📝"
                 />
               </div>
             </section>
@@ -920,7 +1094,7 @@ export default function IncomeExpenditurePage() {
           <section style={sectionCardStyle}>
             <h3 style={sectionTitleStyle}>Add Income</h3>
             <p style={smallTextStyle}>
-              School fees are pulled automatically from the Fees module. Use this form for Admission Forms, Donations, and Other Income.
+              School fees, admissions, books profit, and uniforms profit are pulled automatically. Use this form for Donations and Other Income only.
             </p>
 
             <div style={formGridStyle}>
@@ -1278,6 +1452,9 @@ export default function IncomeExpenditurePage() {
 
               <div style={statsGridStyle}>
                 <StatCard label="Fees Collected" value={formatMoney(reportSummary.fees)} tone="success" />
+                <StatCard label="Admissions" value={formatMoney(reportSummary.admissions)} tone="success" />
+                <StatCard label="Books Collected" value={formatMoney(reportSummary.books)} tone="success" />
+                <StatCard label="Uniforms Collected" value={formatMoney(reportSummary.uniforms)} tone="success" />
                 <StatCard label="Manual Income" value={formatMoney(reportSummary.manualIncome)} tone="info" />
                 <StatCard label="Total Income" value={formatMoney(reportSummary.totalIncome)} tone="success" />
                 <StatCard label="Expenditure" value={formatMoney(reportSummary.expense)} tone="danger" />

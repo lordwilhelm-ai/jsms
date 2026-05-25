@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { FiEye, FiPrinter, FiRefreshCw } from "react-icons/fi";
 import { supabase } from "@/lib/supabase";
 
@@ -1160,7 +1161,36 @@ function ReportCardSheet({ data }: { data: ReportData }) {
   );
 }
 
+
+function getTeacherDisplayName(row: Record<string, any> | null) {
+  return cleanText(
+    row?.full_name ||
+      row?.teacher_name ||
+      row?.name ||
+      row?.username ||
+      row?.email ||
+      "Teacher"
+  );
+}
+
+function isAdminRole(row: Record<string, any> | null) {
+  const role = cleanLower(row?.role);
+  return (
+    role === "admin" ||
+    role === "headmaster" ||
+    role === "owner" ||
+    role === "super_admin" ||
+    role === "superadmin"
+  );
+}
+
+function classNameMatches(a: unknown, b: unknown) {
+  return cleanLower(a) === cleanLower(b);
+}
+
 export default function ReportCardsPage() {
+  const router = useRouter();
+
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [settings, setSettings] = useState<SettingsRow | null>(null);
   const [classes, setClasses] = useState<ClassRow[]>([]);
@@ -1177,12 +1207,25 @@ export default function ReportCardsPage() {
   const [isPreviewWindow, setIsPreviewWindow] = useState(false);
   const [selectedClass, setSelectedClass] = useState("All");
   const [loading, setLoading] = useState(true);
+  const [checkingAccess, setCheckingAccess] = useState(true);
+  const [teacherName, setTeacherName] = useState("Teacher");
+  const [assignedClassNames, setAssignedClassNames] = useState<string[]>([]);
   const [previewMode, setPreviewMode] = useState<"none" | "student" | "class" | "all">("none");
   const [previewStudentId, setPreviewStudentId] = useState("");
   const [message, setMessage] = useState("");
 
   const academicYear = getAcademicYear(settings);
   const currentTerm = cleanText(settings?.current_term);
+
+  function getAllowedStudents(rows: StudentRow[], allowedClassNames: string[]) {
+    const allowed = allowedClassNames.map((item) => cleanLower(item)).filter(Boolean);
+
+    return rows.filter((student) => {
+      if (!isActiveStudent(student)) return false;
+      if (allowed.length === 0) return false;
+      return allowed.includes(cleanLower(student.class_name));
+    });
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1206,7 +1249,90 @@ export default function ReportCardsPage() {
     }
   }, []);
 
-  async function loadData() {
+  async function resolveTeacherClasses() {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.user) {
+      router.replace("/");
+      return null;
+    }
+
+    const teachersRes = await supabase.from("teachers").select("*");
+
+    if (teachersRes.error) {
+      setMessage(teachersRes.error.message);
+      return null;
+    }
+
+    const teacherRow =
+      (teachersRes.data || []).find(
+        (item: any) => String(item.auth_user_id || "") === String(session.user.id)
+      ) ||
+      (teachersRes.data || []).find(
+        (item: any) =>
+          cleanLower(item.email) === cleanLower(session.user.email)
+      ) ||
+      null;
+
+    if (!teacherRow) {
+      setMessage("Teacher account was not found.");
+      return null;
+    }
+
+    if (isAdminRole(teacherRow)) {
+      router.replace("/report-card/admin/reports");
+      return null;
+    }
+
+    setTeacherName(getTeacherDisplayName(teacherRow));
+
+    const assignmentRes = await fetch(
+      `/api/teacher-assignments/get?teacher_id=${teacherRow.id}`
+    );
+
+    const assignmentData = await assignmentRes.json().catch(() => ({}));
+
+    if (!assignmentRes.ok || assignmentData.error) {
+      setMessage(assignmentData.error || "Failed to load assigned classes.");
+      return [];
+    }
+
+    const classIds = Array.isArray(assignmentData.class_ids)
+      ? assignmentData.class_ids.map((id: unknown) => String(id))
+      : [];
+
+    const classesRes = await supabase
+      .from("classes")
+      .select("*")
+      .order("class_order", { ascending: true });
+
+    if (classesRes.error) {
+      setMessage(classesRes.error.message);
+      return [];
+    }
+
+    const classNames = ((classesRes.data || []) as ClassRow[])
+      .filter((cls) => classIds.includes(String(cls.id || "")))
+      .map((cls) => cleanText(cls.class_name || cls.name))
+      .filter(Boolean);
+
+    setClasses(classesRes.data || []);
+    setAssignedClassNames(classNames);
+
+    setSelectedClass((current) => {
+      if (current && current !== "All" && classNames.some((name) => classNameMatches(name, current))) {
+        return current;
+      }
+
+      return classNames[0] || "";
+    });
+
+    return classNames;
+  }
+
+  async function loadData(allowedClassNames = assignedClassNames) {
     setLoading(true);
     setMessage("");
 
@@ -1273,7 +1399,7 @@ export default function ReportCardsPage() {
     ]);
 
     if (studentsRes.error) setMessage(studentsRes.error.message);
-    if (!studentsRes.error) setStudents((studentsRes.data || []).filter(isActiveStudent));
+    if (!studentsRes.error) setStudents(getAllowedStudents(studentsRes.data || [], allowedClassNames));
     if (!settingsRes.error) setSettings(settingsRes.data || null);
     if (!classesRes.error) setClasses(classesRes.data || []);
     if (!scoresRes.error) setScores(scoresRes.data || []);
@@ -1293,11 +1419,24 @@ export default function ReportCardsPage() {
   }
 
   useEffect(() => {
-    loadData();
+    async function initTeacherReports() {
+      setCheckingAccess(true);
+      const classNames = await resolveTeacherClasses();
+
+      if (classNames) {
+        await loadData(classNames);
+      }
+
+      setCheckingAccess(false);
+    }
+
+    void initTeacherReports();
   }, []);
 
+  const teacherClassOptions = useMemo(() => assignedClassNames, [assignedClassNames]);
+
   const filteredStudents = useMemo(() => {
-    if (selectedClass === "All") return students;
+    if (!selectedClass) return [];
     return students.filter((student) => cleanText(student.class_name) === selectedClass);
   }, [students, selectedClass]);
 
@@ -1313,12 +1452,13 @@ export default function ReportCardsPage() {
   }, [students]);
 
   const previewStudents = useMemo(() => {
-    if (previewMode === "none") return [];
+    if (!isPreviewWindow) return filteredStudents;
+    if (previewMode === "none") return filteredStudents;
     if (previewMode === "all") return students;
     if (previewMode === "class") return filteredStudents;
 
     return students.filter((student) => getStudentReportId(student) === previewStudentId);
-  }, [previewMode, previewStudentId, students, filteredStudents]);
+  }, [isPreviewWindow, previewMode, previewStudentId, students, filteredStudents]);
 
   const headteacherSignatureUrl = useMemo(() => {
     return getHeadteacherSignatureUrl(teachers);
@@ -1412,22 +1552,32 @@ export default function ReportCardsPage() {
 
   function previewStudent(student: StudentRow) {
     const studentId = encodeURIComponent(getStudentReportId(student));
-    window.open(`/report-card/admin/reports?preview=student&student=${studentId}`, "_blank");
+    window.open(`/report-card/teacher/reports?preview=student&student=${studentId}`, "_blank");
   }
 
   function previewClass() {
     const mode = selectedClass === "All" ? "all" : "class";
     const classQuery = selectedClass === "All" ? "" : `&class=${encodeURIComponent(selectedClass)}`;
 
-    window.open(`/report-card/admin/reports?preview=${mode}${classQuery}`, "_blank");
+    window.open(`/report-card/teacher/reports?preview=${mode}${classQuery}`, "_blank");
   }
 
   function previewAll() {
-    window.open("/report-card/admin/reports?preview=all", "_blank");
+    window.open("/report-card/teacher/reports?preview=all", "_blank");
   }
 
   function printReports() {
     window.print();
+  }
+
+  if (checkingAccess) {
+    return (
+      <main className="min-h-screen bg-gray-100 p-5">
+        <div className="rounded-3xl bg-white p-6 text-center text-sm font-bold text-gray-600 shadow-sm">
+          Loading assigned report cards...
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -1951,127 +2101,83 @@ export default function ReportCardsPage() {
 
       {!isPreviewWindow && (
         <div className="no-print space-y-5">
-        <div className="rounded-3xl bg-white p-6 shadow-sm">
-          <h1 className="text-2xl font-extrabold text-gray-900">Report Cards</h1>
-          <p className="mt-2 text-sm text-gray-500">
-            Preview, review and print student report cards.
-          </p>
-          <p className="mt-2 text-sm font-semibold text-sky-700">
-            {currentTerm || "Current Term"} • {academicYear || "Academic Year"}
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-4 rounded-3xl bg-white p-5 shadow-sm lg:flex-row lg:items-center lg:justify-between">
-          <select
-            value={selectedClass}
-            onChange={(event) => setSelectedClass(event.target.value)}
-            className="w-full rounded-2xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-sky-500 lg:w-72"
-          >
-            {CLASS_OPTIONS.map((className) => (
-              <option key={className} value={className}>
-                {className}
-              </option>
-            ))}
-          </select>
-
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={previewClass}
-              className="rounded-2xl bg-sky-500 px-4 py-3 text-sm font-bold text-white hover:bg-sky-600"
-            >
-              Preview Class
-            </button>
-
-            <button
-              type="button"
-              onClick={previewAll}
-              className="rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-600"
-            >
-              Preview All
-            </button>
-
-            <button
-              type="button"
-              onClick={loadData}
-              className="flex items-center gap-2 rounded-2xl bg-gray-100 px-4 py-3 text-sm font-bold text-gray-700 hover:bg-gray-200"
-            >
-              <FiRefreshCw size={16} />
-              Refresh
-            </button>
-          </div>
-        </div>
-
-        {message && (
-          <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-            {message}
-          </div>
-        )}
-
-        <div className="rounded-3xl bg-white shadow-sm">
-          <div className="border-b border-gray-200 px-6 py-4">
-            <h2 className="text-lg font-bold text-gray-800">Students</h2>
-            <p className="text-sm text-gray-500">Click view to open report card.</p>
+          <div className="rounded-3xl bg-white p-6 shadow-sm">
+            <h1 className="text-2xl font-extrabold text-gray-900">Teacher Report Cards</h1>
+            <p className="mt-2 text-sm text-gray-500">
+              Select one assigned class to preview the report cards below.
+            </p>
+            <p className="mt-1 text-sm font-bold text-gray-700">Teacher: {teacherName}</p>
+            <p className="mt-2 text-sm font-semibold text-sky-700">
+              {currentTerm || "Current Term"} • {academicYear || "Academic Year"}
+            </p>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-gray-50 text-gray-600">
-                <tr>
-                  <th className="px-6 py-4 font-semibold">Name</th>
-                  <th className="px-6 py-4 font-semibold">Student ID</th>
-                  <th className="px-6 py-4 font-semibold">Class</th>
-                  <th className="px-6 py-4 font-semibold">Action</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {loading ? (
-                  <tr>
-                    <td colSpan={4} className="px-6 py-8 text-center text-gray-500">
-                      Loading...
-                    </td>
-                  </tr>
-                ) : filteredStudents.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="px-6 py-8 text-center text-gray-500">
-                      No students found.
-                    </td>
-                  </tr>
+          <div className="flex flex-col gap-4 rounded-3xl bg-white p-5 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+            <div className="w-full lg:w-80">
+              <label className="mb-2 block text-xs font-black uppercase tracking-wide text-gray-500">
+                Select Class
+              </label>
+              <select
+                value={selectedClass}
+                onChange={(event) => setSelectedClass(event.target.value)}
+                className="w-full rounded-2xl border border-gray-300 px-4 py-3 text-sm font-bold outline-none focus:border-sky-500"
+              >
+                {teacherClassOptions.length === 0 ? (
+                  <option value="">No assigned class</option>
                 ) : (
-                  filteredStudents.map((student, index) => (
-                    <tr
-                      key={student.id}
-                      className={index !== filteredStudents.length - 1 ? "border-b border-gray-100" : ""}
-                    >
-                      <td className="px-6 py-4 font-medium text-gray-800">
-                        {getStudentName(student)}
-                      </td>
-                      <td className="px-6 py-4 text-gray-600">
-                        {getStudentReportId(student)}
-                      </td>
-                      <td className="px-6 py-4 text-gray-600">
-                        {student.class_name}
-                      </td>
-                      <td className="px-6 py-4">
-                        <button
-                          type="button"
-                          onClick={() => previewStudent(student)}
-                          className="inline-flex items-center gap-2 rounded-lg bg-blue-100 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-200"
-                        >
-                          <FiEye size={14} />
-                          View
-                        </button>
-                      </td>
-                    </tr>
+                  teacherClassOptions.map((className) => (
+                    <option key={className} value={className}>
+                      {className}
+                    </option>
                   ))
                 )}
-              </tbody>
-            </table>
+              </select>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={printReports}
+                disabled={reports.length === 0}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                <FiPrinter size={16} />
+                Print
+              </button>
+
+              <button
+                type="button"
+                onClick={() => loadData()}
+                className="flex items-center gap-2 rounded-2xl bg-gray-100 px-4 py-3 text-sm font-bold text-gray-700 hover:bg-gray-200"
+              >
+                <FiRefreshCw size={16} />
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          {message && (
+            <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+              {message}
+            </div>
+          )}
+
+          <div className="print-root space-y-8">
+            {loading ? (
+              <div className="rounded-3xl bg-white p-6 text-center text-sm font-bold text-gray-500 shadow-sm">
+                Loading report cards...
+              </div>
+            ) : reports.length === 0 ? (
+              <div className="rounded-3xl bg-white p-6 text-center text-sm font-bold text-gray-500 shadow-sm">
+                No report cards found for this class.
+              </div>
+            ) : (
+              reports.map((report, index) => (
+                <ReportCardSheet key={`${report.student.id}-${index}`} data={report} />
+              ))
+            )}
           </div>
         </div>
-
-      </div>
 
       )}
 

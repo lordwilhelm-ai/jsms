@@ -44,6 +44,7 @@ type EntryRow = {
   attitude: string;
   interest: string;
   teacherRemark: string;
+  promotedTo: string;
   suggestionConduct: string;
   suggestionAttitude: string;
   suggestionInterest: string;
@@ -96,6 +97,26 @@ const REMARK_OPTIONS = [
   "Participates well and is making progress.",
   "Promotion recommended.",
 ];
+
+const PROMOTED_TO_OPTIONS = [
+  "Playroom 1",
+  "Playroom 2",
+  "KG 1",
+  "KG 2",
+  "Class 1",
+  "Class 2",
+  "Class 3",
+  "Class 4",
+  "Class 5",
+  "Class 6",
+  "JHS 1",
+  "JHS 2",
+  "JHS 3",
+];
+
+function isPlayroomOneClass(className: string) {
+  return cleanLower(className) === "playroom 1";
+}
 
 function cleanText(value: unknown) {
   return String(value || "").trim();
@@ -313,6 +334,13 @@ function buildInitialRow(
     attitude: savedRow?.attitude || suggestedAttitude,
     interest: savedRow?.interest || suggestedInterest,
     teacherRemark: savedRow?.teacher_remark || suggestedRemark,
+    promotedTo:
+      savedRow?.promoted_to ||
+      savedRow?.promotedTo ||
+      savedRow?.promotion_to ||
+      savedRow?.promoted_class ||
+      savedRow?.next_class ||
+      "",
     suggestionConduct: suggestedConduct,
     suggestionAttitude: suggestedAttitude,
     suggestionInterest: suggestedInterest,
@@ -352,6 +380,8 @@ export default function ReportCardTeacherRemarksPage() {
       (values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1)
     );
   }, [entryData]);
+
+  const isPlayroomOne = isPlayroomOneClass(selectedClass);
 
   async function loadPage() {
     setLoading(true);
@@ -608,6 +638,30 @@ export default function ReportCardTeacherRemarksPage() {
 
         if (!row) return null;
 
+        if (isPlayroomOne) {
+          if (!row.promotedTo) return null;
+
+          return {
+            student_id: reportStudentId,
+            student_name: getStudentName(student),
+            class_name: selectedClass,
+            academic_year: settings.academicYear,
+            term: settings.currentTerm,
+            conduct: null,
+            attitude: null,
+            interest: null,
+            interest_other: null,
+            teacher_remark: null,
+            teacher_remark_suggestion: null,
+            promoted_to: row.promotedTo,
+            average_score: row.averageScore === "" ? null : Number(row.averageScore),
+            teacher_id: getTeacherCode(teacher),
+            teacher_name: getTeacherName(teacher),
+            source_system: "teacher",
+            updated_at: new Date().toISOString(),
+          };
+        }
+
         if (!row.conduct || !row.attitude || !row.interest || !row.teacherRemark) {
           return null;
         }
@@ -624,6 +678,7 @@ export default function ReportCardTeacherRemarksPage() {
           interest_other: null,
           teacher_remark: row.teacherRemark,
           teacher_remark_suggestion: row.suggestionRemark,
+          promoted_to: null,
           average_score: row.averageScore === "" ? null : Number(row.averageScore),
           teacher_id: getTeacherCode(teacher),
           teacher_name: getTeacherName(teacher),
@@ -708,13 +763,15 @@ export default function ReportCardTeacherRemarksPage() {
           </select>
         </div>
 
-        <button
-          type="button"
-          onClick={applySuggestedValues}
-          className="w-full rounded-2xl bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-200"
-        >
-          Reset All Rows To Suggested Values
-        </button>
+        {!isPlayroomOne && (
+          <button
+            type="button"
+            onClick={applySuggestedValues}
+            className="w-full rounded-2xl bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-200"
+          >
+            Reset All Rows To Suggested Values
+          </button>
+        )}
       </div>
 
       <div className="rounded-[28px] bg-white p-5 shadow-sm">
@@ -723,12 +780,18 @@ export default function ReportCardTeacherRemarksPage() {
             <h2 className="text-lg font-bold text-gray-900">
               Class Remarks Sheet
             </h2>
-            <p className="text-sm text-gray-500">Fill one row per student.</p>
+            <p className="text-sm text-gray-500">
+              {isPlayroomOne
+                ? "Select only the promoted class for each Playroom 1 student."
+                : "Fill one row per student."}
+            </p>
           </div>
 
-          <div className="rounded-2xl bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-700">
-            Class Average: {classAverage === "" ? "-" : classAverage}
-          </div>
+          {!isPlayroomOne && (
+            <div className="rounded-2xl bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-700">
+              Class Average: {classAverage === "" ? "-" : classAverage}
+            </div>
+          )}
         </div>
 
         {message && (
@@ -765,117 +828,143 @@ export default function ReportCardTeacherRemarksPage() {
                     <p className="text-xs text-gray-500">{reportStudentId}</p>
                   </div>
 
-                  <div className="overflow-x-auto">
-                    <div className="flex min-w-[1120px] gap-3">
-                      <div className="w-44">
-                        <label className="mb-2 block text-sm font-semibold text-gray-700">
-                          Average Score
-                        </label>
-                        <input
-                          type="text"
-                          readOnly
-                          value={row.averageScore ?? ""}
-                          className="w-full rounded-2xl border border-gray-200 bg-gray-100 px-4 py-3 text-gray-700 outline-none"
-                        />
-                      </div>
+                  {isPlayroomOne ? (
+                    <div className="max-w-xl">
+                      <label className="mb-2 block text-sm font-semibold text-gray-700">
+                        Promoted To
+                      </label>
+                      <select
+                        value={row.promotedTo || ""}
+                        onChange={(e) =>
+                          handleFieldChange(
+                            reportStudentId,
+                            "promotedTo",
+                            e.target.value
+                          )
+                        }
+                        className="w-full rounded-2xl border border-gray-300 px-4 py-3 outline-none focus:border-sky-500"
+                      >
+                        <option value="">Select Promoted To</option>
+                        {PROMOTED_TO_OPTIONS.map((item) => (
+                          <option key={item} value={item}>
+                            {item}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <div className="flex min-w-[1120px] gap-3">
+                        <div className="w-44">
+                          <label className="mb-2 block text-sm font-semibold text-gray-700">
+                            Average Score
+                          </label>
+                          <input
+                            type="text"
+                            readOnly
+                            value={row.averageScore ?? ""}
+                            className="w-full rounded-2xl border border-gray-200 bg-gray-100 px-4 py-3 text-gray-700 outline-none"
+                          />
+                        </div>
 
-                      <div className="w-56">
-                        <label className="mb-2 block text-sm font-semibold text-gray-700">
-                          Conduct
-                        </label>
-                        <select
-                          value={row.conduct || ""}
-                          onChange={(e) =>
-                            handleFieldChange(
-                              reportStudentId,
-                              "conduct",
-                              e.target.value
-                            )
-                          }
-                          className="w-full rounded-2xl border border-gray-300 px-4 py-3 outline-none focus:border-sky-500"
-                        >
-                          <option value="">Select Conduct</option>
-                          {CONDUCT_OPTIONS.map((item) => (
-                            <option key={item} value={item}>
-                              {item}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                        <div className="w-56">
+                          <label className="mb-2 block text-sm font-semibold text-gray-700">
+                            Conduct
+                          </label>
+                          <select
+                            value={row.conduct || ""}
+                            onChange={(e) =>
+                              handleFieldChange(
+                                reportStudentId,
+                                "conduct",
+                                e.target.value
+                              )
+                            }
+                            className="w-full rounded-2xl border border-gray-300 px-4 py-3 outline-none focus:border-sky-500"
+                          >
+                            <option value="">Select Conduct</option>
+                            {CONDUCT_OPTIONS.map((item) => (
+                              <option key={item} value={item}>
+                                {item}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
 
-                      <div className="w-52">
-                        <label className="mb-2 block text-sm font-semibold text-gray-700">
-                          Attitude
-                        </label>
-                        <select
-                          value={row.attitude || ""}
-                          onChange={(e) =>
-                            handleFieldChange(
-                              reportStudentId,
-                              "attitude",
-                              e.target.value
-                            )
-                          }
-                          className="w-full rounded-2xl border border-gray-300 px-4 py-3 outline-none focus:border-sky-500"
-                        >
-                          <option value="">Select Attitude</option>
-                          {ATTITUDE_OPTIONS.map((item) => (
-                            <option key={item} value={item}>
-                              {item}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                        <div className="w-52">
+                          <label className="mb-2 block text-sm font-semibold text-gray-700">
+                            Attitude
+                          </label>
+                          <select
+                            value={row.attitude || ""}
+                            onChange={(e) =>
+                              handleFieldChange(
+                                reportStudentId,
+                                "attitude",
+                                e.target.value
+                              )
+                            }
+                            className="w-full rounded-2xl border border-gray-300 px-4 py-3 outline-none focus:border-sky-500"
+                          >
+                            <option value="">Select Attitude</option>
+                            {ATTITUDE_OPTIONS.map((item) => (
+                              <option key={item} value={item}>
+                                {item}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
 
-                      <div className="w-52">
-                        <label className="mb-2 block text-sm font-semibold text-gray-700">
-                          Interest
-                        </label>
-                        <select
-                          value={row.interest || ""}
-                          onChange={(e) =>
-                            handleFieldChange(
-                              reportStudentId,
-                              "interest",
-                              e.target.value
-                            )
-                          }
-                          className="w-full rounded-2xl border border-gray-300 px-4 py-3 outline-none focus:border-sky-500"
-                        >
-                          <option value="">Select Interest</option>
-                          {INTEREST_OPTIONS.map((item) => (
-                            <option key={item} value={item}>
-                              {item}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                        <div className="w-52">
+                          <label className="mb-2 block text-sm font-semibold text-gray-700">
+                            Interest
+                          </label>
+                          <select
+                            value={row.interest || ""}
+                            onChange={(e) =>
+                              handleFieldChange(
+                                reportStudentId,
+                                "interest",
+                                e.target.value
+                              )
+                            }
+                            className="w-full rounded-2xl border border-gray-300 px-4 py-3 outline-none focus:border-sky-500"
+                          >
+                            <option value="">Select Interest</option>
+                            {INTEREST_OPTIONS.map((item) => (
+                              <option key={item} value={item}>
+                                {item}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
 
-                      <div className="w-[320px]">
-                        <label className="mb-2 block text-sm font-semibold text-gray-700">
-                          Class Teacher&apos;s Remark
-                        </label>
-                        <select
-                          value={row.teacherRemark || ""}
-                          onChange={(e) =>
-                            handleFieldChange(
-                              reportStudentId,
-                              "teacherRemark",
-                              e.target.value
-                            )
-                          }
-                          className="w-full rounded-2xl border border-gray-300 px-4 py-3 outline-none focus:border-sky-500"
-                        >
-                          <option value="">Select Remark</option>
-                          {REMARK_OPTIONS.map((item) => (
-                            <option key={item} value={item}>
-                              {item}
-                            </option>
-                          ))}
-                        </select>
+                        <div className="w-[320px]">
+                          <label className="mb-2 block text-sm font-semibold text-gray-700">
+                            Class Teacher&apos;s Remark
+                          </label>
+                          <select
+                            value={row.teacherRemark || ""}
+                            onChange={(e) =>
+                              handleFieldChange(
+                                reportStudentId,
+                                "teacherRemark",
+                                e.target.value
+                              )
+                            }
+                            className="w-full rounded-2xl border border-gray-300 px-4 py-3 outline-none focus:border-sky-500"
+                          >
+                            <option value="">Select Remark</option>
+                            {REMARK_OPTIONS.map((item) => (
+                              <option key={item} value={item}>
+                                {item}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               );
             })}
@@ -886,7 +975,7 @@ export default function ReportCardTeacherRemarksPage() {
               disabled={saving}
               className="w-full rounded-2xl bg-sky-500 px-4 py-4 text-sm font-bold text-white hover:bg-sky-600 disabled:opacity-60"
             >
-              {saving ? "Saving..." : "Save All Remarks"}
+              {saving ? "Saving..." : isPlayroomOne ? "Save Promotions" : "Save All Remarks"}
             </button>
           </div>
         )}

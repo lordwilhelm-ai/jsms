@@ -11,6 +11,7 @@ type TeacherRow = Record<string, any>;
 type StudentRow = Record<string, any>;
 type ClosureRow = Record<string, any>;
 type SettingsRow = Record<string, any>;
+type DailyEntryRow = Record<string, any>;
 
 const COLORS = {
   background:
@@ -90,6 +91,18 @@ function getClassName(row: Record<string, any>) {
   return String(row.class_name || row.className || "").trim();
 }
 
+
+function isActiveStudent(row: StudentRow) {
+  const active = row.active;
+  const isActive = row.is_active;
+  const status = String(row.status || row.student_status || row.enrollment_status || "").trim().toLowerCase();
+
+  if (active === false || isActive === false) return false;
+  if (status === "inactive" || status === "withdrawn" || status === "deleted" || status === "archived") return false;
+
+  return true;
+}
+
 function isWeekend(dateString: string) {
   const day = new Date(`${dateString}T12:00:00`).getDay();
   return day === 0 || day === 6;
@@ -147,6 +160,10 @@ export default function FeedingTeacherPage() {
   const [attendance, setAttendance] = useState<Record<string, Attendance>>({});
   const [balances, setBalances] = useState<BalanceMap>({});
   const [loadingBalances, setLoadingBalances] = useState(false);
+
+  const [todayEntries, setTodayEntries] = useState<DailyEntryRow[]>([]);
+  const [todaySubmitted, setTodaySubmitted] = useState(false);
+  const [loadingTodayEntry, setLoadingTodayEntry] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -315,6 +332,8 @@ export default function FeedingTeacherPage() {
     if (!selectedClass || entryBlocked) {
       setStudents([]);
       setBalances({});
+      setTodayEntries([]);
+      setTodaySubmitted(false);
       return;
     }
 
@@ -331,7 +350,7 @@ export default function FeedingTeacherPage() {
         if (error) throw error;
 
         const rows = (data || [])
-          .filter((row) => row.active !== false)
+          .filter(isActiveStudent)
           .sort((a, b) => getStudentName(a).localeCompare(getStudentName(b)));
 
         setStudents(rows);
@@ -345,6 +364,64 @@ export default function FeedingTeacherPage() {
 
     void loadStudents();
   }, [selectedClass, entryBlocked]);
+
+  useEffect(() => {
+    if (!selectedClass || entryBlocked) {
+      setTodayEntries([]);
+      setTodaySubmitted(false);
+      setAmounts({});
+      setAttendance({});
+      return;
+    }
+
+    async function loadTodayEntries() {
+      try {
+        setLoadingTodayEntry(true);
+
+        const { data, error } = await supabase
+          .from("daily_entries")
+          .select("*")
+          .eq("date", today)
+          .eq("class_name", selectedClass)
+          .eq("entered_by_role", "teacher")
+          .order("student_name", { ascending: true });
+
+        if (error) throw error;
+
+        const rows = data || [];
+        setTodayEntries(rows);
+        setTodaySubmitted(rows.length > 0);
+
+        if (rows.length > 0) {
+          const savedAmounts: Record<string, string> = {};
+          const savedAttendance: Record<string, Attendance> = {};
+
+          rows.forEach((row: DailyEntryRow) => {
+            const studentId = String(row.student_id || "").trim();
+            if (!studentId) return;
+
+            savedAmounts[studentId] = String(Number(row.amount_paid_today || 0));
+            savedAttendance[studentId] =
+              String(row.attendance || "present").toLowerCase() === "absent" ? "absent" : "present";
+          });
+
+          setAmounts(savedAmounts);
+          setAttendance(savedAttendance);
+        } else {
+          setAmounts({});
+          setAttendance({});
+        }
+      } catch (error) {
+        console.error(error);
+        setTodayEntries([]);
+        setTodaySubmitted(false);
+      } finally {
+        setLoadingTodayEntry(false);
+      }
+    }
+
+    void loadTodayEntries();
+  }, [selectedClass, entryBlocked, today]);
 
   useEffect(() => {
     if (!students.length || entryBlocked) {
@@ -389,13 +466,34 @@ export default function FeedingTeacherPage() {
   const systemName = "JVS Feeding";
   const academicYear = String(settingsRow?.academic_year || "2026/2027");
 
+  const todayEntriesMap = useMemo(() => {
+    const map: Record<string, DailyEntryRow> = {};
+    todayEntries.forEach((row) => {
+      const studentId = String(row.student_id || "").trim();
+      if (studentId) map[studentId] = row;
+    });
+    return map;
+  }, [todayEntries]);
+
   const previewRows = students.map((student) => {
     const studentId = getStudentIdValue(student);
-    const amountPaidToday = Number(amounts[studentId] || 0);
-    const studentAttendance = attendance[studentId] || "present";
-    const previousBalance = Number(balances[studentId] || 0);
+    const savedEntry = todayEntriesMap[studentId] || null;
 
-    const result = calculateFeeding({
+    const amountPaidToday = savedEntry
+      ? Number(savedEntry.amount_paid_today || 0)
+      : Number(amounts[studentId] || 0);
+
+    const studentAttendance = savedEntry
+      ? String(savedEntry.attendance || "present").toLowerCase() === "absent"
+        ? "absent"
+        : "present"
+      : attendance[studentId] || "present";
+
+    const previousBalance = savedEntry
+      ? Number(savedEntry.previous_balance || 0)
+      : Number(balances[studentId] || 0);
+
+    const calculated = calculateFeeding({
       previousBalance,
       amountPaidToday,
       attendance: studentAttendance,
@@ -409,11 +507,15 @@ export default function FeedingTeacherPage() {
       fullName: getStudentName(student),
       className: getClassName(student),
       amountPaidToday,
-      attendance: studentAttendance,
+      attendance: studentAttendance as Attendance,
       previousBalance,
-      availableBeforeMeal: result.availableBeforeMeal,
-      ateToday: result.ateToday,
-      newBalance: result.newBalance,
+      availableBeforeMeal: savedEntry
+        ? Number(savedEntry.available_before_meal || calculated.availableBeforeMeal)
+        : calculated.availableBeforeMeal,
+      ateToday: savedEntry ? Boolean(savedEntry.ate_today) : calculated.ateToday,
+      newBalance: savedEntry
+        ? Number(savedEntry.new_balance ?? calculated.newBalance)
+        : calculated.newBalance,
     };
   });
 
@@ -453,6 +555,11 @@ export default function FeedingTeacherPage() {
 
     if (!selectedClass) {
       alert("Select a class first.");
+      return;
+    }
+
+    if (todaySubmitted) {
+      alert("This class has already been submitted today. You can preview it, but you cannot submit again.");
       return;
     }
 
@@ -542,8 +649,24 @@ export default function FeedingTeacherPage() {
       });
 
       alert("Daily entry submitted successfully.");
-      setAmounts({});
-      setAttendance({});
+
+      setTodaySubmitted(true);
+      setTodayEntries(
+        previewRows.map((row) => ({
+          date: today,
+          academic_year: academicYear,
+          class_name: selectedClass,
+          student_id: row.studentId,
+          student_name: row.fullName,
+          attendance: row.attendance,
+          amount_paid_today: row.amountPaidToday,
+          previous_balance: row.previousBalance,
+          available_before_meal: row.availableBeforeMeal,
+          ate_today: row.ateToday,
+          new_balance: row.newBalance,
+          entered_by_role: "teacher",
+        }))
+      );
 
       const refreshedBalances: BalanceMap = {};
       previewRows.forEach((row) => {
@@ -566,8 +689,10 @@ export default function FeedingTeacherPage() {
     submitting ||
     loadingBalances ||
     loadingStudents ||
+    loadingTodayEntry ||
     !selectedClass ||
-    entryBlocked;
+    entryBlocked ||
+    todaySubmitted;
 
   return (
     <main
@@ -622,6 +747,22 @@ export default function FeedingTeacherPage() {
             }}
           >
             {blockedReason}
+          </div>
+        )}
+
+        {todaySubmitted && !entryBlocked && (
+          <div
+            style={{
+              background: "#ecfdf5",
+              color: "#166534",
+              borderRadius: "16px",
+              padding: "16px",
+              marginBottom: "16px",
+              boxShadow: "0 6px 18px rgba(0,0,0,0.06)",
+              fontWeight: "bold",
+            }}
+          >
+            Today&apos;s entry for {selectedClass} has already been saved. You can preview the amounts, attendance, and balances, but you cannot change or submit again.
           </div>
         )}
 
@@ -698,6 +839,7 @@ export default function FeedingTeacherPage() {
                       handleAttendanceChange(student.studentId, e.target.value as Attendance)
                     }
                     style={selectStyle}
+                    disabled={todaySubmitted}
                   >
                     <option value="present">Present</option>
                     <option value="absent">Absent</option>
@@ -711,7 +853,7 @@ export default function FeedingTeacherPage() {
                     min="0"
                     value={amounts[student.studentId] || ""}
                     onChange={(e) => handleAmountChange(student.studentId, e.target.value)}
-                    disabled={student.attendance === "absent"}
+                    disabled={todaySubmitted || student.attendance === "absent"}
                     placeholder="Enter amount"
                     style={{
                       ...inputStyle,
@@ -805,6 +947,8 @@ export default function FeedingTeacherPage() {
           >
             {entryBlocked
               ? "Entry Closed Today"
+              : todaySubmitted
+              ? "Already Submitted Today"
               : submitting
               ? "Submitting..."
               : "Submit Daily Entry"}

@@ -66,6 +66,118 @@ function numberValue(value: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function firstPositiveNumber(...values: unknown[]) {
+  for (const value of values) {
+    const n = numberValue(value);
+    if (n > 0) return n;
+  }
+  return 0;
+}
+
+function firstFiniteNumber(...values: unknown[]) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return NaN;
+}
+
+function rowTime(row: AnyRow) {
+  const raw = stringValue(row.payment_date || row.created_at || row.updated_at || row.date);
+  if (!raw) return 0;
+  const time = new Date(raw).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function sameCurrentPeriod(row: AnyRow, academicYear: string, currentTerm: string) {
+  const rowYear = stringValue(row.academic_year || row.academicYear || row.year);
+  const rowTerm = stringValue(row.term || row.current_term || row.school_term);
+
+  const sameAcademicYear = academicYear ? !rowYear || rowYear === academicYear : true;
+  const sameTerm = currentTerm ? !rowTerm || rowTerm === currentTerm : true;
+
+  return sameAcademicYear && sameTerm;
+}
+
+function getPaymentAmount(row: AnyRow) {
+  return firstPositiveNumber(row.amount_paid, row.amount, row.payment_amount, row.paid_amount, row.cash_paid);
+}
+
+function getBalanceAfterPayment(row: AnyRow) {
+  return firstFiniteNumber(
+    row.balance_after_payment,
+    row.balance_after,
+    row.balance,
+    row.outstanding_balance,
+    row.amount_owing,
+    row.remaining_balance
+  );
+}
+
+function getBalanceTotalFee(row: AnyRow | undefined) {
+  if (!row) return 0;
+  return firstPositiveNumber(
+    row.total_fee,
+    row.fee_due,
+    row.total_due,
+    row.total_amount,
+    row.amount_due,
+    row.bill,
+    row.term_bill,
+    row.payable_amount,
+    row.final_total
+  );
+}
+
+function getBalanceTotalPaid(row: AnyRow | undefined) {
+  if (!row) return 0;
+  return firstPositiveNumber(
+    row.total_paid,
+    row.cumulative_paid,
+    row.amount_paid,
+    row.paid,
+    row.total_amount_paid,
+    row.amount_received
+  );
+}
+
+function getBalanceOutstanding(row: AnyRow | undefined) {
+  if (!row) return NaN;
+  return firstFiniteNumber(
+    row.balance,
+    row.outstanding_balance,
+    row.amount_owing,
+    row.remaining_balance,
+    row.balance_due,
+    row.current_balance,
+    row.fee_balance
+  );
+}
+
+function rowMatchesStudent(row: AnyRow, student: AnyRow, studentIdValue: string) {
+  const studentDbId = stringValue(student.id);
+  const studentName = getStudentName(student).toLowerCase();
+
+  const rowIds = [
+    row.student_id,
+    row.studentId,
+    row.student_code,
+    row.student_jvs_id,
+    row.jvs_id,
+    row.student_uuid,
+    row.student_db_id,
+  ]
+    .map(stringValue)
+    .filter(Boolean);
+
+  if (studentIdValue && rowIds.includes(studentIdValue)) return true;
+  if (studentDbId && rowIds.includes(studentDbId)) return true;
+
+  const rowName = stringValue(row.student_name || row.full_name || row.name).toLowerCase();
+  return !!rowName && !!studentName && rowName === studentName;
+}
+
 function formatMoney(value: number) {
   return `GHS ${numberValue(value).toFixed(2)}`;
 }
@@ -133,16 +245,21 @@ function getStudentType(student: AnyRow): "new" | "returning" {
   return "returning";
 }
 
-function getStatus(balance: number, totalPaid: number): FeeStatus {
-  if (balance <= 0 && totalPaid > 0) return "paid";
-  if (totalPaid > 0) return "part";
+function getStatus(balance: number, totalPaid: number, totalFee: number): FeeStatus {
+  if (totalFee > 0) {
+    if (balance <= 0) return "paid";
+    if (totalPaid > 0) return "part";
+    return "unpaid";
+  }
+
+  if (totalPaid > 0) return "paid";
   return "unpaid";
 }
 
 function statusLabel(status: FeeStatus) {
   if (status === "paid") return "Paid";
-  if (status === "part") return "Part Paid";
-  return "Not Paid";
+  if (status === "part") return "Part Payment";
+  return "Owing";
 }
 
 function statusStyle(status: FeeStatus): CSSProperties {
@@ -215,6 +332,7 @@ export default function FeesTeacherPage() {
   const [classes, setClasses] = useState<AnyRow[]>([]);
   const [students, setStudents] = useState<AnyRow[]>([]);
   const [payments, setPayments] = useState<AnyRow[]>([]);
+  const [studentBalances, setStudentBalances] = useState<AnyRow[]>([]);
   const [feeStructure, setFeeStructure] = useState<AnyRow[]>([]);
 
   const [query, setQuery] = useState("");
@@ -246,6 +364,7 @@ export default function FeesTeacherPage() {
           teacherClassesRes,
           studentsRes,
           paymentsRes,
+          studentBalancesRes,
           feeStructureRes,
         ] = await Promise.all([
           supabase.from("teachers").select("*"),
@@ -255,6 +374,7 @@ export default function FeesTeacherPage() {
           supabase.from("teacher_classes").select("*"),
           supabase.from("students").select("*"),
           supabase.from("fee_payments").select("*").order("created_at", { ascending: false }),
+          supabase.from("student_balances").select("*"),
           supabase.from("fee_structure").select("*"),
         ]);
 
@@ -332,6 +452,7 @@ export default function FeesTeacherPage() {
         setClasses(classRows);
         setStudents(studentsRes.data || []);
         setPayments(paymentsRes.data || []);
+        setStudentBalances(studentBalancesRes.data || []);
         setFeeStructure(feeStructureRes.data || []);
         setAssignedClasses(sortedAssigned);
         setSelectedClassId((prev) => prev || sortedAssigned[0]?.id || "");
@@ -366,12 +487,12 @@ export default function FeesTeacherPage() {
   const selectedClassRow = selectedClass ? classMapById.get(selectedClass.id) : null;
 
   const currentPayments = useMemo(() => {
-    return payments.filter((row) => {
-      const sameAcademicYear = academicYear ? stringValue(row.academic_year) === academicYear : true;
-      const sameTerm = currentTerm ? stringValue(row.term) === currentTerm : true;
-      return sameAcademicYear && sameTerm;
-    });
+    return payments.filter((row) => sameCurrentPeriod(row, academicYear, currentTerm));
   }, [payments, academicYear, currentTerm]);
+
+  const currentStudentBalances = useMemo(() => {
+    return studentBalances.filter((row) => sameCurrentPeriod(row, academicYear, currentTerm));
+  }, [studentBalances, academicYear, currentTerm]);
 
   const feeStructureForClass = useMemo(() => {
     if (!selectedClass) return undefined;
@@ -424,23 +545,28 @@ export default function FeesTeacherPage() {
         const studentIdValue = getStudentId(student);
 
         const history = currentPayments
-          .filter((payment) => stringValue(payment.student_id) === studentIdValue)
-          .sort((a, b) => {
-            const aTime = new Date(String(a.created_at || a.payment_date || "")).getTime();
-            const bTime = new Date(String(b.created_at || b.payment_date || "")).getTime();
-            return bTime - aTime;
-          });
+          .filter((payment) => rowMatchesStudent(payment, student, studentIdValue))
+          .sort((a, b) => rowTime(b) - rowTime(a));
+
+        const balanceHistory = currentStudentBalances
+          .filter((row) => rowMatchesStudent(row, student, studentIdValue))
+          .sort((a, b) => rowTime(b) - rowTime(a));
 
         const latest = getLatestPayment(history);
-        const summedPaid = history.reduce((sum, row) => sum + numberValue(row.amount_paid), 0);
-        const cumulativePaid = numberValue(latest?.cumulative_paid);
-        const totalPaid = cumulativePaid > 0 ? cumulativePaid : summedPaid;
+        const latestBalanceRow = balanceHistory[0];
 
-        const totalFee = getStudentTotalFee(student, latest, selectedClassRow || undefined, feeStructureForClass);
-        const latestBalance = latest && latest.balance_after_payment !== null && latest.balance_after_payment !== undefined
-          ? numberValue(latest.balance_after_payment)
-          : NaN;
-        const balance = Number.isFinite(latestBalance) ? latestBalance : Math.max(totalFee - totalPaid, 0);
+        const summedPaid = history.reduce((sum, row) => sum + getPaymentAmount(row), 0);
+        const paidFromBalance = getBalanceTotalPaid(latestBalanceRow);
+        const cumulativePaid = firstPositiveNumber(latest?.cumulative_paid, latest?.total_paid);
+        const totalPaid = paidFromBalance > 0 ? paidFromBalance : cumulativePaid > 0 ? cumulativePaid : summedPaid;
+
+        const balanceTotalFee = getBalanceTotalFee(latestBalanceRow);
+        const totalFee =
+          balanceTotalFee > 0
+            ? balanceTotalFee
+            : getStudentTotalFee(student, latest, selectedClassRow || undefined, feeStructureForClass);
+
+        const balance = Math.max(totalFee - totalPaid, 0);
 
         return {
           ...student,
@@ -451,13 +577,13 @@ export default function FeesTeacherPage() {
           totalFee,
           totalPaid,
           balance,
-          status: getStatus(balance, totalPaid),
+          status: getStatus(balance, totalPaid, totalFee),
           paymentHistory: history,
         };
       });
 
     return rows.sort((a, b) => a.studentNameValue.localeCompare(b.studentNameValue));
-  }, [students, selectedClass, classMapById, query, currentPayments, selectedClassRow, feeStructureForClass]);
+  }, [students, selectedClass, classMapById, query, currentPayments, currentStudentBalances, selectedClassRow, feeStructureForClass]);
 
   const summary = useMemo(() => {
     return {
@@ -652,7 +778,7 @@ function StudentFeeSheet({ student, onClose }: { student: StudentFeeRow; onClose
               {student.paymentHistory.map((payment) => (
                 <div key={payment.id || payment.receipt_no} style={styles.historyItem}>
                   <div>
-                    <strong style={styles.historyAmount}>{formatMoney(numberValue(payment.amount_paid))}</strong>
+                    <strong style={styles.historyAmount}>{formatMoney(getPaymentAmount(payment))}</strong>
                     <p style={styles.historyMeta}>
                       {getPaymentMethod(payment)} • {getPaymentDate(payment)}
                     </p>
@@ -663,7 +789,7 @@ function StudentFeeSheet({ student, onClose }: { student: StudentFeeRow; onClose
 
                   <div style={styles.historyRight}>
                     <span style={styles.balanceText}>
-                      Bal: {formatMoney(numberValue(payment.balance_after_payment))}
+                      Bal: {formatMoney(Math.max(getBalanceAfterPayment(payment), 0))}
                     </span>
                   </div>
                 </div>
