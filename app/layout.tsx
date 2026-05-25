@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     default: "JSMS",
     template: "%s | JSMS",
   },
-  description: "Jefsem Student Management System",
+  description: "JSMS",
   manifest: "/manifest.webmanifest",
   applicationName: "JSMS",
 
@@ -39,12 +39,17 @@ export const metadata: Metadata = {
         sizes: "any",
       },
       {
-        url: "/jsms-logo.png",
+        url: "/icon.png",
         sizes: "192x192",
         type: "image/png",
       },
       {
-        url: "/jsms-logo.png",
+        url: "/icon-192.png",
+        sizes: "192x192",
+        type: "image/png",
+      },
+      {
+        url: "/icon-512.png",
         sizes: "512x512",
         type: "image/png",
       },
@@ -52,7 +57,7 @@ export const metadata: Metadata = {
     shortcut: ["/favicon.ico"],
     apple: [
       {
-        url: "/jsms-logo.png",
+        url: "/apple-touch-icon.png",
         sizes: "180x180",
         type: "image/png",
       },
@@ -78,6 +83,13 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        <link rel="icon" href="/favicon.ico" sizes="any" />
+        <link rel="icon" href="/icon.png" type="image/png" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        <link rel="manifest" href="/manifest.webmanifest" />
+      </head>
+
       <body className="min-h-full flex flex-col bg-[#f7f3df]">
         {children}
         <PWAInstallButton />

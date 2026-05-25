@@ -1,8 +1,8 @@
 {
-  "name": "Jefsem Student Management System",
+  "name": "JSMS",
   "short_name": "JSMS",
-  "description": "Jefsem Student Management System",
-  "start_url": "/dashboard",
+  "description": "JSMS",
+  "start_url": "/dashboard/admin",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
