@@ -189,6 +189,65 @@ function formatDate(value: string | null | undefined) {
   });
 }
 
+function normalizeUniformPaymentItemsFromPayment(payment: UniformPayment): UniformPaymentItem[] {
+  const selectedRaw = payment.selected_items;
+  let selectedItems: any[] = [];
+
+  if (Array.isArray(selectedRaw)) {
+    selectedItems = selectedRaw;
+  } else if (typeof selectedRaw === "string" && selectedRaw.trim()) {
+    try {
+      const parsed = JSON.parse(selectedRaw);
+      selectedItems = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      selectedItems = [];
+    }
+  }
+
+  const fromSelectedItems = selectedItems
+    .map((item, index) => {
+      const itemName = clean(item?.item_name || item?.label || item?.name);
+      if (!itemName) return null;
+
+      const price = numberValue(item?.price || item?.unit_price || item?.total_price);
+
+      return {
+        id: `fallback-${payment.id}-${index}`,
+        payment_id: payment.id,
+        receipt_number: payment.receipt_number,
+        student_id: payment.student_id,
+        student_name: payment.student_name,
+        class_name: payment.class_name,
+        item_name: itemName,
+        quantity: numberValue(item?.quantity) || 1,
+        unit_price: price,
+        total_price: price,
+        created_at: payment.created_at,
+      } as UniformPaymentItem;
+    })
+    .filter(Boolean) as UniformPaymentItem[];
+
+  if (fromSelectedItems.length > 0) return fromSelectedItems;
+
+  return clean(payment.item_name)
+    .split(",")
+    .map((item) => clean(item))
+    .filter(Boolean)
+    .map((itemName, index) => ({
+      id: `fallback-${payment.id}-${index}`,
+      payment_id: payment.id,
+      receipt_number: payment.receipt_number,
+      student_id: payment.student_id,
+      student_name: payment.student_name,
+      class_name: payment.class_name,
+      item_name: itemName,
+      quantity: 1,
+      unit_price: 0,
+      total_price: 0,
+      created_at: payment.created_at,
+    }));
+}
+
 function isActiveStudent(row: AnyRow) {
   if (typeof row.active === "boolean") return row.active;
   if (typeof row.is_active === "boolean") return row.is_active;
@@ -404,7 +463,11 @@ export default function UniformsPage() {
 
   const selectedPaymentItemsForGiven = useMemo(() => {
     if (!selectedPaymentForGiven) return [];
-    return paymentItems.filter((item) => item.payment_id === selectedPaymentForGiven.id);
+
+    const savedItems = paymentItems.filter((item) => item.payment_id === selectedPaymentForGiven.id);
+    if (savedItems.length > 0) return savedItems;
+
+    return normalizeUniformPaymentItemsFromPayment(selectedPaymentForGiven);
   }, [paymentItems, selectedPaymentForGiven]);
 
   const alreadyGivenForSelectedPayment = useMemo(() => {
@@ -414,6 +477,18 @@ export default function UniformsPage() {
       .map((item) => clean(item.item_name).toLowerCase());
     return new Set(existing);
   }, [givenItems, selectedPaymentForGiven]);
+
+  useEffect(() => {
+    if (!selectedPaymentForGiven) return;
+
+    const availableItems = selectedPaymentItemsForGiven.filter(
+      (item) => !alreadyGivenForSelectedPayment.has(clean(item.item_name).toLowerCase())
+    );
+
+    if (availableItems.length === 1 && Object.keys(givenSelections).length === 0) {
+      setGivenSelections({ [availableItems[0].id]: true });
+    }
+  }, [selectedPaymentForGiven, selectedPaymentItemsForGiven, alreadyGivenForSelectedPayment, givenSelections]);
 
   async function generateReceiptNumber(studentId: string) {
     const lastFour = getLastFourStudentId(studentId);
@@ -957,23 +1032,29 @@ function GivenSection({
           <p className="mt-1 text-xs font-bold text-gray-500">Receipt: {selectedPaymentForGiven.receipt_number}</p>
 
           <div className="mt-4 grid gap-2 md:grid-cols-3">
-            {selectedPaymentItemsForGiven.map((item) => {
-              const isGiven = alreadyGivenForSelectedPayment.has(clean(item.item_name).toLowerCase());
-              return (
-                <label key={item.id} className={`flex items-center justify-between rounded-2xl border p-3 text-sm font-bold ${isGiven ? "border-green-200 bg-green-50 text-green-700" : "border-yellow-100 bg-white"}`}>
-                  <span>
-                    {item.item_name}
-                    {isGiven ? <span className="block text-xs">Already given</span> : null}
-                  </span>
-                  <input
-                    type="checkbox"
-                    disabled={isGiven}
-                    checked={Boolean(givenSelections[item.id])}
-                    onChange={(e) => setGivenSelections((prev) => ({ ...prev, [item.id]: e.target.checked }))}
-                  />
-                </label>
-              );
-            })}
+            {selectedPaymentItemsForGiven.length === 0 ? (
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700 md:col-span-3">
+                No uniform item was found under this receipt. Record the payment again or check the payment item table.
+              </div>
+            ) : (
+              selectedPaymentItemsForGiven.map((item) => {
+                const isGiven = alreadyGivenForSelectedPayment.has(clean(item.item_name).toLowerCase());
+                return (
+                  <label key={item.id} className={`flex items-center justify-between rounded-2xl border p-3 text-sm font-bold ${isGiven ? "border-green-200 bg-green-50 text-green-700" : "border-yellow-100 bg-white"}`}>
+                    <span>
+                      {item.item_name}
+                      {isGiven ? <span className="block text-xs">Already given</span> : null}
+                    </span>
+                    <input
+                      type="checkbox"
+                      disabled={isGiven}
+                      checked={Boolean(givenSelections[item.id])}
+                      onChange={(e) => setGivenSelections((prev) => ({ ...prev, [item.id]: e.target.checked }))}
+                    />
+                  </label>
+                );
+              })
+            )}
           </div>
         </div>
       ) : null}
