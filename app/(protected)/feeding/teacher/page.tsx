@@ -364,6 +364,9 @@ export default function FeedingTeacherPage() {
   const [loadingTodayEntry, setLoadingTodayEntry] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [showCreditUpdateNotice, setShowCreditUpdateNotice] = useState(false);
+  const [creditUpdateNoticeStep, setCreditUpdateNoticeStep] = useState<1 | 2>(1);
 
   const [checkingCalendar, setCheckingCalendar] = useState(true);
   const [entryBlocked, setEntryBlocked] = useState(false);
@@ -387,10 +390,34 @@ export default function FeedingTeacherPage() {
 
   const feedingFee = Number(settingsRow?.feeding_fee || 6);
   const minimumToEat = Number(settingsRow?.minimum_to_eat || 5);
-  const schoolName = String(settingsRow?.school_name || "JEFSEM VISION SCHOOL");
-  const motto = String(settingsRow?.motto || "Success in Excellence");
-  const systemName = "JVS Feeding";
   const academicYear = String(settingsRow?.academic_year || "2026/2027");
+
+  useEffect(() => {
+    const noticeKey = "jsms_feeding_teacher_credit_update_notice_v3";
+
+    try {
+      const seen = window.localStorage.getItem(noticeKey);
+      if (!seen) {
+        setCreditUpdateNoticeStep(1);
+        setCreditUpdateNoticeStep(1);
+      setShowCreditUpdateNotice(true);
+      }
+    } catch {
+      setShowCreditUpdateNotice(true);
+    }
+  }, []);
+
+  function closeCreditUpdateNotice() {
+    const noticeKey = "jsms_feeding_teacher_credit_update_notice_v3";
+
+    try {
+      window.localStorage.setItem(noticeKey, "seen");
+    } catch {
+      // localStorage may be blocked. The notice will still close for this session.
+    }
+
+    setShowCreditUpdateNotice(false);
+  }
 
   useEffect(() => {
     let active = true;
@@ -408,10 +435,12 @@ export default function FeedingTeacherPage() {
           return;
         }
 
-        const [teachersRes, settingsRes, classesRes] = await Promise.all([
+        const [teachersRes, settingsRes, classesRes, assignmentRes, teacherClassesRes] = await Promise.all([
           supabase.from("teachers").select("*"),
           supabase.from("school_settings").select("*").limit(1).maybeSingle(),
           supabase.from("classes").select("*").order("class_order", { ascending: true }),
+          supabase.from("teacher_class_assignments").select("*"),
+          supabase.from("teacher_classes").select("*"),
         ]);
 
         if (!active) return;
@@ -474,6 +503,31 @@ export default function FeedingTeacherPage() {
           if (validClassNames.has(normalizedName)) finalClassNames.add(normalizedName);
         }
 
+        const teacherUuid = String(row.id || "").trim();
+        const teacherCode = String(row.teacher_id || row.teacherId || "").trim();
+
+        function assignmentBelongsToTeacher(assignment: any) {
+          const assignedTeacherId = String(assignment.teacher_id || assignment.teacherId || "").trim();
+          return assignedTeacherId === teacherUuid || assignedTeacherId === teacherCode;
+        }
+
+        function addAssignmentClass(assignment: any) {
+          addClassId(assignment.class_id || assignment.classId);
+          addClassName(assignment.class_name || assignment.className);
+        }
+
+        if (!assignmentRes.error) {
+          (assignmentRes.data || []).filter(assignmentBelongsToTeacher).forEach(addAssignmentClass);
+        } else {
+          console.error("Failed to load teacher_class_assignments:", assignmentRes.error);
+        }
+
+        if (!teacherClassesRes.error) {
+          (teacherClassesRes.data || []).filter(assignmentBelongsToTeacher).forEach(addAssignmentClass);
+        } else {
+          console.error("Failed to load teacher_classes:", teacherClassesRes.error);
+        }
+
         try {
           const assignResponse = await fetch(`/api/teacher-assignments/get?teacher_id=${row.id}`);
           const assignData = await assignResponse.json();
@@ -494,23 +548,6 @@ export default function FeedingTeacherPage() {
           }
         } catch (assignmentApiError) {
           console.error("Failed to call teacher assignments API:", assignmentApiError);
-        }
-
-        // Fallback: JSMS teacher assignments use teachers.id UUID in teacher_class_assignments.teacher_id.
-        // This fixes the "No class assigned" issue when the API does not return the assignment.
-        try {
-          const { data: directAssignments, error: directAssignmentsError } = await supabase
-            .from("teacher_class_assignments")
-            .select("class_id")
-            .eq("teacher_id", row.id);
-
-          if (!directAssignmentsError) {
-            (directAssignments || []).forEach((assignment: any) => {
-              addClassId(assignment.class_id);
-            });
-          }
-        } catch (directAssignmentError) {
-          console.error("Failed to load direct teacher assignments:", directAssignmentError);
         }
 
         getAssignedClassesFromTeacherRow(row).forEach((classValue) => {
@@ -1048,37 +1085,90 @@ export default function FeedingTeacherPage() {
         background: COLORS.background,
         fontFamily: "Arial, sans-serif",
         color: COLORS.text,
-        paddingBottom: "140px",
+        paddingBottom: "90px",
       }}
     >
-      <div
-        style={{
-          background: COLORS.primary,
-          color: COLORS.secondary,
-          padding: "18px 16px",
-          boxShadow: "0 2px 10px rgba(0,0,0,0.08)",
-        }}
-      >
+      {showCreditUpdateNotice && (
         <div
           style={{
-            maxWidth: "720px",
-            margin: "0 auto",
+            position: "fixed",
+            inset: 0,
+            zIndex: 80,
+            background: "rgba(0,0,0,0.38)",
             display: "flex",
-            justifyContent: "space-between",
-            alignItems: "start",
-            gap: "12px",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "18px",
           }}
         >
-          <div>
-            <h1 style={{ margin: 0, fontSize: "20px" }}>{systemName}</h1>
-            <p style={{ margin: "6px 0 0", fontWeight: "bold" }}>{schoolName}</p>
-            <p style={{ margin: "2px 0 0", fontSize: "13px" }}>{motto}</p>
-            <p style={{ margin: "8px 0 0", fontSize: "14px" }}>
-              <strong>{dayName}</strong>, {prettyDate}
-            </p>
+          <div
+            style={{
+              width: "min(420px, 100%)",
+              background: COLORS.white,
+              borderRadius: "20px",
+              padding: "20px",
+              boxShadow: "0 18px 50px rgba(0,0,0,0.28)",
+              borderTop: `5px solid ${COLORS.primary}`,
+            }}
+          >
+            {creditUpdateNoticeStep === 1 ? (
+              <>
+                <div style={{ fontSize: "22px", fontWeight: "bold", marginBottom: "8px" }}>
+                  Feeding update
+                </div>
+                <p style={{ margin: "0 0 16px", color: COLORS.muted, lineHeight: 1.55 }}>
+                  When a student eats without paying, tick
+                  <strong> Ate on credit / ate without paying</strong> before submitting.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setCreditUpdateNoticeStep(2)}
+                  style={{
+                    width: "100%",
+                    border: "none",
+                    borderRadius: "14px",
+                    padding: "13px",
+                    background: COLORS.secondary,
+                    color: COLORS.white,
+                    fontWeight: "bold",
+                    fontSize: "15px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Next
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: "22px", fontWeight: "bold", marginBottom: "8px" }}>
+                  How to submit feeding
+                </div>
+                <p style={{ margin: "0 0 16px", color: COLORS.muted, lineHeight: 1.55 }}>
+                  Tap the <strong>Summary</strong> button, review the totals, then tap
+                  <strong> Submit Daily Entry</strong>. Once you submit for the day, you cannot change it.
+                </p>
+                <button
+                  type="button"
+                  onClick={closeCreditUpdateNotice}
+                  style={{
+                    width: "100%",
+                    border: "none",
+                    borderRadius: "14px",
+                    padding: "13px",
+                    background: COLORS.secondary,
+                    color: COLORS.white,
+                    fontWeight: "bold",
+                    fontSize: "15px",
+                    cursor: "pointer",
+                  }}
+                >
+                  I understand
+                </button>
+              </>
+            )}
           </div>
         </div>
-      </div>
+      )}
 
       <div style={{ padding: "16px", maxWidth: "720px", margin: "0 auto" }}>
         {entryBlocked && (
@@ -1256,69 +1346,92 @@ export default function FeedingTeacherPage() {
       </div>
 
       <div
+        onMouseEnter={() => setSummaryOpen(true)}
+        onMouseLeave={() => setSummaryOpen(false)}
+        onFocus={() => setSummaryOpen(true)}
         style={{
           position: "fixed",
-          bottom: 0,
-          left: 0,
-          right: 0,
-          background: COLORS.secondary,
-          color: COLORS.white,
-          padding: "14px 16px",
-          boxShadow: "0 -4px 12px rgba(0,0,0,0.12)",
+          right: "14px",
+          bottom: "96px",
+          zIndex: 30,
+          fontFamily: "Arial, sans-serif",
         }}
       >
-        <div
-          style={{
-            maxWidth: "720px",
-            margin: "0 auto",
-            display: "grid",
-            gap: "10px",
-          }}
-        >
+        {summaryOpen && (
           <div
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(2, 1fr)",
-              gap: "8px",
-              fontSize: "14px",
-            }}
-          >
-            <div>Total: GHS {summary.totalCollected}</div>
-            <div>Eating: {summary.eatingCount}</div>
-            <div>Present: {summary.presentCount}</div>
-            <div>Absent: {summary.absentCount}</div>
-            <div>Credit: {summary.creditCount}</div>
-            <div>Credit Owed: GHS {summary.creditOwed}</div>
-          </div>
-
-          <button
-            onClick={handleSubmit}
-            disabled={submitDisabled}
-            style={{
-              width: "100%",
+              width: "min(330px, calc(100vw - 28px))",
+              background: COLORS.secondary,
+              color: COLORS.white,
+              borderRadius: "18px",
               padding: "14px",
-              borderRadius: "12px",
-              border: "none",
-              background: submitDisabled ? "#9ca3af" : COLORS.primary,
-              color: submitDisabled ? "#ffffff" : COLORS.secondary,
-              fontWeight: "bold",
-              fontSize: "16px",
-              cursor: submitDisabled ? "not-allowed" : "pointer",
+              marginBottom: "10px",
+              boxShadow: "0 14px 34px rgba(0,0,0,0.24)",
             }}
           >
-            {entryBlocked
-              ? "Entry Closed Today"
-              : todaySubmitted
-              ? "Saved for Today"
-              : submitting
-              ? "Submitting..."
-              : "Submit Daily Entry"}
-          </button>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, 1fr)",
+                gap: "8px",
+                fontSize: "13px",
+                marginBottom: "12px",
+              }}
+            >
+              <div>Total: GHS {summary.totalCollected}</div>
+              <div>Eating: {summary.eatingCount}</div>
+              <div>Present: {summary.presentCount}</div>
+              <div>Absent: {summary.absentCount}</div>
+              <div>Credit: {summary.creditCount}</div>
+              <div>Credit Owed: GHS {summary.creditOwed}</div>
+            </div>
 
-          <p style={{ margin: 0, fontSize: "12px", textAlign: "center", opacity: 0.9 }}>
-            System developed by Lord Wilhelm (0593410452)
-          </p>
-        </div>
+            <button
+              onClick={handleSubmit}
+              disabled={submitDisabled}
+              style={{
+                width: "100%",
+                padding: "13px",
+                borderRadius: "12px",
+                border: "none",
+                background: submitDisabled ? "#9ca3af" : COLORS.primary,
+                color: submitDisabled ? "#ffffff" : COLORS.secondary,
+                fontWeight: "bold",
+                fontSize: "15px",
+                cursor: submitDisabled ? "not-allowed" : "pointer",
+              }}
+            >
+              {entryBlocked
+                ? "Entry Closed Today"
+                : todaySubmitted
+                ? "Saved for Today"
+                : submitting
+                ? "Submitting..."
+                : "Submit Daily Entry"}
+            </button>
+
+            <p style={{ margin: "10px 0 0", fontSize: "11px", textAlign: "center", opacity: 0.85 }}>
+              System developed by Lord Wilhelm (0593410452)
+            </p>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setSummaryOpen((open) => !open)}
+          style={{
+            border: "none",
+            borderRadius: "999px",
+            padding: "13px 18px",
+            background: COLORS.secondary,
+            color: COLORS.white,
+            fontWeight: "bold",
+            boxShadow: "0 10px 24px rgba(0,0,0,0.24)",
+            cursor: "pointer",
+          }}
+        >
+          Summary
+        </button>
       </div>
     </main>
   );

@@ -92,10 +92,35 @@ function isTeacherActive(row: Record<string, any>) {
 }
 
 function isActiveStudent(row: Student) {
-  const status = String(row.status || row.student_status || row.studentStatus || "")
+  const status = String(
+    row.status ||
+      row.student_status ||
+      row.studentStatus ||
+      row.enrollment_status ||
+      row.enrolment_status ||
+      row.account_status ||
+      ""
+  )
     .trim()
     .toLowerCase();
 
+  const inactiveWords = [
+    "inactive",
+    "not active",
+    "left",
+    "withdrawn",
+    "transfer",
+    "transferred",
+    "deleted",
+    "disabled",
+    "graduated",
+    "completed",
+    "suspended",
+  ];
+
+  if (row.inactive === true) return false;
+  if (row.is_inactive === true) return false;
+  if (row.isInactive === true) return false;
   if (row.left_school === true) return false;
   if (row.leftSchool === true) return false;
   if (row.has_left === true) return false;
@@ -103,19 +128,15 @@ function isActiveStudent(row: Student) {
   if (row.is_deleted === true) return false;
   if (row.isDeleted === true) return false;
   if (row.deleted === true) return false;
+  if (row.deleted_at) return false;
+  if (row.left_date) return false;
+  if (row.date_left) return false;
 
   if (row.active === false) return false;
   if (row.is_active === false) return false;
   if (row.isActive === false) return false;
 
-  if (
-    status === "inactive" ||
-    status === "left" ||
-    status === "withdrawn" ||
-    status === "transferred" ||
-    status === "deleted" ||
-    status === "disabled"
-  ) {
+  if (status && inactiveWords.some((word) => status.includes(word))) {
     return false;
   }
 
@@ -330,40 +351,84 @@ export default function AdminFillClassPage() {
         teachersRes,
         closuresRes,
         teacherAssignmentsRes,
+        teacherClassesRes,
       ] = await Promise.all([
         supabase.from("school_settings").select("*").limit(1).maybeSingle(),
         supabase.from("classes").select("*").order("class_order", { ascending: true }),
         supabase.from("teachers").select("*"),
         supabase.from("school_closures").select("*").order("start_date", { ascending: true }),
-        supabase.from("teacher_class_assignments").select("teacher_id,class_id"),
+        supabase.from("teacher_class_assignments").select("*"),
+        supabase.from("teacher_classes").select("*"),
       ]);
 
       if (classesRes.error) throw classesRes.error;
       if (teachersRes.error) throw teachersRes.error;
       if (closuresRes.error) throw closuresRes.error;
 
+      const classRows = classesRes.data || [];
       const classNameById = new Map<string, string>();
-      (classesRes.data || []).forEach((classRow: any) => {
+      const validClassNames = new Set<string>();
+
+      classRows.forEach((classRow: any) => {
         const classId = String(classRow.id || "").trim();
         const className = getClassName(classRow);
+        if (className) validClassNames.add(className);
         if (classId && className) classNameById.set(classId, className);
       });
 
       const nextTeacherAssignmentsByClass: Record<string, string[]> = {};
+
+      function addTeacherToClass(classValue: unknown, teacherValue: unknown) {
+        const rawClass = String(classValue || "").trim();
+        const teacherId = String(teacherValue || "").trim();
+
+        if (!rawClass || !teacherId) return;
+
+        const className = classNameById.get(rawClass) || (validClassNames.has(rawClass) ? rawClass : "");
+        if (!className) return;
+
+        if (!nextTeacherAssignmentsByClass[className]) {
+          nextTeacherAssignmentsByClass[className] = [];
+        }
+
+        if (!nextTeacherAssignmentsByClass[className].includes(teacherId)) {
+          nextTeacherAssignmentsByClass[className].push(teacherId);
+        }
+      }
+
       if (!teacherAssignmentsRes.error) {
         (teacherAssignmentsRes.data || []).forEach((assignment: any) => {
-          const className = classNameById.get(String(assignment.class_id || "").trim());
-          const teacherId = String(assignment.teacher_id || "").trim();
-
-          if (!className || !teacherId) return;
-          if (!nextTeacherAssignmentsByClass[className]) {
-            nextTeacherAssignmentsByClass[className] = [];
-          }
-          nextTeacherAssignmentsByClass[className].push(teacherId);
+          addTeacherToClass(
+            assignment.class_id || assignment.classId || assignment.class_name || assignment.className,
+            assignment.teacher_id || assignment.teacherId
+          );
         });
       } else {
-        console.error("Failed to load teacher class assignments:", teacherAssignmentsRes.error);
+        console.error("Failed to load teacher_class_assignments:", teacherAssignmentsRes.error);
       }
+
+      if (!teacherClassesRes.error) {
+        (teacherClassesRes.data || []).forEach((assignment: any) => {
+          addTeacherToClass(
+            assignment.class_id || assignment.classId || assignment.class_name || assignment.className,
+            assignment.teacher_id || assignment.teacherId
+          );
+        });
+      } else {
+        console.error("Failed to load teacher_classes:", teacherClassesRes.error);
+      }
+
+      (teachersRes.data || []).forEach((teacherRow: any) => {
+        const teacherUuid = String(teacherRow.id || "").trim();
+        const teacherCode = String(teacherRow.teacher_id || teacherRow.teacherId || "").trim();
+        const teacherKey = teacherUuid || teacherCode;
+
+        if (!teacherKey) return;
+
+        getAssignedClasses(teacherRow).forEach((classValue) => {
+          addTeacherToClass(classValue, teacherKey);
+        });
+      });
 
       setSettingsRow(settingsRes.data || null);
       setClasses(classesRes.data || []);
@@ -503,19 +568,21 @@ export default function AdminFillClassPage() {
 
 
   const assignedTeacherIds = teacherAssignmentsByClass[selectedClass] || [];
-  const assignedTeacher =
-    teachers.find((teacher) => {
-      if (!isTeacherActive(teacher)) return false;
+  const assignedTeachers = teachers.filter((teacher) => {
+    const teacherUuid = String(teacher.id || "").trim();
+    const teacherCode = String(teacher.teacher_id || teacher.teacherId || "").trim();
 
-      const teacherUuid = String(teacher.id || "").trim();
-      const teacherCode = String(teacher.teacher_id || teacher.teacherId || "").trim();
+    return (
+      getAssignedClasses(teacher).includes(selectedClass) ||
+      assignedTeacherIds.includes(teacherUuid) ||
+      assignedTeacherIds.includes(teacherCode)
+    );
+  });
 
-      return (
-        getAssignedClasses(teacher).includes(selectedClass) ||
-        assignedTeacherIds.includes(teacherUuid) ||
-        assignedTeacherIds.includes(teacherCode)
-      );
-    }) || null;
+  const assignedTeacherName =
+    assignedTeachers.length > 0
+      ? assignedTeachers.map((teacher) => getTeacherName(teacher)).filter(Boolean).join(", ")
+      : "Not Assigned";
 
   const matchedClosure = useMemo(() => {
     return closures.find((closure) => {
@@ -580,7 +647,10 @@ export default function AdminFillClassPage() {
         if (row.attendance === "present") acc.presentCount += 1;
         if (row.attendance === "absent") acc.absentCount += 1;
         if (row.ateToday) acc.eatingCount += 1;
-        if (row.ateWithoutPay) acc.ateWithoutPayCount += 1;
+        if (row.ateWithoutPay) {
+          acc.ateWithoutPayCount += 1;
+          acc.creditOwed += Math.max(feedingFee - row.amountPaidToday, 0);
+        }
         return acc;
       },
       {
@@ -589,9 +659,10 @@ export default function AdminFillClassPage() {
         absentCount: 0,
         eatingCount: 0,
         ateWithoutPayCount: 0,
+        creditOwed: 0,
       }
     );
-  }, [previewRows]);
+  }, [previewRows, feedingFee]);
 
   const teacherCreditSummary = useMemo(() => {
     return teacherCreditEntries.reduce(
@@ -696,7 +767,7 @@ export default function AdminFillClassPage() {
         ate_today: row.ateToday,
         admin_override_ate_without_pay: row.ateWithoutPay,
         new_balance: row.newBalance,
-        assigned_teacher_name: getTeacherName(assignedTeacher || {}),
+        assigned_teacher_name: assignedTeacherName,
         entered_by_name: "Admin",
         entered_by_role: "admin",
         created_at: new Date().toISOString(),
@@ -720,7 +791,7 @@ export default function AdminFillClassPage() {
         ate_today: row.ateToday,
         admin_override_ate_without_pay: row.ateWithoutPay,
         new_balance: row.newBalance,
-        assigned_teacher_name: getTeacherName(assignedTeacher || {}),
+        assigned_teacher_name: assignedTeacherName,
         edited_by: "Admin",
         feeding_fee: feedingFee,
         minimum_to_eat: minimumToEat,
@@ -791,9 +862,232 @@ export default function AdminFillClassPage() {
         background: COLORS.background,
         fontFamily: "Arial, sans-serif",
         color: COLORS.text,
-        paddingBottom: "120px",
+        paddingBottom: "40px",
       }}
     >
+      <style>{`
+        .admin-feeding-controls {
+          transition: transform 180ms ease, box-shadow 180ms ease;
+        }
+        .admin-feeding-controls:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 16px 34px rgba(0,0,0,0.10) !important;
+        }
+        .desktop-feeding-panel {
+          background: #ffffff;
+          border-radius: 20px;
+          box-shadow: 0 12px 32px rgba(0,0,0,0.08);
+          border: 1px solid rgba(17,24,39,0.08);
+          overflow: hidden;
+        }
+        .desktop-table-top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 18px;
+          padding: 18px 20px;
+          border-bottom: 1px solid #f3f4f6;
+          background: linear-gradient(135deg, #ffffff 0%, #fffbeb 100%);
+        }
+        .desktop-table-header, .desktop-feeding-row {
+          display: grid;
+          grid-template-columns: minmax(270px, 2.2fr) 145px 135px 150px 125px 135px 120px 130px;
+          gap: 12px;
+          align-items: center;
+        }
+        .desktop-table-header {
+          padding: 12px 20px;
+          background: #111827;
+          color: #ffffff;
+          font-size: 12px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .04em;
+        }
+        .desktop-feeding-row {
+          padding: 12px 20px;
+          border-bottom: 1px solid #f3f4f6;
+          transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+        }
+        .desktop-feeding-row:hover {
+          background: #fffbeb;
+          transform: translateX(4px);
+          box-shadow: inset 4px 0 0 #f59e0b;
+        }
+        .desktop-feeding-row:last-child {
+          border-bottom: 0;
+        }
+        .student-identity strong {
+          display: block;
+          font-size: 14px;
+          color: #111827;
+        }
+        .student-identity span, .money-subtext {
+          display: block;
+          color: #6b7280;
+          font-size: 12px;
+          margin-top: 3px;
+        }
+        .desktop-mini-input {
+          width: 100%;
+          padding: 10px 11px;
+          border-radius: 10px;
+          border: 1px solid #d1d5db;
+          font-size: 13px;
+          background: #ffffff;
+        }
+        .credit-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 12px;
+          font-weight: 800;
+          background: #fff7ed;
+          border: 1px solid #fed7aa;
+          color: #9a3412;
+          padding: 9px 10px;
+          border-radius: 999px;
+          white-space: nowrap;
+        }
+        .status-pill {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 74px;
+          padding: 8px 10px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 800;
+        }
+        .status-pill.eating {
+          background: #dcfce7;
+          color: #166534;
+        }
+        .status-pill.not-eating {
+          background: #fee2e2;
+          color: #991b1b;
+        }
+        .floating-summary {
+          position: fixed;
+          right: 24px;
+          top: 190px;
+          z-index: 60;
+          width: 96px;
+          max-height: 64px;
+          overflow: hidden;
+          border-radius: 20px;
+          background: #111827;
+          color: #ffffff;
+          box-shadow: 0 18px 45px rgba(0,0,0,0.28);
+          border: 1px solid rgba(255,255,255,0.12);
+          transition: width 220ms ease, max-height 220ms ease, border-radius 220ms ease;
+        }
+        .floating-summary:hover, .floating-summary:focus-within {
+          width: 480px;
+          max-height: 560px;
+          border-radius: 24px;
+        }
+        .summary-collapsed {
+          height: 64px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 12px;
+          font-weight: 900;
+          color: #fbbf24;
+        }
+        .floating-summary:hover .summary-collapsed, .floating-summary:focus-within .summary-collapsed {
+          display: none;
+        }
+        .summary-expanded {
+          display: none;
+          padding: 18px;
+        }
+        .floating-summary:hover .summary-expanded, .floating-summary:focus-within .summary-expanded {
+          display: block;
+        }
+        .summary-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 10px;
+          margin: 14px 0;
+        }
+        .summary-stat {
+          background: rgba(255,255,255,0.08);
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 14px;
+          padding: 10px;
+        }
+        .summary-stat span {
+          display: block;
+          font-size: 11px;
+          opacity: .75;
+          margin-bottom: 4px;
+        }
+        .summary-stat strong {
+          font-size: 15px;
+        }
+        .quick-summary-grid {
+          display: grid;
+          grid-template-columns: repeat(5, minmax(130px, 1fr));
+          gap: 10px;
+          align-items: stretch;
+        }
+        .quick-summary-card {
+          border-radius: 14px;
+          padding: 11px 12px;
+          background: #ffffff;
+          border: 1px solid #f3f4f6;
+          box-shadow: 0 8px 18px rgba(0,0,0,0.04);
+          transition: transform 160ms ease, box-shadow 160ms ease;
+        }
+        .quick-summary-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 12px 26px rgba(0,0,0,0.08);
+        }
+        .quick-summary-card span {
+          display: block;
+          color: #6b7280;
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .04em;
+          margin-bottom: 5px;
+        }
+        .quick-summary-card strong {
+          color: #111827;
+          font-size: 16px;
+        }
+        .teacher-credit-panel {
+          transition: transform 180ms ease, box-shadow 180ms ease;
+        }
+        .teacher-credit-panel:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 16px 34px rgba(0,0,0,0.12) !important;
+        }
+        @media (max-width: 1100px) {
+          .desktop-table-header { display: none; }
+          .desktop-feeding-row {
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+          }
+          .quick-summary-grid {
+            grid-template-columns: repeat(2, minmax(130px, 1fr));
+          }
+          .floating-summary {
+            right: 12px;
+            left: auto;
+            top: auto;
+            bottom: 90px;
+            width: 96px;
+          }
+          .floating-summary:hover, .floating-summary:focus-within {
+            width: calc(100vw - 24px);
+            right: 12px;
+          }
+        }
+      `}</style>
+
       <div
         style={{
           background: COLORS.secondary,
@@ -804,7 +1098,7 @@ export default function AdminFillClassPage() {
       >
         <div
           style={{
-            maxWidth: "1100px",
+            maxWidth: "1680px",
             margin: "0 auto",
             display: "flex",
             justifyContent: "space-between",
@@ -828,17 +1122,18 @@ export default function AdminFillClassPage() {
         </div>
       </div>
 
-      <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "24px" }}>
+      <div style={{ maxWidth: "1680px", margin: "0 auto", padding: "24px" }}>
         <div
+          className="admin-feeding-controls"
           style={{
             background: COLORS.white,
-            borderRadius: "16px",
+            borderRadius: "18px",
             padding: "18px",
-            boxShadow: "0 8px 22px rgba(0,0,0,0.06)",
+            boxShadow: "0 10px 28px rgba(0,0,0,0.07)",
             marginBottom: "20px",
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-            gap: "12px",
+            gridTemplateColumns: "1.25fr 0.8fr 1fr",
+            gap: "14px",
           }}
         >
           <div>
@@ -874,7 +1169,7 @@ export default function AdminFillClassPage() {
             <input
               type="text"
               value={
-                loadingTeachers ? "Loading..." : getTeacherName(assignedTeacher || {})
+                loadingTeachers ? "Loading..." : assignedTeacherName
               }
               readOnly
               style={{ ...inputStyle, background: "#f3f4f6" }}
@@ -901,6 +1196,7 @@ export default function AdminFillClassPage() {
 
         {!entryBlocked && teacherCreditSummary.count > 0 && (
           <div
+            className="teacher-credit-panel"
             style={{
               background: COLORS.white,
               borderRadius: "16px",
@@ -1013,144 +1309,169 @@ export default function AdminFillClassPage() {
           </div>
         )}
 
-        {previewRows.map((student) => (
-          <div
-            key={student.studentId}
-            style={{
-              background: COLORS.white,
-              borderRadius: "16px",
-              padding: "16px",
-              marginBottom: "14px",
-              boxShadow: "0 6px 18px rgba(0,0,0,0.06)",
-              borderLeft: `6px solid ${student.ateToday ? COLORS.success : COLORS.danger}`,
-            }}
-          >
-            <div style={{ marginBottom: "12px" }}>
-              <div style={{ fontWeight: "bold", fontSize: "17px" }}>
-                {student.fullName}
+        {previewRows.length > 0 && (
+          <div className="desktop-feeding-panel">
+            <div className="desktop-table-top">
+              <div>
+                <h2 style={{ margin: 0, fontSize: "19px" }}>Class Feeding Entry</h2>
+                <p style={{ margin: "5px 0 0", color: COLORS.muted, fontSize: "13px" }}>
+                  Enter feeding records for <strong>{selectedClass}</strong> on <strong>{selectedDate}</strong>.
+                </p>
               </div>
-              <div style={{ fontSize: "13px", color: "#555" }}>{student.studentId}</div>
+
+              <div className="quick-summary-grid" style={{ minWidth: "720px" }}>
+                <div className="quick-summary-card">
+                  <span>Total Amount</span>
+                  <strong>GHS {formatMoney(summary.totalCollected)}</strong>
+                </div>
+                <div className="quick-summary-card">
+                  <span>Present</span>
+                  <strong>{summary.presentCount}</strong>
+                </div>
+                <div className="quick-summary-card">
+                  <span>Absent</span>
+                  <strong>{summary.absentCount}</strong>
+                </div>
+                <div className="quick-summary-card">
+                  <span>Eating</span>
+                  <strong>{summary.eatingCount}</strong>
+                </div>
+                <div className="quick-summary-card">
+                  <span>Credit Owed</span>
+                  <strong>GHS {formatMoney(summary.creditOwed + teacherCreditSummary.totalOwed)}</strong>
+                </div>
+              </div>
             </div>
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                gap: "12px",
-              }}
-            >
-              <div>
-                <label style={labelStyle}>Attendance</label>
-                <select
-                  value={student.attendance}
-                  onChange={(e) =>
-                    handleAttendanceChange(student.studentId, e.target.value as Attendance)
-                  }
-                  style={inputStyle}
+            <div className="desktop-table-header">
+              <div>Student</div>
+              <div>Attendance</div>
+              <div>Paid Today</div>
+              <div>Credit Eating</div>
+              <div>Previous</div>
+              <div>Available</div>
+              <div>Status</div>
+              <div>New Balance</div>
+            </div>
+
+            <div>
+              {previewRows.map((student) => (
+                <div
+                  key={student.studentId}
+                  className="desktop-feeding-row"
                 >
-                  <option value="present">Present</option>
-                  <option value="absent">Absent</option>
-                </select>
-              </div>
+                  <div className="student-identity">
+                    <strong>{student.fullName}</strong>
+                    <span>{student.studentId}</span>
+                  </div>
 
-              <div>
-                <label style={labelStyle}>Amount Paid Today</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={amounts[student.studentId] || ""}
-                  onChange={(e) => handleAmountChange(student.studentId, e.target.value)}
-                  disabled={student.attendance === "absent"}
-                  style={{
-                    ...inputStyle,
-                    background: student.attendance === "absent" ? "#f3f4f6" : "#fff",
-                  }}
-                />
-              </div>
-            </div>
+                  <div>
+                    <select
+                      value={student.attendance}
+                      onChange={(e) =>
+                        handleAttendanceChange(student.studentId, e.target.value as Attendance)
+                      }
+                      className="desktop-mini-input"
+                    >
+                      <option value="present">Present</option>
+                      <option value="absent">Absent</option>
+                    </select>
+                  </div>
 
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-                padding: "12px",
-                borderRadius: "10px",
-                background: "#fafafa",
-                border: "1px solid #eee",
-                fontWeight: "bold",
-                marginTop: "12px",
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={student.ateWithoutPay}
-                disabled={student.attendance === "absent"}
-                onChange={(e) =>
-                  handleAteWithoutPayChange(student.studentId, e.target.checked)
-                }
-              />
-              Ate Without Paying
-            </label>
+                  <div>
+                    <input
+                      type="number"
+                      min="0"
+                      value={amounts[student.studentId] || ""}
+                      onChange={(e) => handleAmountChange(student.studentId, e.target.value)}
+                      disabled={student.attendance === "absent"}
+                      className="desktop-mini-input"
+                      style={{
+                        background: student.attendance === "absent" ? "#f3f4f6" : "#fff",
+                      }}
+                    />
+                    <span className="money-subtext">GHS</span>
+                  </div>
 
-            <div
-              style={{
-                background: "#fafafa",
-                borderRadius: "12px",
-                padding: "12px",
-                fontSize: "14px",
-                marginTop: "12px",
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                gap: "8px 16px",
-              }}
-            >
-              <p style={{ margin: "4px 0" }}>
-                <strong>Previous Balance:</strong> GHS {student.previousBalance}
-              </p>
-              <p style={{ margin: "4px 0" }}>
-                <strong>Available Before Meal:</strong> GHS {student.availableBeforeMeal}
-              </p>
-              <p style={{ margin: "4px 0" }}>
-                <strong>Ate Without Pay:</strong> {student.ateWithoutPay ? "Yes" : "No"}
-              </p>
-              <p style={{ margin: "4px 0" }}>
-                <strong>Will Eat:</strong> {student.ateToday ? "Yes" : "No"}
-              </p>
-              <p style={{ margin: "4px 0" }}>
-                <strong>New Balance:</strong> GHS {student.newBalance}
-              </p>
+                  <div>
+                    <label className="credit-pill">
+                      <input
+                        type="checkbox"
+                        checked={student.ateWithoutPay}
+                        disabled={student.attendance === "absent"}
+                        onChange={(e) =>
+                          handleAteWithoutPayChange(student.studentId, e.target.checked)
+                        }
+                      />
+                      Ate on credit
+                    </label>
+                  </div>
+
+                  <div>
+                    <strong>GHS {formatMoney(student.previousBalance)}</strong>
+                  </div>
+
+                  <div>
+                    <strong>GHS {formatMoney(student.availableBeforeMeal)}</strong>
+                    <span className="money-subtext">before meal</span>
+                  </div>
+
+                  <div>
+                    <span className={`status-pill ${student.ateToday ? "eating" : "not-eating"}`}>
+                      {student.ateToday ? "Will eat" : "No meal"}
+                    </span>
+                  </div>
+
+                  <div>
+                    <strong
+                      style={{
+                        color: student.newBalance < 0 ? COLORS.danger : COLORS.success,
+                      }}
+                    >
+                      GHS {formatMoney(student.newBalance)}
+                    </strong>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
-        ))}
-      </div>
+        )}
+      <div className="floating-summary" tabIndex={0}>
+        <div className="summary-collapsed">Save / Summary</div>
 
-      <div
-        style={{
-          position: "fixed",
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: COLORS.secondary,
-          color: COLORS.white,
-          padding: "14px 16px",
-          boxShadow: "0 -4px 12px rgba(0,0,0,0.12)",
-        }}
-      >
-        <div style={{ maxWidth: "1100px", margin: "0 auto", display: "grid", gap: "10px" }}>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(5, 1fr)",
-              gap: "8px",
-              fontSize: "14px",
-            }}
-          >
-            <div>Total: GHS {summary.totalCollected}</div>
-            <div>Eating: {summary.eatingCount}</div>
-            <div>Present: {summary.presentCount}</div>
-            <div>Ate No Pay: {summary.ateWithoutPayCount}</div>
-            <div>Credit Owed: GHS {formatMoney(teacherCreditSummary.totalOwed)}</div>
+        <div className="summary-expanded">
+          <div>
+            <h2 style={{ margin: 0, fontSize: "18px", color: "#fbbf24" }}>Entry Summary</h2>
+            <p style={{ margin: "5px 0 0", fontSize: "12px", opacity: 0.8 }}>
+              Hover here when you need totals or want to save.
+            </p>
+          </div>
+
+          <div className="summary-grid">
+            <div className="summary-stat">
+              <span>Total Collected</span>
+              <strong>GHS {formatMoney(summary.totalCollected)}</strong>
+            </div>
+            <div className="summary-stat">
+              <span>Eating</span>
+              <strong>{summary.eatingCount}</strong>
+            </div>
+            <div className="summary-stat">
+              <span>Present</span>
+              <strong>{summary.presentCount}</strong>
+            </div>
+            <div className="summary-stat">
+              <span>Absent</span>
+              <strong>{summary.absentCount}</strong>
+            </div>
+            <div className="summary-stat">
+              <span>Ate on Credit</span>
+              <strong>{summary.ateWithoutPayCount}</strong>
+            </div>
+            <div className="summary-stat">
+              <span>Credit Owed</span>
+              <strong>GHS {formatMoney(summary.creditOwed + teacherCreditSummary.totalOwed)}</strong>
+            </div>
           </div>
 
           <button
@@ -1166,12 +1487,12 @@ export default function AdminFillClassPage() {
             style={{
               width: "100%",
               padding: "14px",
-              borderRadius: "12px",
+              borderRadius: "14px",
               border: "none",
               background: entryBlocked || loadingClosures ? "#9ca3af" : COLORS.primary,
               color: entryBlocked || loadingClosures ? "#ffffff" : COLORS.secondary,
               fontWeight: "bold",
-              fontSize: "16px",
+              fontSize: "15px",
               cursor: entryBlocked || loadingClosures ? "not-allowed" : "pointer",
             }}
           >
@@ -1184,11 +1505,13 @@ export default function AdminFillClassPage() {
               : "Save Admin Entry"}
           </button>
 
-          <p style={{ margin: 0, fontSize: "12px", textAlign: "center", opacity: 0.9 }}>
+          <p style={{ margin: "10px 0 0", fontSize: "11px", textAlign: "center", opacity: 0.72 }}>
             System developed by Lord Wilhelm (0593410452)
           </p>
         </div>
       </div>
+      </div>
+
     </main>
   );
 }
