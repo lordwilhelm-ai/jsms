@@ -12,6 +12,15 @@ type StudentRow = Record<string, any>;
 type ClosureRow = Record<string, any>;
 type SettingsRow = Record<string, any>;
 type DailyEntryRow = Record<string, any>;
+type CarryForwardInfo = Record<
+  string,
+  {
+    lastDate: string;
+    missedDays: string[];
+    originalBalance: number;
+    carriedBalance: number;
+  }
+>;
 
 const COLORS = {
   background:
@@ -43,35 +52,6 @@ function getTeacherId(row: TeacherRow | null) {
   ).trim();
 }
 
-function getAssignedClasses(row: TeacherRow): string[] {
-  if (Array.isArray(row.assigned_classes)) {
-    return row.assigned_classes.map((item: unknown) => String(item).trim()).filter(Boolean);
-  }
-
-  if (typeof row.assigned_classes === "string") {
-    const raw = row.assigned_classes.trim();
-    if (!raw) return [];
-
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return parsed.map((item) => String(item).trim()).filter(Boolean);
-      }
-    } catch {
-      return raw
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
-    }
-  }
-
-  if (typeof row.assigned_class === "string" && row.assigned_class.trim()) {
-    return [row.assigned_class.trim()];
-  }
-
-  return [];
-}
-
 function getStudentName(row: StudentRow) {
   const fullName = String(row.full_name || "").trim();
   if (fullName) return fullName;
@@ -84,23 +64,61 @@ function getStudentName(row: StudentRow) {
 }
 
 function getStudentIdValue(row: StudentRow) {
-  return String(row.student_id || row.studentId || row.id || "").trim();
+  // Feeding account must use one permanent key. Prefer the UUID `students.id`.
+  // Display-only JVS IDs can be blank, so do not use them as the first choice for feeding balance.
+  return String(row.id || row.student_id || row.studentId || "").trim();
 }
 
 function getClassName(row: Record<string, any>) {
-  return String(row.class_name || row.className || "").trim();
+  return String(row.class_name || row.className || row.name || "").trim();
 }
 
+function getAssignedClassesFromTeacherRow(row: Record<string, any>): string[] {
+  const raw = row.assigned_classes ?? row.assignedClasses ?? row.assigned_class ?? row.assignedClass ?? null;
+
+  if (Array.isArray(raw)) {
+    return raw.map((item) => String(item).trim()).filter(Boolean);
+  }
+
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item).trim()).filter(Boolean);
+      }
+    } catch {
+      // Keep comma fallback below.
+    }
+
+    return trimmed
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
 
 function isActiveStudent(row: StudentRow) {
   const active = row.active;
   const isActive = row.is_active;
-  const status = String(row.status || row.student_status || row.enrollment_status || "").trim().toLowerCase();
+  const status = String(row.status || row.student_status || row.enrollment_status || "")
+    .trim()
+    .toLowerCase();
 
   if (active === false || isActive === false) return false;
-  if (status === "inactive" || status === "withdrawn" || status === "deleted" || status === "archived") return false;
+  if (status === "inactive" || status === "withdrawn" || status === "deleted" || status === "archived") {
+    return false;
+  }
 
   return true;
+}
+
+function getGhanaToday() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Accra" });
 }
 
 function isWeekend(dateString: string) {
@@ -112,12 +130,190 @@ function isDateWithinRange(dateString: string, startDate: string, endDate: strin
   return dateString >= startDate && dateString <= endDate;
 }
 
+function addDays(dateString: string, days: number) {
+  const date = new Date(`${dateString}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().split("T")[0];
+}
+
+function isClosureDate(dateString: string, closures: ClosureRow[]) {
+  return closures.some((closure) => {
+    if (closure.active === false) return false;
+
+    const start = String(closure.start_date || closure.startDate || "").trim();
+    const end = String(closure.end_date || closure.endDate || "").trim();
+
+    if (!start || !end) return false;
+    return isDateWithinRange(dateString, start, end);
+  });
+}
+
+function getMissedFeedingDays(args: {
+  lastDate: string;
+  today: string;
+  closures: ClosureRow[];
+}) {
+  const days: string[] = [];
+  if (!args.lastDate || args.lastDate >= args.today) return days;
+
+  let cursor = addDays(args.lastDate, 1);
+  const yesterday = addDays(args.today, -1);
+
+  while (cursor <= yesterday) {
+    if (!isWeekend(cursor) && !isClosureDate(cursor, args.closures)) {
+      days.push(cursor);
+    }
+    cursor = addDays(cursor, 1);
+  }
+
+  return days;
+}
+
+function applyCarryForward(args: {
+  balance: number;
+  missedDays: string[];
+  feedingFee: number;
+  minimumToEat: number;
+}) {
+  let nextBalance = Number(args.balance || 0);
+  const feedingFee = Number(args.feedingFee || 6);
+  const minimumToEat = Number(args.minimumToEat || 5);
+
+  for (const _day of args.missedDays) {
+    // Auto-deduct only when the student had enough money to eat on that missed school day.
+    // Negative balances still carry forward; we do not erase them.
+    if (nextBalance >= minimumToEat) {
+      nextBalance -= feedingFee;
+    }
+  }
+
+  return nextBalance;
+}
+
+
+function getEntryAttendance(row: DailyEntryRow): Attendance {
+  return String(row?.attendance || "present").toLowerCase() === "absent" ? "absent" : "present";
+}
+
+function shouldDeductForEntry(args: {
+  row: DailyEntryRow;
+  availableBeforeMeal: number;
+  attendance: Attendance;
+  minimumToEat: number;
+}) {
+  if (args.attendance === "absent") return false;
+
+  const ateWithoutPay = Boolean(
+    args.row?.admin_override_ate_without_pay ||
+      args.row?.ate_without_paying ||
+      args.row?.ateWithoutPay
+  );
+
+  if (ateWithoutPay) return true;
+
+  // Recalculate from the rebuilt running balance instead of trusting old bad saved ate_today values.
+  return Number(args.availableBeforeMeal || 0) >= Number(args.minimumToEat || 5);
+}
+
+function rebuildBalanceFromHistory(args: {
+  entries: DailyEntryRow[];
+  fallbackBalance: number;
+  today: string;
+  closures: ClosureRow[];
+  feedingFee: number;
+  minimumToEat: number;
+}) {
+  const entries = [...(args.entries || [])].sort((a, b) =>
+    String(a.date || "").localeCompare(String(b.date || ""))
+  );
+
+  if (!entries.length) {
+    return {
+      balance: Number(args.fallbackBalance || 0),
+      lastDate: "",
+      missedDays: [] as string[],
+      originalBalance: Number(args.fallbackBalance || 0),
+      usedHistory: false,
+    };
+  }
+
+  // Start from the earliest known previous balance, then rebuild every saved feeding day.
+  // This fixes old wrong rows that saved previous_balance/new_balance as 0.
+  let runningBalance = Number(entries[0]?.previous_balance || 0);
+  let lastDate = "";
+  const allMissedDays: string[] = [];
+
+  entries.forEach((entry) => {
+    const entryDate = String(entry.date || "").trim();
+    if (!entryDate) return;
+
+    if (lastDate && lastDate < entryDate) {
+      const missedDays = getMissedFeedingDays({
+        lastDate,
+        today: entryDate,
+        closures: args.closures,
+      });
+
+      runningBalance = applyCarryForward({
+        balance: runningBalance,
+        missedDays,
+        feedingFee: args.feedingFee,
+        minimumToEat: args.minimumToEat,
+      });
+
+      allMissedDays.push(...missedDays);
+    }
+
+    const amountPaidToday = Number(entry.amount_paid_today || 0);
+    const attendance = getEntryAttendance(entry);
+    const availableBeforeMeal = runningBalance + amountPaidToday;
+    const ateToday = shouldDeductForEntry({
+      row: entry,
+      availableBeforeMeal,
+      attendance,
+      minimumToEat: args.minimumToEat,
+    });
+
+    runningBalance = ateToday
+      ? availableBeforeMeal - Number(args.feedingFee || 6)
+      : availableBeforeMeal;
+
+    lastDate = entryDate;
+  });
+
+  if (lastDate) {
+    const missedDays = getMissedFeedingDays({
+      lastDate,
+      today: args.today,
+      closures: args.closures,
+    });
+
+    runningBalance = applyCarryForward({
+      balance: runningBalance,
+      missedDays,
+      feedingFee: args.feedingFee,
+      minimumToEat: args.minimumToEat,
+    });
+
+    allMissedDays.push(...missedDays);
+  }
+
+  return {
+    balance: runningBalance,
+    lastDate,
+    missedDays: allMissedDays,
+    originalBalance: Number(entries[entries.length - 1]?.new_balance ?? args.fallbackBalance ?? 0),
+    usedHistory: true,
+  };
+}
+
 function calculateFeeding(args: {
   previousBalance: number;
   amountPaidToday: number;
   attendance: Attendance;
   feedingFee: number;
   minimumToEat: number;
+  ateOnCredit?: boolean;
 }) {
   const previousBalance = Number(args.previousBalance || 0);
   const amountPaidToday = Number(args.amountPaidToday || 0);
@@ -134,7 +330,7 @@ function calculateFeeding(args: {
     };
   }
 
-  const ateToday = availableBeforeMeal >= minimumToEat;
+  const ateToday = Boolean(args.ateOnCredit) || availableBeforeMeal >= minimumToEat;
   const newBalance = ateToday ? availableBeforeMeal - feedingFee : availableBeforeMeal;
 
   return {
@@ -158,7 +354,9 @@ export default function FeedingTeacherPage() {
 
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const [attendance, setAttendance] = useState<Record<string, Attendance>>({});
+  const [creditEating, setCreditEating] = useState<Record<string, boolean>>({});
   const [balances, setBalances] = useState<BalanceMap>({});
+  const [carryForwardInfo, setCarryForwardInfo] = useState<CarryForwardInfo>({});
   const [loadingBalances, setLoadingBalances] = useState(false);
 
   const [todayEntries, setTodayEntries] = useState<DailyEntryRow[]>([]);
@@ -170,17 +368,29 @@ export default function FeedingTeacherPage() {
   const [checkingCalendar, setCheckingCalendar] = useState(true);
   const [entryBlocked, setEntryBlocked] = useState(false);
   const [blockedReason, setBlockedReason] = useState("");
+  const [closures, setClosures] = useState<ClosureRow[]>([]);
 
   const [settingsRow, setSettingsRow] = useState<SettingsRow | null>(null);
 
+  const today = getGhanaToday();
   const now = new Date();
-  const today = now.toISOString().split("T")[0];
-  const dayName = now.toLocaleDateString(undefined, { weekday: "long" });
+  const dayName = now.toLocaleDateString(undefined, {
+    weekday: "long",
+    timeZone: "Africa/Accra",
+  });
   const prettyDate = now.toLocaleDateString(undefined, {
     year: "numeric",
     month: "long",
     day: "numeric",
+    timeZone: "Africa/Accra",
   });
+
+  const feedingFee = Number(settingsRow?.feeding_fee || 6);
+  const minimumToEat = Number(settingsRow?.minimum_to_eat || 5);
+  const schoolName = String(settingsRow?.school_name || "JEFSEM VISION SCHOOL");
+  const motto = String(settingsRow?.motto || "Success in Excellence");
+  const systemName = "JVS Feeding";
+  const academicYear = String(settingsRow?.academic_year || "2026/2027");
 
   useEffect(() => {
     let active = true;
@@ -232,36 +442,95 @@ export default function FeedingTeacherPage() {
           return;
         }
 
-        // Get teacher's assigned classes using API
-        const assignResponse = await fetch(`/api/teacher-assignments/get?teacher_id=${row.id}`);
-        const assignData = await assignResponse.json();
+        const allClassRows = classesRes.data || [];
+        const classNameById = new Map<string, string>();
+        const validClassNames = new Set<string>();
 
-        if (assignResponse.ok && !assignData.error) {
-          const classIds = assignData.class_ids || [];
-          setAssignedClassIds(classIds);
+        allClassRows.forEach((cls: any) => {
+          const classId = String(cls.id || "").trim();
+          const className = getClassName(cls);
 
-          // Create mapping from class_id to class_name
-          const classNames: string[] = [];
-          (classesRes.data || []).forEach((cls: any) => {
-            const classId = String(cls.id || "").trim();
-            const className = String(cls.class_name || "").trim();
-            
-            // Add to classNames only if teacher is assigned to this class
-            if (classIds.includes(classId)) {
-              classNames.push(className);
-            }
-          });
+          if (className) validClassNames.add(className);
+          if (classId && className) classNameById.set(classId, className);
+        });
 
-          setAssignedClassNames(classNames);
-          
-          // Set default selected class
-          if (classNames.length > 0) {
-            setSelectedClass(classNames[0]);
+        const finalClassIds = new Set<string>();
+        const finalClassNames = new Set<string>();
+
+        function addClassId(classId: unknown) {
+          const normalizedId = String(classId || "").trim();
+          if (!normalizedId) return;
+
+          finalClassIds.add(normalizedId);
+          const className = classNameById.get(normalizedId);
+          if (className) finalClassNames.add(className);
+        }
+
+        function addClassName(className: unknown) {
+          const normalizedName = String(className || "").trim();
+          if (!normalizedName) return;
+
+          // Only add real class names, so teacher IDs or random values do not enter the dropdown.
+          if (validClassNames.has(normalizedName)) finalClassNames.add(normalizedName);
+        }
+
+        try {
+          const assignResponse = await fetch(`/api/teacher-assignments/get?teacher_id=${row.id}`);
+          const assignData = await assignResponse.json();
+
+          if (assignResponse.ok && !assignData.error) {
+            const apiClassIds = Array.isArray(assignData.class_ids) ? assignData.class_ids : [];
+            const apiClassNames = Array.isArray(assignData.class_names) ? assignData.class_names : [];
+            const apiAssignments = Array.isArray(assignData.assignments) ? assignData.assignments : [];
+
+            apiClassIds.forEach(addClassId);
+            apiClassNames.forEach(addClassName);
+            apiAssignments.forEach((assignment: any) => {
+              addClassId(assignment.class_id || assignment.classId);
+              addClassName(assignment.class_name || assignment.className);
+            });
+          } else {
+            console.error("Failed to load teacher assignments from API:", assignData.error);
           }
+        } catch (assignmentApiError) {
+          console.error("Failed to call teacher assignments API:", assignmentApiError);
+        }
+
+        // Fallback: JSMS teacher assignments use teachers.id UUID in teacher_class_assignments.teacher_id.
+        // This fixes the "No class assigned" issue when the API does not return the assignment.
+        try {
+          const { data: directAssignments, error: directAssignmentsError } = await supabase
+            .from("teacher_class_assignments")
+            .select("class_id")
+            .eq("teacher_id", row.id);
+
+          if (!directAssignmentsError) {
+            (directAssignments || []).forEach((assignment: any) => {
+              addClassId(assignment.class_id);
+            });
+          }
+        } catch (directAssignmentError) {
+          console.error("Failed to load direct teacher assignments:", directAssignmentError);
+        }
+
+        getAssignedClassesFromTeacherRow(row).forEach((classValue) => {
+          if (classNameById.has(classValue)) {
+            addClassId(classValue);
+          } else {
+            addClassName(classValue);
+          }
+        });
+
+        const resolvedClassIds = Array.from(finalClassIds);
+        const resolvedClassNames = Array.from(finalClassNames);
+
+        setAssignedClassIds(resolvedClassIds);
+        setAssignedClassNames(resolvedClassNames);
+
+        if (resolvedClassNames.length > 0) {
+          setSelectedClass(resolvedClassNames[0]);
         } else {
-          console.error("Failed to load teacher assignments:", assignData.error);
-          setAssignedClassIds([]);
-          setAssignedClassNames([]);
+          setSelectedClass("");
         }
 
         setTeacher(row);
@@ -285,12 +554,6 @@ export default function FeedingTeacherPage() {
       try {
         setCheckingCalendar(true);
 
-        if (isWeekend(today)) {
-          setEntryBlocked(true);
-          setBlockedReason("School is closed today because it is a weekend.");
-          return;
-        }
-
         const { data, error } = await supabase
           .from("school_closures")
           .select("*")
@@ -298,7 +561,16 @@ export default function FeedingTeacherPage() {
 
         if (error) throw error;
 
-        const matched = (data || []).find((row: ClosureRow) => {
+        const closureRows = data || [];
+        setClosures(closureRows);
+
+        if (isWeekend(today)) {
+          setEntryBlocked(true);
+          setBlockedReason("School is closed today because it is a weekend.");
+          return;
+        }
+
+        const matched = closureRows.find((row: ClosureRow) => {
           const start = String(row.start_date || row.startDate || "");
           const end = String(row.end_date || row.endDate || "");
           if (!start || !end) return false;
@@ -316,6 +588,7 @@ export default function FeedingTeacherPage() {
         setBlockedReason("");
       } catch (error) {
         console.error(error);
+        setClosures([]);
         setEntryBlocked(false);
         setBlockedReason("");
       } finally {
@@ -332,6 +605,7 @@ export default function FeedingTeacherPage() {
     if (!selectedClass || entryBlocked) {
       setStudents([]);
       setBalances({});
+      setCarryForwardInfo({});
       setTodayEntries([]);
       setTodaySubmitted(false);
       return;
@@ -371,6 +645,7 @@ export default function FeedingTeacherPage() {
       setTodaySubmitted(false);
       setAmounts({});
       setAttendance({});
+      setCreditEating({});
       return;
     }
 
@@ -395,6 +670,7 @@ export default function FeedingTeacherPage() {
         if (rows.length > 0) {
           const savedAmounts: Record<string, string> = {};
           const savedAttendance: Record<string, Attendance> = {};
+          const savedCreditEating: Record<string, boolean> = {};
 
           rows.forEach((row: DailyEntryRow) => {
             const studentId = String(row.student_id || "").trim();
@@ -403,13 +679,18 @@ export default function FeedingTeacherPage() {
             savedAmounts[studentId] = String(Number(row.amount_paid_today || 0));
             savedAttendance[studentId] =
               String(row.attendance || "present").toLowerCase() === "absent" ? "absent" : "present";
+            savedCreditEating[studentId] = Boolean(
+              row.admin_override_ate_without_pay || row.ate_without_paying || row.ateWithoutPay
+            );
           });
 
           setAmounts(savedAmounts);
           setAttendance(savedAttendance);
+          setCreditEating(savedCreditEating);
         } else {
           setAmounts({});
           setAttendance({});
+          setCreditEating({});
         }
       } catch (error) {
         console.error(error);
@@ -426,6 +707,7 @@ export default function FeedingTeacherPage() {
   useEffect(() => {
     if (!students.length || entryBlocked) {
       setBalances({});
+      setCarryForwardInfo({});
       return;
     }
 
@@ -435,36 +717,76 @@ export default function FeedingTeacherPage() {
 
         const ids = students.map((student) => getStudentIdValue(student)).filter(Boolean);
 
-        const { data, error } = await supabase
-          .from("student_balances")
-          .select("*")
-          .in("student_id", ids);
+        if (!ids.length) {
+          setBalances({});
+          setCarryForwardInfo({});
+          return;
+        }
 
-        if (error) throw error;
+        const [balancesRes, dailyRes] = await Promise.all([
+          supabase.from("student_balances").select("*").in("student_id", ids),
+          supabase
+            .from("daily_entries")
+            .select("*")
+            .in("student_id", ids)
+            .lt("date", today)
+            .order("date", { ascending: true }),
+        ]);
 
-        const map: BalanceMap = {};
-        (data || []).forEach((row) => {
-          map[String(row.student_id || "")] = Number(row.balance || 0);
+        if (balancesRes.error) throw balancesRes.error;
+        if (dailyRes.error) throw dailyRes.error;
+
+        const rawBalanceMap: BalanceMap = {};
+        (balancesRes.data || []).forEach((row) => {
+          rawBalanceMap[String(row.student_id || "")] = Number(row.balance || 0);
         });
 
-        setBalances(map);
+        const entriesByStudent: Record<string, DailyEntryRow[]> = {};
+        (dailyRes.data || []).forEach((row) => {
+          const studentId = String(row.student_id || "").trim();
+          if (!studentId) return;
+          if (!entriesByStudent[studentId]) entriesByStudent[studentId] = [];
+          entriesByStudent[studentId].push(row);
+        });
+
+        const nextBalances: BalanceMap = {};
+        const nextCarryForwardInfo: CarryForwardInfo = {};
+
+        ids.forEach((studentId) => {
+          const history = rebuildBalanceFromHistory({
+            entries: entriesByStudent[studentId] || [],
+            fallbackBalance: Number(rawBalanceMap[studentId] || 0),
+            today,
+            closures,
+            feedingFee,
+            minimumToEat,
+          });
+
+          nextBalances[studentId] = history.balance;
+
+          if (history.usedHistory || history.missedDays.length > 0) {
+            nextCarryForwardInfo[studentId] = {
+              lastDate: history.lastDate,
+              missedDays: history.missedDays,
+              originalBalance: history.originalBalance,
+              carriedBalance: history.balance,
+            };
+          }
+        });
+
+        setBalances(nextBalances);
+        setCarryForwardInfo(nextCarryForwardInfo);
       } catch (error) {
         console.error(error);
         setBalances({});
+        setCarryForwardInfo({});
       } finally {
         setLoadingBalances(false);
       }
     }
 
     void loadBalances();
-  }, [students, entryBlocked]);
-
-  const feedingFee = Number(settingsRow?.feeding_fee || 6);
-  const minimumToEat = Number(settingsRow?.minimum_to_eat || 5);
-  const schoolName = String(settingsRow?.school_name || "JEFSEM VISION SCHOOL");
-  const motto = String(settingsRow?.motto || "Success in Excellence");
-  const systemName = "JVS Feeding";
-  const academicYear = String(settingsRow?.academic_year || "2026/2027");
+  }, [students, entryBlocked, today, closures, feedingFee, minimumToEat]);
 
   const todayEntriesMap = useMemo(() => {
     const map: Record<string, DailyEntryRow> = {};
@@ -489,9 +811,17 @@ export default function FeedingTeacherPage() {
         : "present"
       : attendance[studentId] || "present";
 
-    const previousBalance = savedEntry
-      ? Number(savedEntry.previous_balance || 0)
-      : Number(balances[studentId] || 0);
+    // Always use the rebuilt carried-forward balance.
+    // Do not trust savedEntry.previous_balance because old submitted rows may have saved 0.
+    const previousBalance = Number(balances[studentId] || 0);
+
+    const ateOnCredit = savedEntry
+      ? Boolean(
+          savedEntry.admin_override_ate_without_pay ||
+            savedEntry.ate_without_paying ||
+            savedEntry.ateWithoutPay
+        )
+      : Boolean(creditEating[studentId]);
 
     const calculated = calculateFeeding({
       previousBalance,
@@ -499,23 +829,23 @@ export default function FeedingTeacherPage() {
       attendance: studentAttendance,
       feedingFee,
       minimumToEat,
+      ateOnCredit,
     });
 
     return {
       id: student.id,
       studentId,
+      displayId: String(student.student_id || student.studentId || student.id || "").trim(),
       fullName: getStudentName(student),
       className: getClassName(student),
       amountPaidToday,
       attendance: studentAttendance as Attendance,
+      ateOnCredit,
       previousBalance,
-      availableBeforeMeal: savedEntry
-        ? Number(savedEntry.available_before_meal || calculated.availableBeforeMeal)
-        : calculated.availableBeforeMeal,
-      ateToday: savedEntry ? Boolean(savedEntry.ate_today) : calculated.ateToday,
-      newBalance: savedEntry
-        ? Number(savedEntry.new_balance ?? calculated.newBalance)
-        : calculated.newBalance,
+      carryForward: carryForwardInfo[studentId] || null,
+      availableBeforeMeal: calculated.availableBeforeMeal,
+      ateToday: calculated.ateToday,
+      newBalance: calculated.newBalance,
     };
   });
 
@@ -526,6 +856,10 @@ export default function FeedingTeacherPage() {
         if (row.attendance === "present") acc.presentCount += 1;
         if (row.attendance === "absent") acc.absentCount += 1;
         if (row.ateToday) acc.eatingCount += 1;
+        if (row.ateOnCredit) {
+          acc.creditCount += 1;
+          acc.creditOwed += Math.max(0, Math.abs(Math.min(row.newBalance, 0)));
+        }
         return acc;
       },
       {
@@ -533,6 +867,8 @@ export default function FeedingTeacherPage() {
         presentCount: 0,
         absentCount: 0,
         eatingCount: 0,
+        creditCount: 0,
+        creditOwed: 0,
       }
     );
   }, [previewRows]);
@@ -543,6 +879,14 @@ export default function FeedingTeacherPage() {
 
   function handleAttendanceChange(studentId: string, value: Attendance) {
     setAttendance((prev) => ({ ...prev, [studentId]: value }));
+
+    if (value === "absent") {
+      setCreditEating((prev) => ({ ...prev, [studentId]: false }));
+    }
+  }
+
+  function handleCreditChange(studentId: string, checked: boolean) {
+    setCreditEating((prev) => ({ ...prev, [studentId]: checked }));
   }
 
   async function handleSubmit() {
@@ -592,7 +936,7 @@ export default function FeedingTeacherPage() {
         previous_balance: row.previousBalance,
         available_before_meal: row.availableBeforeMeal,
         ate_today: row.ateToday,
-        admin_override_ate_without_pay: false,
+        admin_override_ate_without_pay: row.ateOnCredit,
         new_balance: row.newBalance,
         assigned_teacher_name: String(
           teacher.full_name || teacher.name || teacher.username || "Teacher"
@@ -612,6 +956,7 @@ export default function FeedingTeacherPage() {
         class_name: row.className,
         academic_year: academicYear,
         balance: row.newBalance,
+        updated_at: new Date().toISOString(),
       }));
 
       const { error: balanceError } = await supabase
@@ -663,6 +1008,7 @@ export default function FeedingTeacherPage() {
           previous_balance: row.previousBalance,
           available_before_meal: row.availableBeforeMeal,
           ate_today: row.ateToday,
+          admin_override_ate_without_pay: row.ateOnCredit,
           new_balance: row.newBalance,
           entered_by_role: "teacher",
         }))
@@ -673,6 +1019,7 @@ export default function FeedingTeacherPage() {
         refreshedBalances[row.studentId] = row.newBalance;
       });
       setBalances(refreshedBalances);
+      setCarryForwardInfo({});
     } catch (error) {
       console.error(error);
       alert("Failed to save daily entry.");
@@ -750,22 +1097,6 @@ export default function FeedingTeacherPage() {
           </div>
         )}
 
-        {todaySubmitted && !entryBlocked && (
-          <div
-            style={{
-              background: "#ecfdf5",
-              color: "#166534",
-              borderRadius: "16px",
-              padding: "16px",
-              marginBottom: "16px",
-              boxShadow: "0 6px 18px rgba(0,0,0,0.06)",
-              fontWeight: "bold",
-            }}
-          >
-            Today&apos;s entry for {selectedClass} has already been saved. You can preview the amounts, attendance, and balances, but you cannot change or submit again.
-          </div>
-        )}
-
         <div
           style={{
             background: COLORS.white,
@@ -827,7 +1158,7 @@ export default function FeedingTeacherPage() {
             >
               <div style={{ marginBottom: "12px" }}>
                 <div style={{ fontWeight: "bold", fontSize: "17px" }}>{student.fullName}</div>
-                <div style={{ fontSize: "13px", color: "#555" }}>{student.studentId}</div>
+                <div style={{ fontSize: "13px", color: "#555" }}>{student.displayId}</div>
               </div>
 
               <div style={{ display: "grid", gap: "10px" }}>
@@ -862,6 +1193,29 @@ export default function FeedingTeacherPage() {
                   />
                 </div>
 
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    background: student.ateOnCredit ? "#fff7ed" : "#f9fafb",
+                    border: `1px solid ${student.ateOnCredit ? "#fb923c" : "#e5e7eb"}`,
+                    borderRadius: "12px",
+                    padding: "12px",
+                    fontWeight: "bold",
+                    color: student.ateOnCredit ? "#9a3412" : COLORS.text,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={student.ateOnCredit}
+                    onChange={(e) => handleCreditChange(student.studentId, e.target.checked)}
+                    disabled={todaySubmitted || student.attendance === "absent"}
+                    style={{ width: "18px", height: "18px" }}
+                  />
+                  Ate on credit / ate without paying
+                </label>
+
                 <div
                   style={{
                     background: "#fafafa",
@@ -887,6 +1241,11 @@ export default function FeedingTeacherPage() {
                       {student.ateToday ? "Yes" : "No"}
                     </span>
                   </p>
+                  {student.ateOnCredit && (
+                    <p style={{ margin: "4px 0", color: "#9a3412", fontWeight: "bold" }}>
+                      Credit marked: feeding fee will be deducted even if no money was paid.
+                    </p>
+                  )}
                   <p style={{ margin: "4px 0" }}>
                     <strong>New Balance:</strong> GHS {student.newBalance}
                   </p>
@@ -928,6 +1287,8 @@ export default function FeedingTeacherPage() {
             <div>Eating: {summary.eatingCount}</div>
             <div>Present: {summary.presentCount}</div>
             <div>Absent: {summary.absentCount}</div>
+            <div>Credit: {summary.creditCount}</div>
+            <div>Credit Owed: GHS {summary.creditOwed}</div>
           </div>
 
           <button
@@ -948,7 +1309,7 @@ export default function FeedingTeacherPage() {
             {entryBlocked
               ? "Entry Closed Today"
               : todaySubmitted
-              ? "Already Submitted Today"
+              ? "Saved for Today"
               : submitting
               ? "Submitting..."
               : "Submit Daily Entry"}

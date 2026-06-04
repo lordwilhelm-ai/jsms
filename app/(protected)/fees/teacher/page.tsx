@@ -18,6 +18,11 @@ type StudentFeeRow = AnyRow & {
   studentNameValue: string;
   classNameValue: string;
   photoUrl: string;
+  termFee: number;
+  scholarshipType: string;
+  scholarshipAmount: number;
+  feeAfterScholarship: number;
+  previousArrears: number;
   totalFee: number;
   totalPaid: number;
   balance: number;
@@ -187,7 +192,7 @@ function getClassName(row: AnyRow | null | undefined) {
 }
 
 function getStudentId(row: AnyRow) {
-  return stringValue(row.student_id || row.studentId || row.student_code || "");
+  return stringValue(row.student_id || row.studentId || row.student_code || row.jvs_id || row.id || "");
 }
 
 function getStudentName(row: AnyRow) {
@@ -287,10 +292,7 @@ function getLatestPayment(history: AnyRow[]) {
   })[0];
 }
 
-function getStudentTotalFee(student: AnyRow, latestPayment: AnyRow | undefined, classRow: AnyRow | undefined, feeStructureRow: AnyRow | undefined) {
-  const latestTotal = numberValue(latestPayment?.total_fee);
-  if (latestTotal > 0) return latestTotal;
-
+function getBaseTermFee(student: AnyRow, classRow: AnyRow | undefined, feeStructureRow: AnyRow | undefined) {
   const feeStructureAmount = numberValue(feeStructureRow?.amount);
   if (feeStructureAmount > 0) return feeStructureAmount;
 
@@ -304,6 +306,29 @@ function getStudentTotalFee(student: AnyRow, latestPayment: AnyRow | undefined, 
   if (classReturning > 0) return classReturning;
 
   return 0;
+}
+
+function getPreviousArrears(student: AnyRow) {
+  return numberValue(student.arrears);
+}
+
+function getScholarshipType(student: AnyRow) {
+  return stringValue(student.scholarship_type || student.scholarshipType || "none").toLowerCase();
+}
+
+function getScholarshipAmount(student: AnyRow) {
+  return numberValue(student.scholarship_amount || student.scholarshipAmount || 0);
+}
+
+function applyScholarship(termFee: number, scholarshipType: string, scholarshipAmount: number) {
+  if (scholarshipType === "full") return 0;
+  if (scholarshipType === "half") return termFee / 2;
+
+  // Important: in the fees setup page, Custom Scholarship is saved as the student's final term fee,
+  // not as an amount to subtract from the normal class fee.
+  if (scholarshipType === "custom") return Math.max(scholarshipAmount, 0);
+
+  return termFee;
 }
 
 function getPaymentMethod(row: AnyRow) {
@@ -332,7 +357,6 @@ export default function FeesTeacherPage() {
   const [classes, setClasses] = useState<AnyRow[]>([]);
   const [students, setStudents] = useState<AnyRow[]>([]);
   const [payments, setPayments] = useState<AnyRow[]>([]);
-  const [studentBalances, setStudentBalances] = useState<AnyRow[]>([]);
   const [feeStructure, setFeeStructure] = useState<AnyRow[]>([]);
 
   const [query, setQuery] = useState("");
@@ -364,7 +388,6 @@ export default function FeesTeacherPage() {
           teacherClassesRes,
           studentsRes,
           paymentsRes,
-          studentBalancesRes,
           feeStructureRes,
         ] = await Promise.all([
           supabase.from("teachers").select("*"),
@@ -374,7 +397,6 @@ export default function FeesTeacherPage() {
           supabase.from("teacher_classes").select("*"),
           supabase.from("students").select("*"),
           supabase.from("fee_payments").select("*").order("created_at", { ascending: false }),
-          supabase.from("student_balances").select("*"),
           supabase.from("fee_structure").select("*"),
         ]);
 
@@ -452,7 +474,6 @@ export default function FeesTeacherPage() {
         setClasses(classRows);
         setStudents(studentsRes.data || []);
         setPayments(paymentsRes.data || []);
-        setStudentBalances(studentBalancesRes.data || []);
         setFeeStructure(feeStructureRes.data || []);
         setAssignedClasses(sortedAssigned);
         setSelectedClassId((prev) => prev || sortedAssigned[0]?.id || "");
@@ -489,10 +510,6 @@ export default function FeesTeacherPage() {
   const currentPayments = useMemo(() => {
     return payments.filter((row) => sameCurrentPeriod(row, academicYear, currentTerm));
   }, [payments, academicYear, currentTerm]);
-
-  const currentStudentBalances = useMemo(() => {
-    return studentBalances.filter((row) => sameCurrentPeriod(row, academicYear, currentTerm));
-  }, [studentBalances, academicYear, currentTerm]);
 
   const feeStructureForClass = useMemo(() => {
     if (!selectedClass) return undefined;
@@ -548,23 +565,15 @@ export default function FeesTeacherPage() {
           .filter((payment) => rowMatchesStudent(payment, student, studentIdValue))
           .sort((a, b) => rowTime(b) - rowTime(a));
 
-        const balanceHistory = currentStudentBalances
-          .filter((row) => rowMatchesStudent(row, student, studentIdValue))
-          .sort((a, b) => rowTime(b) - rowTime(a));
-
-        const latest = getLatestPayment(history);
-        const latestBalanceRow = balanceHistory[0];
-
         const summedPaid = history.reduce((sum, row) => sum + getPaymentAmount(row), 0);
-        const paidFromBalance = getBalanceTotalPaid(latestBalanceRow);
-        const cumulativePaid = firstPositiveNumber(latest?.cumulative_paid, latest?.total_paid);
-        const totalPaid = paidFromBalance > 0 ? paidFromBalance : cumulativePaid > 0 ? cumulativePaid : summedPaid;
+        const totalPaid = summedPaid;
 
-        const balanceTotalFee = getBalanceTotalFee(latestBalanceRow);
-        const totalFee =
-          balanceTotalFee > 0
-            ? balanceTotalFee
-            : getStudentTotalFee(student, latest, selectedClassRow || undefined, feeStructureForClass);
+        const termFee = getBaseTermFee(student, selectedClassRow || undefined, feeStructureForClass);
+        const scholarshipType = getScholarshipType(student);
+        const scholarshipAmount = getScholarshipAmount(student);
+        const feeAfterScholarship = applyScholarship(termFee, scholarshipType, scholarshipAmount);
+        const previousArrears = getPreviousArrears(student);
+        const totalFee = Math.max(feeAfterScholarship + previousArrears, 0);
 
         const balance = Math.max(totalFee - totalPaid, 0);
 
@@ -574,6 +583,11 @@ export default function FeesTeacherPage() {
           studentNameValue: getStudentName(student),
           classNameValue: selectedClass.name,
           photoUrl: getStudentPhoto(student),
+          termFee,
+          scholarshipType,
+          scholarshipAmount,
+          feeAfterScholarship,
+          previousArrears,
           totalFee,
           totalPaid,
           balance,
@@ -583,7 +597,7 @@ export default function FeesTeacherPage() {
       });
 
     return rows.sort((a, b) => a.studentNameValue.localeCompare(b.studentNameValue));
-  }, [students, selectedClass, classMapById, query, currentPayments, currentStudentBalances, selectedClassRow, feeStructureForClass]);
+  }, [students, selectedClass, classMapById, query, currentPayments, selectedClassRow, feeStructureForClass]);
 
   const summary = useMemo(() => {
     return {
@@ -763,6 +777,9 @@ function StudentFeeSheet({ student, onClose }: { student: StudentFeeRow; onClose
         </div>
 
         <div style={styles.sheetMoneyGrid}>
+          <MoneyBlock label="Term Fee" value={student.termFee} />
+          <MoneyBlock label="Fee After Scholarship" value={student.feeAfterScholarship} />
+          <MoneyBlock label="Previous Arrears" value={student.previousArrears} danger={student.previousArrears > 0} />
           <MoneyBlock label="Total Bill" value={student.totalFee} />
           <MoneyBlock label="Total Paid" value={student.totalPaid} />
           <MoneyBlock label="Balance" value={student.balance} danger={student.balance > 0} />

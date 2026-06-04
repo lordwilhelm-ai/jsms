@@ -29,7 +29,7 @@ const COLORS = {
 };
 
 function getClassName(row: Record<string, any>) {
-  return String(row.class_name || row.className || "").trim();
+  return String(row.class_name || row.className || row.name || "").trim();
 }
 
 function getStudentName(row: Record<string, any>) {
@@ -210,6 +210,27 @@ function calculateAdminFeeding(params: {
   };
 }
 
+function getCreditOwedAmount(row: Record<string, any>, feedingFee: number) {
+  const newBalance = Number(row.new_balance ?? row.newBalance ?? 0);
+  const availableBeforeMeal = Number(
+    row.available_before_meal ?? row.availableBeforeMeal ?? 0
+  );
+  const paidToday = Number(row.amount_paid_today ?? row.amountPaidToday ?? 0);
+
+  if (newBalance < 0) return Math.abs(newBalance);
+
+  const shortfall = feedingFee - availableBeforeMeal;
+  if (shortfall > 0) return shortfall;
+
+  if (paidToday <= 0) return feedingFee;
+
+  return 0;
+}
+
+function formatMoney(value: number) {
+  return Number(value || 0).toFixed(2).replace(/\.00$/, "");
+}
+
 async function rebuildStudentBalancesFromLedger() {
   const { data, error } = await supabase
     .from("balance_ledger")
@@ -247,7 +268,7 @@ async function rebuildStudentBalancesFromLedger() {
 export default function AdminFillClassPage() {
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedDate, setSelectedDate] = useState(
-    new Date().toISOString().split("T")[0]
+    new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Accra" })
   );
 
   const [classes, setClasses] = useState<ClassRow[]>([]);
@@ -261,12 +282,15 @@ export default function AdminFillClassPage() {
   const [ateWithoutPayMap, setAteWithoutPayMap] = useState<OverrideMap>({});
   const [balances, setBalances] = useState<BalanceMap>({});
   const [existingEntries, setExistingEntries] = useState<DailyEntry[]>([]);
+  const [teacherCreditEntries, setTeacherCreditEntries] = useState<DailyEntry[]>([]);
+  const [teacherAssignmentsByClass, setTeacherAssignmentsByClass] = useState<Record<string, string[]>>({});
 
   const [loadingPage, setLoadingPage] = useState(true);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [loadingTeachers, setLoadingTeachers] = useState(false);
   const [loadingBalances, setLoadingBalances] = useState(false);
   const [loadingExisting, setLoadingExisting] = useState(false);
+  const [loadingTeacherCredits, setLoadingTeacherCredits] = useState(false);
   const [loadingClosures, setLoadingClosures] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -282,6 +306,8 @@ export default function AdminFillClassPage() {
       setStudents([]);
       setExistingEntries([]);
     }
+
+    void loadTeacherCreditEntries();
   }, [selectedClass, selectedDate]);
 
   useEffect(() => {
@@ -298,21 +324,52 @@ export default function AdminFillClassPage() {
       setLoadingTeachers(true);
       setLoadingClosures(true);
 
-      const [settingsRes, classesRes, teachersRes, closuresRes] = await Promise.all([
+      const [
+        settingsRes,
+        classesRes,
+        teachersRes,
+        closuresRes,
+        teacherAssignmentsRes,
+      ] = await Promise.all([
         supabase.from("school_settings").select("*").limit(1).maybeSingle(),
         supabase.from("classes").select("*").order("class_order", { ascending: true }),
         supabase.from("teachers").select("*"),
         supabase.from("school_closures").select("*").order("start_date", { ascending: true }),
+        supabase.from("teacher_class_assignments").select("teacher_id,class_id"),
       ]);
 
       if (classesRes.error) throw classesRes.error;
       if (teachersRes.error) throw teachersRes.error;
       if (closuresRes.error) throw closuresRes.error;
 
+      const classNameById = new Map<string, string>();
+      (classesRes.data || []).forEach((classRow: any) => {
+        const classId = String(classRow.id || "").trim();
+        const className = getClassName(classRow);
+        if (classId && className) classNameById.set(classId, className);
+      });
+
+      const nextTeacherAssignmentsByClass: Record<string, string[]> = {};
+      if (!teacherAssignmentsRes.error) {
+        (teacherAssignmentsRes.data || []).forEach((assignment: any) => {
+          const className = classNameById.get(String(assignment.class_id || "").trim());
+          const teacherId = String(assignment.teacher_id || "").trim();
+
+          if (!className || !teacherId) return;
+          if (!nextTeacherAssignmentsByClass[className]) {
+            nextTeacherAssignmentsByClass[className] = [];
+          }
+          nextTeacherAssignmentsByClass[className].push(teacherId);
+        });
+      } else {
+        console.error("Failed to load teacher class assignments:", teacherAssignmentsRes.error);
+      }
+
       setSettingsRow(settingsRes.data || null);
       setClasses(classesRes.data || []);
       setTeachers(teachersRes.data || []);
       setClosures(closuresRes.data || []);
+      setTeacherAssignmentsByClass(nextTeacherAssignmentsByClass);
 
       const firstClass =
         (classesRes.data || []).map((row) => getClassName(row)).find(Boolean) || "Playroom 1";
@@ -420,11 +477,45 @@ export default function AdminFillClassPage() {
     }
   }
 
+  async function loadTeacherCreditEntries() {
+    try {
+      setLoadingTeacherCredits(true);
+
+      const { data, error } = await supabase
+        .from("daily_entries")
+        .select("*")
+        .eq("date", selectedDate)
+        .eq("entered_by_role", "teacher")
+        .eq("admin_override_ate_without_pay", true)
+        .order("class_name", { ascending: true })
+        .order("student_name", { ascending: true });
+
+      if (error) throw error;
+
+      setTeacherCreditEntries((data || []) as DailyEntry[]);
+    } catch (error) {
+      console.error(error);
+      setTeacherCreditEntries([]);
+    } finally {
+      setLoadingTeacherCredits(false);
+    }
+  }
+
+
+  const assignedTeacherIds = teacherAssignmentsByClass[selectedClass] || [];
   const assignedTeacher =
-    teachers.find(
-      (teacher) =>
-        isTeacherActive(teacher) && getAssignedClasses(teacher).includes(selectedClass)
-    ) || null;
+    teachers.find((teacher) => {
+      if (!isTeacherActive(teacher)) return false;
+
+      const teacherUuid = String(teacher.id || "").trim();
+      const teacherCode = String(teacher.teacher_id || teacher.teacherId || "").trim();
+
+      return (
+        getAssignedClasses(teacher).includes(selectedClass) ||
+        assignedTeacherIds.includes(teacherUuid) ||
+        assignedTeacherIds.includes(teacherCode)
+      );
+    }) || null;
 
   const matchedClosure = useMemo(() => {
     return closures.find((closure) => {
@@ -501,6 +592,18 @@ export default function AdminFillClassPage() {
       }
     );
   }, [previewRows]);
+
+  const teacherCreditSummary = useMemo(() => {
+    return teacherCreditEntries.reduce(
+      (acc, row) => {
+        acc.totalOwed += getCreditOwedAmount(row, feedingFee);
+        acc.count += 1;
+        return acc;
+      },
+      { totalOwed: 0, count: 0 }
+    );
+  }, [teacherCreditEntries, feedingFee]);
+
 
   function handleAmountChange(studentId: string, value: string) {
     setAmounts((prev) => ({ ...prev, [studentId]: value }));
@@ -649,6 +752,7 @@ export default function AdminFillClassPage() {
       await rebuildStudentBalancesFromLedger();
       await loadExistingEntries();
       await loadBalances();
+      await loadTeacherCreditEntries();
 
       try {
         await sendFeedingSubmissionPush({
@@ -778,11 +882,7 @@ export default function AdminFillClassPage() {
           </div>
         </div>
 
-        {loadingClosures ? (
-          <div style={infoCardStyle}>
-            <p style={{ margin: 0 }}>Checking school closures...</p>
-          </div>
-        ) : entryBlocked ? (
+        {entryBlocked && (
           <div
             style={{
               ...infoCardStyle,
@@ -797,51 +897,106 @@ export default function AdminFillClassPage() {
               <strong>{blockedReason}</strong>.
             </p>
           </div>
-        ) : (
-          <div
-            style={{
-              ...infoCardStyle,
-              background: "#ecfdf5",
-              color: "#065f46",
-              border: "1px solid #a7f3d0",
-            }}
-          >
-            <p style={{ margin: 0 }}>
-              No holiday or vacation found for <strong>{selectedDate}</strong>.
-              You can save this class entry.
-            </p>
-          </div>
         )}
 
-        <div
-          style={{
-            background: COLORS.white,
-            borderRadius: "16px",
-            padding: "14px 18px",
-            boxShadow: "0 8px 22px rgba(0,0,0,0.06)",
-            marginBottom: "20px",
-          }}
-        >
-          <p style={{ margin: "4px 0" }}>
-            <strong>Existing Record:</strong>{" "}
-            {loadingExisting ? "Checking..." : existingEntries.length > 0 ? "Found" : "None"}
-          </p>
-          <p style={{ margin: "4px 0" }}>
-            <strong>Students:</strong> {loadingStudents ? "Loading..." : students.length}
-          </p>
-          <p style={{ margin: "4px 0" }}>
-            <strong>Balances:</strong> {loadingBalances ? "Loading..." : "Ready"}
-          </p>
-          <p style={{ margin: "4px 0" }}>
-            <strong>Feeding Fee:</strong> GHS {feedingFee}
-          </p>
-          <p style={{ margin: "4px 0" }}>
-            <strong>Minimum To Eat:</strong> GHS {minimumToEat}
-          </p>
-          <p style={{ margin: "4px 0" }}>
-            <strong>Ate Without Pay:</strong> {summary.ateWithoutPayCount}
-          </p>
-        </div>
+        {!entryBlocked && teacherCreditSummary.count > 0 && (
+          <div
+            style={{
+              background: COLORS.white,
+              borderRadius: "16px",
+              padding: "16px",
+              boxShadow: "0 8px 22px rgba(0,0,0,0.06)",
+              marginBottom: "20px",
+              border: "1px solid #fed7aa",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "start",
+                gap: "12px",
+                flexWrap: "wrap",
+                marginBottom: "12px",
+              }}
+            >
+              <div>
+                <h2 style={{ margin: "0 0 6px", fontSize: "18px" }}>
+                  Teacher Credit Feeding
+                </h2>
+                <p style={{ margin: 0, color: COLORS.muted, fontSize: "13px" }}>
+                  Students teachers marked as eating on credit for {selectedDate}.
+                </p>
+              </div>
+
+              <div
+                style={{
+                  background: "#fff7ed",
+                  border: "1px solid #fed7aa",
+                  borderRadius: "12px",
+                  padding: "10px 12px",
+                  minWidth: "180px",
+                }}
+              >
+                <p style={{ margin: "0 0 4px", fontSize: "12px", color: COLORS.muted }}>
+                  Total Owed
+                </p>
+                <p style={{ margin: 0, fontWeight: "bold", fontSize: "18px" }}>
+                  GHS {formatMoney(teacherCreditSummary.totalOwed)}
+                </p>
+                <p style={{ margin: "4px 0 0", fontSize: "12px", color: COLORS.muted }}>
+                  {teacherCreditSummary.count} student(s)
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: "10px" }}>
+              {teacherCreditEntries.map((row, index) => {
+                const owed = getCreditOwedAmount(row, feedingFee);
+                const rowKey = String(row.id || `${getStudentIdValue(row)}-${index}`);
+
+                return (
+                  <div
+                    key={rowKey}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1.4fr 0.8fr 0.8fr 0.7fr",
+                      gap: "10px",
+                      alignItems: "center",
+                      padding: "10px",
+                      borderRadius: "12px",
+                      background: "#fffbeb",
+                      border: "1px solid #fde68a",
+                      fontSize: "13px",
+                    }}
+                  >
+                    <div>
+                      <strong>{String(row.student_name || row.studentName || "Unnamed")}</strong>
+                      <div style={{ color: COLORS.muted }}>{getStudentIdValue(row)}</div>
+                    </div>
+                    <div>
+                      <strong>{getClassName(row)}</strong>
+                      <div style={{ color: COLORS.muted }}>
+                        {String(row.assigned_teacher_name || row.entered_by_name || "Teacher")}
+                      </div>
+                    </div>
+                    <div>
+                      Paid: GHS{" "}
+                      {formatMoney(Number(row.amount_paid_today ?? row.amountPaidToday ?? 0))}
+                      <div style={{ color: COLORS.muted }}>
+                        New Bal: GHS{" "}
+                        {formatMoney(Number(row.new_balance ?? row.newBalance ?? 0))}
+                      </div>
+                    </div>
+                    <div style={{ fontWeight: "bold", color: COLORS.danger }}>
+                      Owes GHS {formatMoney(owed)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {!loadingStudents && students.length === 0 && (
           <div
@@ -986,7 +1141,7 @@ export default function AdminFillClassPage() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(4, 1fr)",
+              gridTemplateColumns: "repeat(5, 1fr)",
               gap: "8px",
               fontSize: "14px",
             }}
@@ -995,6 +1150,7 @@ export default function AdminFillClassPage() {
             <div>Eating: {summary.eatingCount}</div>
             <div>Present: {summary.presentCount}</div>
             <div>Ate No Pay: {summary.ateWithoutPayCount}</div>
+            <div>Credit Owed: GHS {formatMoney(teacherCreditSummary.totalOwed)}</div>
           </div>
 
           <button
