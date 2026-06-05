@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { notifyFeedingMoneyReceived } from "@/lib/jsmsNotify";
@@ -64,6 +65,20 @@ function getStudentIdValue(row: StudentRow) {
   return String(row.student_id || row.studentId || row.id || "").trim();
 }
 
+function normalizeKey(value: unknown) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function uniqueClean(values: unknown[]) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
 function getAssignedClasses(row: TeacherRow): string[] {
   if (Array.isArray(row.assigned_classes)) {
     return row.assigned_classes.map((item: unknown) => String(item).trim()).filter(Boolean);
@@ -100,6 +115,36 @@ function isTeacherActive(row: TeacherRow) {
     return row.status.trim().toLowerCase() === "active";
   }
   return true;
+}
+
+function isCreditFeedingEntry(row: EntryRow) {
+  return Boolean(
+    row.admin_override_ate_without_pay ??
+      row.ate_without_pay ??
+      row.ate_without_paying ??
+      row.ate_on_credit ??
+      row.ateOnCredit ??
+      row.credit_eating ??
+      row.creditEating ??
+      false
+  );
+}
+
+function getCreditOwedAmount(row: EntryRow, feedingFee: number) {
+  const savedCreditAmount = Number(
+    row.credit_amount ??
+      row.creditAmount ??
+      row.amount_owed ??
+      row.amountOwed ??
+      0
+  );
+
+  if (savedCreditAmount > 0) return savedCreditAmount;
+
+  const amountPaidToday = Number(row.amount_paid_today || row.amountPaidToday || 0);
+  const mealFee = Number(feedingFee || 0);
+
+  return Math.max(mealFee - amountPaidToday, 0);
 }
 
 function isWeekend(dateString: string) {
@@ -206,11 +251,13 @@ function getClassMatchKeys(row: ClassRow | null, className: string) {
     row?.className,
     className,
   ]
-    .map((value) => String(value || "").trim())
+    .map((value) => normalizeKey(value))
     .filter(Boolean);
 }
 
 function assignmentMatchesClass(assignment: AssignmentRow, classKeys: Set<string>) {
+  const nestedClass = assignment.classes || assignment.class || assignment.classRow || {};
+
   const assignmentClassValues = [
     assignment.class_id,
     assignment.classId,
@@ -219,14 +266,23 @@ function assignmentMatchesClass(assignment: AssignmentRow, classKeys: Set<string
     assignment.class_name,
     assignment.className,
     assignment.name,
+    nestedClass.id,
+    nestedClass.class_id,
+    nestedClass.classId,
+    nestedClass.uuid,
+    nestedClass.name,
+    nestedClass.class_name,
+    nestedClass.className,
   ]
-    .map((value) => String(value || "").trim())
+    .map((value) => normalizeKey(value))
     .filter(Boolean);
 
   return assignmentClassValues.some((value) => classKeys.has(value));
 }
 
 function assignmentMatchesTeacher(assignment: AssignmentRow, teacherKeys: Set<string>) {
+  const nestedTeacher = assignment.teachers || assignment.teacher || assignment.teacherRow || {};
+
   const assignmentTeacherValues = [
     assignment.teacher_id,
     assignment.teacherId,
@@ -237,8 +293,17 @@ function assignmentMatchesTeacher(assignment: AssignmentRow, teacherKeys: Set<st
     assignment.email,
     assignment.phone,
     assignment.username,
+    nestedTeacher.id,
+    nestedTeacher.teacher_id,
+    nestedTeacher.teacherId,
+    nestedTeacher.staff_id,
+    nestedTeacher.staffId,
+    nestedTeacher.auth_user_id,
+    nestedTeacher.email,
+    nestedTeacher.phone,
+    nestedTeacher.username,
   ]
-    .map((value) => String(value || "").trim())
+    .map((value) => normalizeKey(value))
     .filter(Boolean);
 
   return assignmentTeacherValues.some((value) => teacherKeys.has(value));
@@ -257,14 +322,11 @@ function getClassTeachersForClass(
 
     const assignedClasses = getAssignedClasses(teacher);
 
-    if (
-      assignedClasses.includes(className) ||
-      assignedClasses.some((assignedClass) => classKeys.has(assignedClass))
-    ) {
+    if (assignedClasses.some((assignedClass) => classKeys.has(normalizeKey(assignedClass)))) {
       return true;
     }
 
-    const teacherKeys = new Set(getTeacherMatchKeys(teacher));
+    const teacherKeys = new Set(getTeacherMatchKeys(teacher).map((value) => normalizeKey(value)));
 
     return assignments.some(
       (assignment) =>
@@ -601,6 +663,13 @@ export default function FeedingAdminPage() {
       (entry) => String(entry.attendance || "").toLowerCase() === "absent"
     ).length;
 
+    const creditRows = todayEntries.filter((entry) => isCreditFeedingEntry(entry));
+    const ateOnCredit = creditRows.length;
+    const creditOwed = creditRows.reduce(
+      (sum, entry) => sum + getCreditOwedAmount(entry, feedingFee),
+      0
+    );
+
     const studentsOwing = todayEntries.filter(
       (entry) => Number(entry.new_balance ?? entry.newBalance ?? 0) < 0
     ).length;
@@ -618,11 +687,13 @@ export default function FeedingAdminPage() {
       moneyReceived,
       eatingToday,
       absentToday,
+      ateOnCredit,
+      creditOwed,
       studentsOwing,
       studentsAdvance,
       classesSubmitted,
     };
-  }, [todayEntries, receivedRecords]);
+  }, [todayEntries, receivedRecords, feedingFee]);
 
   const activeTeachersCount = useMemo(() => {
     return teachers.filter((teacher) => isTeacherActive(teacher)).length;
@@ -659,21 +730,29 @@ export default function FeedingAdminPage() {
         assignments
       );
 
-      if (process.env.NODE_ENV !== "production" && classTeachers.length === 0) {
-        console.log("Feeding teacher assignment debug", {
-          className,
-          classRow,
-          assignments,
-          teacherSamples: teachers.slice(0, 5),
-        });
-      }
-
       const money = classEntries.reduce(
         (sum, entry) => sum + Number(entry.amount_paid_today || entry.amountPaidToday || 0),
         0
       );
 
       const received = receivedRecords.find((item) => getClassName(item) === className);
+      const classCreditRows = classEntries.filter((entry) => isCreditFeedingEntry(entry));
+      const creditOwed = classCreditRows.reduce(
+        (sum, entry) => sum + getCreditOwedAmount(entry, feedingFee),
+        0
+      );
+
+      const entryTeacherNames = uniqueClean(
+        classEntries.map(
+          (entry) =>
+            entry.entered_by_name ||
+            entry.enteredByName ||
+            entry.teacher_name ||
+            entry.teacherName ||
+            entry.entered_by ||
+            entry.enteredBy
+        )
+      );
 
       return {
         className,
@@ -685,16 +764,20 @@ export default function FeedingAdminPage() {
           (entry) => String(entry.attendance || "").toLowerCase() === "absent"
         ).length,
         eating: classEntries.filter((entry) => Boolean(entry.ate_today ?? entry.ateToday)).length,
+        ateOnCredit: classCreditRows.length,
+        creditOwed,
         money,
         submitted: classEntries.length > 0,
         teacherNames:
           classTeachers.length > 0
             ? classTeachers.map((teacher) => getTeacherName(teacher)).join(", ")
-            : "Not Assigned",
+            : entryTeacherNames.length > 0
+              ? entryTeacherNames.join(", ")
+              : "Not Assigned",
         received: Boolean(received),
       };
     });
-  }, [classes, students, todayEntries, teachers, receivedRecords, assignments]);
+  }, [classes, students, todayEntries, teachers, receivedRecords, assignments, feedingFee]);
 
   const eatingRows = useMemo(() => {
     return todayEntries.filter((entry) => Boolean(entry.ate_today ?? entry.ateToday));
@@ -704,6 +787,10 @@ export default function FeedingAdminPage() {
     return todayEntries.filter(
       (entry) => String(entry.attendance || "").toLowerCase() === "absent"
     );
+  }, [todayEntries]);
+
+  const creditRows = useMemo(() => {
+    return todayEntries.filter((entry) => isCreditFeedingEntry(entry));
   }, [todayEntries]);
 
   const owingRows = useMemo(() => {
@@ -728,51 +815,73 @@ export default function FeedingAdminPage() {
       title: "Money Today",
       value: `GHS ${dashboardSummary.moneyToday}`,
       note: "Daily entry totals",
+      href: "/feeding/admin/reports",
     },
     {
       title: "Money Received",
       value: `GHS ${dashboardSummary.moneyReceived}`,
       note: "Collected by admin",
+      href: "/feeding/admin",
     },
     {
       title: "Eating Today",
       value: dashboardSummary.eatingToday,
       note: "Students eating",
+      href: "/feeding/admin/reports",
+    },
+    {
+      title: "Ate On Credit",
+      value: dashboardSummary.ateOnCredit,
+      note: "Teacher credit ticks",
+      href: "/feeding/admin/reports?status=credit",
+    },
+    {
+      title: "Credit Owed",
+      value: `GHS ${dashboardSummary.creditOwed}`,
+      note: "Amount owed from credit meals",
+      href: "/feeding/admin/debtors",
     },
     {
       title: "Absent Today",
       value: dashboardSummary.absentToday,
       note: "Absent count",
+      href: "/feeding/admin/reports?status=absent",
     },
     {
       title: "Students Owing",
       value: dashboardSummary.studentsOwing,
       note: "Balances below zero",
+      href: "/feeding/admin/debtors",
     },
     {
       title: "Students Advance",
       value: dashboardSummary.studentsAdvance,
       note: "Positive balances",
+      href: "/feeding/admin/student-ledger",
     },
     {
       title: "Total Students",
       value: students.length,
       note: "Active student records",
+      href: "/students",
     },
     {
       title: "Active Teachers",
       value: activeTeachersCount,
       note: "Teachers in system",
+      href: "/teachers",
     },
     {
       title: "Active Classes",
       value: classSummary.length,
       note: "Feeding class summary",
+      href: "/feeding/admin/fill-class",
     },
     {
       title: "School Days This Term",
       value: totalSchoolDays,
       note: `${currentTerm} attendance base`,
+      href: "/feeding/admin/reports",
     },
   ];
 
@@ -834,34 +943,50 @@ export default function FeedingAdminPage() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-            gap: "16px",
-            marginBottom: "24px",
+            gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+            gap: "12px",
+            marginBottom: "18px",
           }}
         >
           {summaryCards.map((card) => (
-            <div
+            <Link
               key={card.title}
-              style={{
-                background: COLORS.white,
-                borderRadius: "16px",
-                padding: "18px",
-                boxShadow: "0 8px 22px rgba(0,0,0,0.06)",
-                borderTop: `6px solid ${COLORS.primary}`,
-              }}
+              href={card.href}
+              style={{ color: "inherit", textDecoration: "none" }}
             >
-              <p style={{ margin: 0, fontSize: "14px", color: COLORS.muted }}>{card.title}</p>
-              <h2
+              <div
                 style={{
-                  margin: "8px 0 6px",
-                  color: COLORS.secondary,
-                  fontSize: "28px",
+                  background: COLORS.white,
+                  borderRadius: "14px",
+                  padding: "12px",
+                  minHeight: "118px",
+                  boxShadow: "0 6px 16px rgba(0,0,0,0.05)",
+                  borderTop: `4px solid ${COLORS.primary}`,
+                  cursor: "pointer",
+                  transition: "transform 0.18s ease, box-shadow 0.18s ease",
+                }}
+                onMouseEnter={(event) => {
+                  event.currentTarget.style.transform = "translateY(-4px)";
+                  event.currentTarget.style.boxShadow = "0 10px 22px rgba(0,0,0,0.10)";
+                }}
+                onMouseLeave={(event) => {
+                  event.currentTarget.style.transform = "translateY(0)";
+                  event.currentTarget.style.boxShadow = "0 6px 16px rgba(0,0,0,0.05)";
                 }}
               >
-                {card.value}
-              </h2>
-              <p style={{ margin: 0, fontSize: "13px", color: "#777" }}>{card.note}</p>
-            </div>
+                <p style={{ margin: 0, fontSize: "13px", color: COLORS.muted }}>{card.title}</p>
+                <h2
+                  style={{
+                    margin: "6px 0 5px",
+                    color: COLORS.secondary,
+                    fontSize: "23px",
+                  }}
+                >
+                  {card.value}
+                </h2>
+                <p style={{ margin: 0, fontSize: "12px", color: "#777" }}>{card.note}</p>
+              </div>
+            </Link>
           ))}
         </div>
 
@@ -993,6 +1118,8 @@ export default function FeedingAdminPage() {
                     <th style={thStyle}>Present</th>
                     <th style={thStyle}>Absent</th>
                     <th style={thStyle}>Eating</th>
+                    <th style={thStyle}>Ate Credit</th>
+                    <th style={thStyle}>Credit Owed</th>
                     <th style={thStyle}>Money</th>
                     <th style={thStyle}>Submitted</th>
                     <th style={thStyle}>Received</th>
@@ -1008,6 +1135,8 @@ export default function FeedingAdminPage() {
                       <td style={tdStyle}>{row.present}</td>
                       <td style={tdStyle}>{row.absent}</td>
                       <td style={tdStyle}>{row.eating}</td>
+                      <td style={tdStyle}>{row.ateOnCredit}</td>
+                      <td style={tdStyle}>GHS {row.creditOwed}</td>
                       <td style={tdStyle}>GHS {row.money}</td>
                       <td style={tdStyle}>{row.submitted ? "Yes" : "No"}</td>
                       <td style={tdStyle}>{row.received ? "Yes" : "No"}</td>
@@ -1046,7 +1175,7 @@ export default function FeedingAdminPage() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
             gap: "20px",
             marginBottom: "24px",
           }}
@@ -1063,6 +1192,20 @@ export default function FeedingAdminPage() {
               String(row.assigned_teacher_name || row.assignedTeacherName || "-"),
               `GHS ${Number(row.amount_paid_today || row.amountPaidToday || 0)}`,
               `GHS ${Number(row.new_balance || row.newBalance || 0)}`,
+            ])}
+          />
+
+          <DashboardSection
+            title="Ate On Credit"
+            loading={loading}
+            emptyText="No credit feeding records today."
+            headers={["Student", "ID", "Class", "Teacher", "Credit Owed"]}
+            rows={creditRows.slice(0, 8).map((row: any) => [
+              String(row.student_name || row.studentName || "-"),
+              String(row.student_id || row.studentId || "-"),
+              getClassName(row),
+              String(row.assigned_teacher_name || row.assignedTeacherName || "-"),
+              `GHS ${getCreditOwedAmount(row, feedingFee)}`,
             ])}
           />
 
@@ -1208,7 +1351,7 @@ function DashboardSection({
   );
 }
 
-function topButtonStyle(): React.CSSProperties {
+function topButtonStyle(): CSSProperties {
   return {
     border: "none",
     borderRadius: "8px",
@@ -1224,7 +1367,7 @@ function topButtonStyle(): React.CSSProperties {
   };
 }
 
-const quickLinkStyle: React.CSSProperties = {
+const quickLinkStyle: CSSProperties = {
   textDecoration: "none",
   background: COLORS.primary,
   color: COLORS.secondary,
@@ -1233,24 +1376,24 @@ const quickLinkStyle: React.CSSProperties = {
   fontWeight: "bold",
 };
 
-const tableStyle: React.CSSProperties = {
+const tableStyle: CSSProperties = {
   width: "100%",
   borderCollapse: "collapse",
   fontSize: "14px",
 };
 
-const thStyle: React.CSSProperties = {
+const thStyle: CSSProperties = {
   textAlign: "left",
   padding: "12px",
   borderBottom: "1px solid #e5e7eb",
 };
 
-const tdStyle: React.CSSProperties = {
+const tdStyle: CSSProperties = {
   padding: "12px",
   borderBottom: "1px solid #f0f0f0",
 };
 
-const receiveButtonStyle: React.CSSProperties = {
+const receiveButtonStyle: CSSProperties = {
   background: COLORS.primary,
   color: COLORS.secondary,
   border: "none",
