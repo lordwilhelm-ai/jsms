@@ -795,7 +795,7 @@ function PaymentTable({ payments }: { payments: UniversalPayment[] }) {
               <td style={tdStyle}>{payment.item_name || "-"}</td>
               <td style={tdStyle}>{formatMoney(payment.amount_paid)}</td>
               <td style={tdStyle}>{payment.term || "-"}</td>
-              <td style={tdStyle}>{formatDateTime(payment.created_at)}</td>
+              <td style={tdStyle}>{formatDateTime((payment as any).payment_date || (payment as any).created_at)}</td>
             </tr>
           ))}
         </tbody>
