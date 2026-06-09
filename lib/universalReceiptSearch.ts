@@ -1,9 +1,10 @@
 import { supabase } from "@/lib/supabase";
 
+type AnyRow = Record<string, any>;
+
 export type UniversalPayment = {
   id: string;
-  module: "Fees" | "Books" | "Uniforms" | "Admission";
-  source_table: string;
+  module: string;
   receipt_number: string;
   student_id: string;
   student_name: string;
@@ -12,223 +13,120 @@ export type UniversalPayment = {
   total_amount: number;
   amount_paid: number;
   balance: number;
-  term: string;
-  academic_year: string;
+  payment_method: string;
   received_by: string;
-  payment_note: string;
-  created_at: string;
+  note: string;
+  term: string | null;
+  academic_year: string | null;
+  payment_date: string | null;
+  created_at: string | null;
+  source_table: string;
+  search_text?: string;
 };
 
 export type UniversalReceiptResult = {
   searchedReceipt: UniversalPayment | null;
   studentPayments: UniversalPayment[];
-  error: string;
+  error?: string;
 };
 
-function text(value: unknown) {
+function cleanText(value: unknown) {
   return String(value || "").trim();
 }
 
-function num(value: unknown) {
+function normalizeText(value: unknown) {
+  return cleanText(value).toLowerCase();
+}
+
+function numberValue(value: unknown) {
   const n = Number(value || 0);
   return Number.isFinite(n) ? n : 0;
 }
 
-function receiptKey(value: string) {
-  return text(value).toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-function receiptFrom(row: any) {
-  return text(
-    row.receipt_number ||
-      row.receipt_no ||
-      row.receiptNo ||
-      row.receipt ||
-      row.reference ||
-      row.payment_reference ||
-      row.transaction_reference ||
-      row.id
-  );
-}
-
-function dateFrom(row: any) {
-  return text(row.created_at || row.payment_date || row.date || "");
-}
-
-function normalizeFee(row: any): UniversalPayment {
+function mapUniversalPayment(row: AnyRow): UniversalPayment {
   return {
-    id: text(row.id),
-    module: "Fees",
-    source_table: "fee_payments",
-    receipt_number: receiptFrom(row),
-    student_id: text(row.student_id || row.studentId),
-    student_name: text(row.student_name || row.full_name || row.name),
-    class_name: text(row.class_name || row.className || row.class),
-    item_name: text(row.payment_type || row.item_name || "School Fees"),
-    total_amount: num(row.total_amount || row.total_fee || row.amount_due),
-    amount_paid: num(row.amount_paid || row.amount),
-    balance: num(row.balance || row.balance_after),
-    term: text(row.term),
-    academic_year: text(row.academic_year),
-    received_by: text(row.received_by || row.recorded_by),
-    payment_note: text(row.payment_note || row.note || row.notes),
-    created_at: dateFrom(row),
+    id: cleanText(row.id),
+    module: cleanText(row.module || "-"),
+    receipt_number: cleanText(row.receipt_number || row.receipt_no || row.id),
+    student_id: cleanText(row.student_id),
+    student_name: cleanText(row.student_name),
+    class_name: cleanText(row.class_name),
+    item_name: cleanText(row.item_name || row.payment_type || row.module || "-"),
+    total_amount: numberValue(row.total_amount),
+    amount_paid: numberValue(row.amount_paid),
+    balance: numberValue(row.balance),
+    payment_method: cleanText(row.payment_method || "-"),
+    received_by: cleanText(row.received_by || "Admin"),
+    note: cleanText(row.note || "-"),
+    term: row.term ? cleanText(row.term) : null,
+    academic_year: row.academic_year ? cleanText(row.academic_year) : null,
+    payment_date: row.payment_date ? cleanText(row.payment_date) : null,
+    created_at: row.created_at ? cleanText(row.created_at) : null,
+    source_table: cleanText(row.source_table || "-"),
+    search_text: cleanText(row.search_text),
   };
 }
 
-function normalizeBook(row: any): UniversalPayment {
-  return {
-    id: text(row.id),
-    module: "Books",
-    source_table: "jsms_book_payments",
-    receipt_number: receiptFrom(row),
-    student_id: text(row.student_id),
-    student_name: text(row.student_name),
-    class_name: text(row.class_name),
-    item_name: text(row.item_name || row.book_name || "Books"),
-    total_amount: num(row.total_amount),
-    amount_paid: num(row.amount_paid),
-    balance: num(row.balance),
-    term: text(row.term),
-    academic_year: text(row.academic_year),
-    received_by: text(row.received_by),
-    payment_note: text(row.payment_note),
-    created_at: dateFrom(row),
-  };
-}
-
-function normalizeUniform(row: any): UniversalPayment {
-  return {
-    id: text(row.id),
-    module: "Uniforms",
-    source_table: "jsms_uniform_payments",
-    receipt_number: receiptFrom(row),
-    student_id: text(row.student_id),
-    student_name: text(row.student_name),
-    class_name: text(row.class_name),
-    item_name: text(row.item_name || "Uniform"),
-    total_amount: num(row.total_amount),
-    amount_paid: num(row.amount_paid),
-    balance: num(row.balance),
-    term: text(row.term),
-    academic_year: text(row.academic_year),
-    received_by: text(row.received_by),
-    payment_note: text(row.payment_note),
-    created_at: dateFrom(row),
-  };
-}
-
-function normalizeAdmission(row: any): UniversalPayment {
-  return {
-    id: text(row.id),
-    module: "Admission",
-    source_table: "jsms_admission_payments",
-    receipt_number: receiptFrom(row),
-    student_id: text(row.student_id),
-    student_name: text(row.student_name),
-    class_name: text(row.class_name),
-    item_name: text(row.item_name || "Admission"),
-    total_amount: num(row.total_amount),
-    amount_paid: num(row.amount_paid),
-    balance: num(row.balance),
-    term: text(row.term),
-    academic_year: text(row.academic_year),
-    received_by: text(row.received_by),
-    payment_note: text(row.payment_note),
-    created_at: dateFrom(row),
-  };
-}
-
-function sameStudent(a: UniversalPayment, b: UniversalPayment) {
-  const aId = text(a.student_id).toLowerCase();
-  const bId = text(b.student_id).toLowerCase();
-
-  if (aId && bId && aId === bId) return true;
-
-  const aName = text(a.student_name).toLowerCase();
-  const bName = text(b.student_name).toLowerCase();
-
-  const aClass = text(a.class_name).toLowerCase();
-  const bClass = text(b.class_name).toLowerCase();
-
-  return Boolean(
-    aName && bName && aClass && bClass && aName === bName && aClass === bClass
-  );
-}
-
-async function safeRead(table: string) {
-  const result = await supabase.from(table).select("*");
-
-  if (result.error) return [];
-
-  return result.data || [];
-}
-
-export async function getUniversalPayments() {
-  const [feeRows, bookRows, uniformRows, admissionRows] = await Promise.all([
-    safeRead("fee_payments"),
-    safeRead("jsms_book_payments"),
-    safeRead("jsms_uniform_payments"),
-    safeRead("jsms_admission_payments"),
-  ]);
-
-  return [
-    ...feeRows.map(normalizeFee),
-    ...bookRows.map(normalizeBook),
-    ...uniformRows.map(normalizeUniform),
-    ...admissionRows.map(normalizeAdmission),
-  ]
-    .filter((row) => row.receipt_number)
-    .sort((a, b) => {
-      const aTime = new Date(a.created_at || "").getTime();
-      const bTime = new Date(b.created_at || "").getTime();
-
-      return bTime - aTime;
-    });
-}
-
-export async function getUniversalReceiptSuggestions(query: string) {
-  const q = receiptKey(query);
+/**
+ * Searches every receipt module through the Supabase view:
+ * public.v_universal_receipt_search
+ *
+ * Covered modules:
+ * - Fees: fee_payments
+ * - Admission: admission_payments
+ * - Books: jsms_book_payments / jsms_book_sales
+ * - Uniforms: jsms_uniform_payments
+ */
+export async function getUniversalReceiptSuggestions(value: string): Promise<UniversalPayment[]> {
+  const q = normalizeText(value);
 
   if (!q) return [];
 
-  const allPayments = await getUniversalPayments();
+  const { data, error } = await supabase
+    .from("v_universal_receipt_search")
+    .select("*")
+    .ilike("search_text", `%${q}%`)
+    .order("created_at", { ascending: false })
+    .limit(8);
 
-  return allPayments
-    .filter((payment) => {
-      const r = receiptKey(payment.receipt_number);
-      const student = `${payment.student_name} ${payment.class_name}`.toLowerCase();
+  if (error) {
+    console.error("Universal receipt suggestions failed:", error);
+    return [];
+  }
 
-      return r.includes(q) || student.includes(query.toLowerCase());
-    })
-    .slice(0, 10);
+  return (data || []).map(mapUniversalPayment);
 }
 
-export async function searchUniversalReceipt(
-  receiptNumber: string
-): Promise<UniversalReceiptResult> {
-  const receipt = text(receiptNumber);
-  const key = receiptKey(receipt);
+export async function searchUniversalReceipt(value: string): Promise<UniversalReceiptResult> {
+  const q = normalizeText(value);
 
-  if (!key) {
+  if (!q) {
     return {
       searchedReceipt: null,
       studentPayments: [],
-      error: "Enter a receipt number.",
+      error: "Enter a receipt number, student ID, or student name.",
     };
   }
 
-  const allPayments = await getUniversalPayments();
+  const { data, error } = await supabase
+    .from("v_universal_receipt_search")
+    .select("*")
+    .ilike("search_text", `%${q}%`)
+    .order("created_at", { ascending: false })
+    .limit(25);
 
-  const exactMatch =
-    allPayments.find((row) => receiptKey(row.receipt_number) === key) || null;
+  if (error) {
+    console.error("Universal receipt search failed:", error);
+    return {
+      searchedReceipt: null,
+      studentPayments: [],
+      error: error.message || "Receipt search failed.",
+    };
+  }
 
-  const looseMatch =
-    exactMatch ||
-    allPayments.find((row) => receiptKey(row.receipt_number).includes(key)) ||
-    null;
+  const matches = (data || []).map(mapUniversalPayment);
 
-  if (!looseMatch) {
+  if (matches.length === 0) {
     return {
       searchedReceipt: null,
       studentPayments: [],
@@ -236,13 +134,31 @@ export async function searchUniversalReceipt(
     };
   }
 
-  const studentPayments = allPayments.filter((payment) =>
-    sameStudent(payment, looseMatch)
-  );
+  const exactMatch =
+    matches.find((item) => normalizeText(item.receipt_number) === q) ||
+    matches.find((item) => normalizeText(item.receipt_number).includes(q)) ||
+    matches.find((item) => normalizeText(item.student_id) === q) ||
+    matches.find((item) => normalizeText(item.student_name).includes(q)) ||
+    matches[0];
+
+  let studentPayments = matches;
+
+  if (exactMatch?.student_id) {
+    const { data: studentRows, error: studentError } = await supabase
+      .from("universal_receipts")
+      .select("*")
+      .eq("student_id", exactMatch.student_id)
+      .order("created_at", { ascending: false });
+
+    if (studentError) {
+      console.error("Student receipt history failed:", studentError);
+    } else {
+      studentPayments = (studentRows || []).map(mapUniversalPayment);
+    }
+  }
 
   return {
-    searchedReceipt: looseMatch,
+    searchedReceipt: exactMatch,
     studentPayments,
-    error: "",
   };
 }

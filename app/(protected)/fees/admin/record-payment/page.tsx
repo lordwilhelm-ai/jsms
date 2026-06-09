@@ -8,7 +8,7 @@ import { notifyFeePayment } from "@/lib/jsmsNotify";
 
 type AnyRow = Record<string, any>;
 type ScholarshipType = "regular" | "full" | "half" | "custom";
-type StudentType = "returning" | "new";
+type StudentType = "continuous" | "new";
 
 type DraftRow = {
   studentType: StudentType;
@@ -54,7 +54,7 @@ const CLASS_ORDER = [
   "JHS 3",
 ];
 
-const STORAGE_KEY = "jvs_fees_record_payment_drafts_v5";
+const STORAGE_KEY = "jvs_fees_record_payment_drafts_v6";
 
 const COLORS = {
   bg: "#f7f4ec",
@@ -84,7 +84,7 @@ function getClassName(row: AnyRow) {
 }
 
 function getStudentIdValue(row: AnyRow) {
-  return String(row.student_id || row.studentId || row.id || "").trim();
+  return String(row.student_id || row.jvs_id || row.studentId || "").trim();
 }
 
 function numberValue(value: unknown) {
@@ -112,7 +112,34 @@ function getStatusStyle(status: "paid" | "part" | "unpaid") {
   return { bg: COLORS.dangerBg, color: COLORS.dangerText, label: "Not Paid" };
 }
 
-function getDefaultDraft(student: AnyRow): DraftRow {
+function getEffectiveStudentType(
+  student: AnyRow,
+  currentTerm: string,
+  academicYear: string
+): StudentType {
+  const rawType = String(student.student_type || "").trim().toLowerCase();
+  const markedNew =
+    rawType === "new" || student.is_new === true || student.is_new_student === true;
+
+  if (!markedNew) return "continuous";
+
+  const admissionTerm = String(student.admission_term || "").trim();
+  const admissionYear = String(student.admission_academic_year || "").trim();
+
+  // If term memory exists, the student is new only in the same term/year they joined.
+  if (admissionTerm && admissionYear && currentTerm && academicYear) {
+    return admissionTerm === currentTerm && admissionYear === academicYear ? "new" : "continuous";
+  }
+
+  // Fallback for old records that were marked new before admission_term/admission_academic_year existed.
+  return "new";
+}
+
+function getDefaultDraft(
+  student: AnyRow,
+  currentTerm: string,
+  academicYear: string
+): DraftRow {
   const scholarshipRaw = String(student.scholarship_type || "none").trim().toLowerCase();
 
   let scholarshipType: ScholarshipType = "regular";
@@ -121,7 +148,7 @@ function getDefaultDraft(student: AnyRow): DraftRow {
   else if (scholarshipRaw === "custom") scholarshipType = "custom";
 
   return {
-    studentType: student.is_new === true ? "new" : "returning",
+    studentType: getEffectiveStudentType(student, currentTerm, academicYear),
     scholarshipType,
     customScholarshipAmount: String(numberValue(student.scholarship_amount) || ""),
     arrears: String(numberValue(student.arrears) || ""),
@@ -135,10 +162,10 @@ function computeTotals(params: {
 }) {
   const { draft, classRow, totalPaid } = params;
 
-  const returningFee = numberValue(classRow?.fee_returning);
+  const continuousFee = numberValue(classRow?.fee_returning);
   const newFee = numberValue(classRow?.fee_new);
 
-  let baseFee = draft.studentType === "new" ? newFee : returningFee;
+  let baseFee = draft.studentType === "new" ? newFee : continuousFee;
 
   if (draft.scholarshipType === "full") baseFee = 0;
   if (draft.scholarshipType === "half") baseFee = baseFee / 2;
@@ -158,19 +185,28 @@ function getLast4FromStudentId(studentId: string) {
   return studentId.slice(-4).padStart(4, "0");
 }
 
-function buildReceiptNo(studentId: string, existingPayments: AnyRow[]) {
+function countStudentFeePayments(studentId: string, existingPayments: AnyRow[]) {
+  const cleanStudentId = String(studentId || "").trim();
+  if (!cleanStudentId) return 0;
+
+  return existingPayments.filter(
+    (row) => String(row.student_id || "").trim() === cleanStudentId
+  ).length;
+}
+
+function buildReceiptNo(studentId: string, existingPayments: AnyRow[], previousPaymentCount?: number) {
   const now = new Date();
   const yy = String(now.getFullYear()).slice(-2);
   const dd = String(now.getDate()).padStart(2, "0");
   const last4 = getLast4FromStudentId(studentId);
 
-  const prefix = `JVSF/${yy}${dd}/${last4}`;
-  const samePrefixCount = existingPayments.filter((row) =>
-    String(row.receipt_no || "").startsWith(prefix)
-  ).length;
+  const count =
+    typeof previousPaymentCount === "number"
+      ? previousPaymentCount
+      : countStudentFeePayments(studentId, existingPayments);
 
-  const counter = String(samePrefixCount + 1).padStart(2, "0");
-  return `${prefix}/${counter}`;
+  const nextPaymentNumber = String(count + 1).padStart(2, "0");
+  return `JVSF/${yy}${dd}/${last4}/${nextPaymentNumber}`;
 }
 
 export default function RecordPaymentPage() {
@@ -286,6 +322,20 @@ export default function RecordPaymentPage() {
   const academicYear = String(settingsRow?.academic_year || "");
   const currentTerm = String(settingsRow?.current_term || "");
 
+  useEffect(() => {
+    if (!academicYear || !currentTerm) return;
+
+    async function refreshStudentTypesForCurrentTerm() {
+      try {
+        await supabase.rpc("jsms_refresh_student_types");
+      } catch (error) {
+        console.warn("Could not refresh student types:", error);
+      }
+    }
+
+    void refreshStudentTypesForCurrentTerm();
+  }, [academicYear, currentTerm]);
+
   const classButtons = useMemo(() => {
     const availableNames = classes.map((row) => getClassName(row));
     const ordered = CLASS_ORDER.filter((name) => availableNames.includes(name));
@@ -315,6 +365,8 @@ export default function RecordPaymentPage() {
         const classNameValue = getClassName(student);
         if (classNameValue !== selectedClass) return false;
         if (typeof student.active === "boolean" && !student.active) return false;
+        if (typeof student.is_active === "boolean" && !student.is_active) return false;
+        if (String(student.status || "").trim().toLowerCase() === "inactive") return false;
 
         if (!search) return true;
 
@@ -325,7 +377,10 @@ export default function RecordPaymentPage() {
       .map((student) => {
         const studentIdValue = getStudentIdValue(student);
         const paymentHistory = currentTermPayments
-          .filter((row) => String(row.student_id || "") === studentIdValue)
+          .filter((row) => {
+            const paymentStudentId = String(row.student_id || "").trim();
+            return paymentStudentId === studentIdValue || paymentStudentId === String(student.id || "").trim();
+          })
           .sort((a, b) => {
             const aTime = new Date(String(a.created_at || a.payment_date || "")).getTime();
             const bTime = new Date(String(b.created_at || b.payment_date || "")).getTime();
@@ -337,7 +392,7 @@ export default function RecordPaymentPage() {
           0
         );
 
-        const draft = drafts[studentIdValue] || getDefaultDraft(student);
+        const draft = drafts[studentIdValue] || getDefaultDraft(student, currentTerm, academicYear);
         const totals = computeTotals({
           draft,
           classRow: classMap.get(selectedClass) || null,
@@ -367,7 +422,7 @@ export default function RecordPaymentPage() {
     setDrafts((prev) => ({
       ...prev,
       [studentIdValue]: {
-        ...(prev[studentIdValue] || getDefaultDraft(student)),
+        ...(prev[studentIdValue] || getDefaultDraft(student, currentTerm, academicYear)),
         ...patch,
       },
     }));
@@ -375,7 +430,7 @@ export default function RecordPaymentPage() {
 
   async function saveStudentSetup(student: AnyRow) {
     const studentIdValue = getStudentIdValue(student);
-    const draft = drafts[studentIdValue] || getDefaultDraft(student);
+    const draft = drafts[studentIdValue] || getDefaultDraft(student, currentTerm, academicYear);
 
     try {
       setSavingStudentId(studentIdValue);
@@ -388,8 +443,17 @@ export default function RecordPaymentPage() {
         custom: "custom",
       };
 
+      const isNewStudent = draft.studentType === "new";
       const payload = {
-        is_new: draft.studentType === "new",
+        is_new: isNewStudent,
+        is_new_student: isNewStudent,
+        student_type: isNewStudent ? "new" : "continuous",
+        admission_term:
+          isNewStudent && !student.admission_term ? currentTerm || null : student.admission_term || null,
+        admission_academic_year:
+          isNewStudent && !student.admission_academic_year
+            ? academicYear || null
+            : student.admission_academic_year || null,
         scholarship_type: scholarshipTypeMap[draft.scholarshipType],
         scholarship_amount:
           draft.scholarshipType === "custom" ? numberValue(draft.customScholarshipAmount) : 0,
@@ -441,8 +505,22 @@ export default function RecordPaymentPage() {
       setMessage("");
 
       const now = new Date();
-      const receiptNo = buildReceiptNo(paymentModal.studentIdValue, payments);
+
+      const { count: previousPaymentCount, error: countError } = await supabase
+        .from("fee_payments")
+        .select("id", { count: "exact", head: true })
+        .eq("student_id", paymentModal.studentIdValue);
+
+      if (countError) throw countError;
+
+      const receiptNo = buildReceiptNo(
+        paymentModal.studentIdValue,
+        payments,
+        previousPaymentCount || 0
+      );
       const paymentDate = now.toISOString().slice(0, 10);
+      const cumulativePaid = paymentModal.totalPaid + amount;
+      const outstandingBalance = Math.max(paymentModal.totalOwed - cumulativePaid, 0);
 
       const payload = {
         receipt_no: receiptNo,
@@ -452,18 +530,23 @@ export default function RecordPaymentPage() {
         academic_year: academicYear,
         term: currentTerm,
         payment_type: "fees",
+        total_fee: paymentModal.totalOwed,
         amount_paid: amount,
+        cumulative_paid: cumulativePaid,
+        balance_after_payment: outstandingBalance,
+        payment_method: paymentMethod,
         method: paymentMethod,
         payment_date: paymentDate,
+        entered_by: "Admin",
         recorded_by: "Admin",
+        note: paymentNotes || null,
         notes: paymentNotes || null,
         created_at: now.toISOString(),
+        updated_at: now.toISOString(),
       };
 
       const { error } = await supabase.from("fee_payments").insert([payload]);
       if (error) throw error;
-
-      const outstandingBalance = Math.max(paymentModal.balance - amount, 0);
 
       try {
         await notifyFeePayment({
@@ -694,7 +777,7 @@ export default function RecordPaymentPage() {
                           updateDraft(student, { studentType: value as StudentType })
                         }
                         options={[
-                          { value: "returning", label: "Returning Student" },
+                          { value: "continuous", label: "Continuous Student" },
                           { value: "new", label: "New Student" },
                         ]}
                       />

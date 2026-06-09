@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type AnyRow = Record<string, any>;
-type ModuleType = "Fees" | "Books" | "Uniforms";
+type ModuleType = "Fees" | "Admission" | "Books" | "Uniforms";
 
 type UniversalReceipt = {
   id: string;
@@ -107,6 +107,57 @@ function getRealJvsId(row: AnyRow) {
   return text(direct);
 }
 
+
+
+function normalizeUniversalViewReceipt(row: AnyRow): UniversalReceipt {
+  const rawModule = text(row.module || row.source_module || "Fees");
+  const module: ModuleType = rawModule === "Admission" || rawModule === "Books" || rawModule === "Uniforms" ? rawModule : "Fees";
+
+  return {
+    id: text(row.id || row.receipt_number),
+    module,
+    receipt_number: text(row.receipt_number || row.receipt_no || row.reference || row.id),
+    student_id: getRealJvsId(row),
+    student_name: text(row.student_name || row.full_name || row.name),
+    class_name: text(row.class_name || row.className || row.class),
+    item_name: text(row.item_name || row.paid_for || row.payment_type || module),
+    total_amount: numberValue(row.total_amount || row.total_fee || row.amount),
+    amount_paid: numberValue(row.amount_paid || row.amount || row.paid),
+    balance: numberValue(row.balance || row.balance_after_payment || 0),
+    payment_method: text(row.payment_method || row.method || "-"),
+    received_by: text(row.received_by || row.recorded_by || row.created_by_name || row.receipt_issued_by || "Admin"),
+    note: text(row.note || row.notes || row.payment_note || row.payment_status),
+    term: text(row.term),
+    academic_year: text(row.academic_year),
+    payment_date: text(row.payment_date || row.created_at),
+    created_at: text(row.created_at || row.payment_date),
+    raw: row,
+  };
+}
+
+function normalizeAdmissionPayment(row: AnyRow): UniversalReceipt {
+  return {
+    id: text(row.id || row.receipt_number),
+    module: "Admission",
+    receipt_number: text(row.receipt_number || row.receipt_no || row.payment_reference || row.paystack_reference || row.id),
+    student_id: getRealJvsId(row),
+    student_name: text(row.student_name || row.full_name || row.name || row.payer_name),
+    class_name: text(row.class_name || row.className || row.class),
+    item_name: text(row.payment_type || "Admission Form / Admission Payment"),
+    total_amount: numberValue(row.total_amount || row.amount),
+    amount_paid: numberValue(row.amount_paid || row.amount || row.paid),
+    balance: numberValue(row.balance || 0),
+    payment_method: text(row.payment_method || row.method || "-"),
+    received_by: text(row.created_by_name || row.received_by || row.receipt_issued_by || row.recorded_by || "Admin"),
+    note: text(row.note || row.notes || row.payment_note || row.payment_status),
+    term: text(row.term),
+    academic_year: text(row.academic_year),
+    payment_date: text(row.payment_date || row.created_at),
+    created_at: text(row.created_at || row.payment_date),
+    raw: row,
+  };
+}
+
 function normalizeFeePayment(row: AnyRow): UniversalReceipt {
   return {
     id: text(row.id || row.receipt_no),
@@ -116,7 +167,7 @@ function normalizeFeePayment(row: AnyRow): UniversalReceipt {
     student_name: text(row.student_name || row.full_name || row.name),
     class_name: text(row.class_name || row.className || row.class),
     item_name: text(row.payment_type || "School Fees"),
-    total_amount: numberValue(row.total_amount || row.total_owed || row.expected_amount),
+    total_amount: numberValue(row.total_amount || row.total_fee || row.total_owed || row.expected_amount),
     amount_paid: numberValue(row.amount_paid || row.amount || row.paid),
     balance: numberValue(row.balance || row.balance_after_payment),
     payment_method: text(row.method || row.payment_method || "-"),
@@ -212,6 +263,7 @@ function matchSearch(row: UniversalReceipt, query: string) {
 
 function getModuleBadgeStyle(module: ModuleType) {
   if (module === "Fees") return { background: COLORS.successBg, color: COLORS.success };
+  if (module === "Admission") return { background: COLORS.dangerBg, color: COLORS.danger };
   if (module === "Books") return { background: COLORS.blueBg, color: COLORS.blue };
   return { background: COLORS.goldSoft, color: "#92400e" };
 }
@@ -301,16 +353,31 @@ export default function UniversalReceiptsPage() {
     setMessage("");
 
     try {
-      const [feeRows, bookRows, uniformRows] = await Promise.all([
-        safeSelect("fee_payments"),
-        safeSelect("jsms_book_payments"),
-        safeSelect("jsms_uniform_payments"),
-      ]);
+      const universalRows = await safeSelect("universal_receipts");
+
+      const fallbackRows = universalRows.length
+        ? []
+        : await Promise.all([
+            safeSelect("fee_payments"),
+            safeSelect("admission_payments"),
+            safeSelect("jsms_book_payments"),
+            safeSelect("jsms_book_sales"),
+            safeSelect("jsms_uniform_payments"),
+            safeSelect("jsms_uniform_sales"),
+          ]);
+
+      const [feeRows, admissionRows, bookPaymentRows, bookSaleRows, uniformPaymentRows, uniformSaleRows] = fallbackRows.length
+        ? fallbackRows
+        : [[], [], [], [], [], []];
 
       const allRows = [
+        ...universalRows.map(normalizeUniversalViewReceipt),
         ...feeRows.map(normalizeFeePayment),
-        ...bookRows.map(normalizeBookPayment),
-        ...uniformRows.map(normalizeUniformPayment),
+        ...admissionRows.map(normalizeAdmissionPayment),
+        ...bookPaymentRows.map(normalizeBookPayment),
+        ...bookSaleRows.map(normalizeBookPayment),
+        ...uniformPaymentRows.map(normalizeUniformPayment),
+        ...uniformSaleRows.map(normalizeUniformPayment),
       ]
         .filter((row) => row.receipt_number)
         .sort((a, b) => {
@@ -379,6 +446,7 @@ export default function UniversalReceiptsPage() {
 
   const stats = useMemo(() => {
     const fees = filteredReceipts.filter((row) => row.module === "Fees");
+    const admissions = filteredReceipts.filter((row) => row.module === "Admission");
     const books = filteredReceipts.filter((row) => row.module === "Books");
     const uniforms = filteredReceipts.filter((row) => row.module === "Uniforms");
 
@@ -386,6 +454,7 @@ export default function UniversalReceiptsPage() {
       totalReceipts: filteredReceipts.length,
       totalAmount: filteredReceipts.reduce((sum, row) => sum + row.amount_paid, 0),
       feesAmount: fees.reduce((sum, row) => sum + row.amount_paid, 0),
+      admissionsAmount: admissions.reduce((sum, row) => sum + row.amount_paid, 0),
       booksAmount: books.reduce((sum, row) => sum + row.amount_paid, 0),
       uniformsAmount: uniforms.reduce((sum, row) => sum + row.amount_paid, 0),
     };
@@ -474,7 +543,7 @@ export default function UniversalReceiptsPage() {
           >
             <p style={{ margin: 0, fontSize: "12px", color: COLORS.goldSoft }}>Receipt Scope</p>
             <p style={{ margin: "8px 0 0", fontSize: "13px", lineHeight: 1.5 }}>
-              This page searches fees, books, and uniforms separately. No feeding, no net balance.
+              This page searches admission, fees, books, and uniforms receipts together.
             </p>
           </div>
         </aside>
@@ -511,6 +580,7 @@ export default function UniversalReceiptsPage() {
             <SummaryCard title="Receipts Found" value={stats.totalReceipts} />
             <SummaryCard title="Total Received" value={money(stats.totalAmount)} />
             <SummaryCard title="Fees Received" value={money(stats.feesAmount)} />
+            <SummaryCard title="Admission Received" value={money(stats.admissionsAmount)} />
             <SummaryCard title="Books Received" value={money(stats.booksAmount)} />
             <SummaryCard title="Uniforms Received" value={money(stats.uniformsAmount)} />
           </div>
@@ -524,7 +594,7 @@ export default function UniversalReceiptsPage() {
                 style={inputStyle}
               />
 
-              <Select value={moduleFilter} onChange={(value) => setModuleFilter(value as "All" | ModuleType)} options={["All", "Fees", "Books", "Uniforms"]} />
+              <Select value={moduleFilter} onChange={(value) => setModuleFilter(value as "All" | ModuleType)} options={["All", "Fees", "Admission", "Books", "Uniforms"]} />
               <Select value={classFilter} onChange={setClassFilter} options={classOptions} />
               <Select value={termFilter} onChange={setTermFilter} options={["Current Term", "All History"]} />
               <Select value={dateFilter} onChange={setDateFilter} options={["All", "Today", "Last 7 Days", "Last 1 Month", "Custom"]} />

@@ -216,7 +216,7 @@ function getStudentSpecificFee(student: AnyRow) {
 function calcStudentFinancials(student: AnyRow, classRow: AnyRow | null, payments: AnyRow[]) {
   const isNew = Boolean(student.is_new || student.isNew || student.student_type === "new");
   let baseFee = getClassFee(classRow, isNew);
-  let setupLabel = isNew ? "New Student" : "Continuing";
+  let setupLabel = isNew ? "New Student" : "Continuous Student";
 
   const scholarshipType = normalizeText(student.scholarship_type || student.scholarship || student.fee_type);
   const specificFee = getStudentSpecificFee(student);
@@ -602,7 +602,7 @@ export default function FeesAdminPage() {
             <div style={{ position: "relative", display: "flex", gap: "10px" }}>
               <input
                 type="text"
-                placeholder="Search receipt number"
+                placeholder="Search receipt number, student ID, student name, module"
                 value={receiptSearch}
                 onChange={(e) => {
                   setReceiptSearch(e.target.value);
@@ -714,7 +714,7 @@ export default function FeesAdminPage() {
 
           <Section title="Class Fee Preview">
             <ReportTable
-              headers={["Class", "Continuing Fee", "New Student Fee"]}
+              headers={["Class", "Continuous Fee", "New Student Fee"]}
               rows={classFeePreview.map((row) => [row.className, formatMoney(row.feeReturning), formatMoney(row.feeNew)])}
             />
           </Section>
