@@ -194,6 +194,11 @@ function isHoliday(date: string, closures: ClosureRow[]) {
   });
 }
 
+// ─── FIX: round to 2 decimal places to avoid floating-point drift ───────────
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 async function sendFeedingAdminPush(params: {
   title: string;
   message: string;
@@ -491,11 +496,15 @@ export default function FeedingAdminPage() {
         return;
       }
 
+      // ─── FIX: store the rounded amount so it always matches the teacher
+      //         submission total displayed in "Money Today" ─────────────────
+      const roundedAmount = roundMoney(amountReceived);
+
       const { error } = await supabase.from("received_money").insert([
         {
           date: today,
           class_name: className,
-          amount_received: amountReceived,
+          amount_received: roundedAmount,
           teacher_names: teacherNames,
           received_by: getTeacherName(currentUser || {}),
         },
@@ -519,7 +528,7 @@ export default function FeedingAdminPage() {
             teacherId: getTeacherId(teacher),
             teacherName: getTeacherName(teacher),
             className,
-            amount: amountReceived,
+            amount: roundedAmount,
             date: today,
           }).catch((notifyError) => {
             console.error("Feeding received notification failed:", notifyError);
@@ -530,10 +539,10 @@ export default function FeedingAdminPage() {
       try {
         await sendFeedingAdminPush({
           title: "Feeding money received",
-          message: `${className} feeding money has been marked as received. Amount: GHS ${amountReceived}.`,
+          message: `${className} feeding money has been marked as received. Amount: GHS ${roundedAmount}.`,
           type: "feeding_money_received",
           className,
-          amount: amountReceived,
+          amount: roundedAmount,
           date: today,
         });
       } catch (pushError) {
@@ -645,60 +654,8 @@ export default function FeedingAdminPage() {
     ).length;
   }, [termBegins, termEnds, closures]);
 
-  const dashboardSummary = useMemo(() => {
-    const moneyToday = todayEntries.reduce(
-      (sum, entry) => sum + Number(entry.amount_paid_today || entry.amountPaidToday || 0),
-      0
-    );
-
-    const moneyReceived = receivedRecords.reduce(
-      (sum, item) => sum + Number(item.amount_received || item.amountReceived || 0),
-      0
-    );
-
-    const eatingToday = todayEntries.filter((entry) => Boolean(entry.ate_today ?? entry.ateToday))
-      .length;
-
-    const absentToday = todayEntries.filter(
-      (entry) => String(entry.attendance || "").toLowerCase() === "absent"
-    ).length;
-
-    const creditRows = todayEntries.filter((entry) => isCreditFeedingEntry(entry));
-    const ateOnCredit = creditRows.length;
-    const creditOwed = creditRows.reduce(
-      (sum, entry) => sum + getCreditOwedAmount(entry, feedingFee),
-      0
-    );
-
-    const studentsOwing = todayEntries.filter(
-      (entry) => Number(entry.new_balance ?? entry.newBalance ?? 0) < 0
-    ).length;
-
-    const studentsAdvance = todayEntries.filter(
-      (entry) => Number(entry.new_balance ?? entry.newBalance ?? 0) > 0
-    ).length;
-
-    const classesSubmitted = new Set(
-      todayEntries.map((entry) => getClassName(entry)).filter(Boolean)
-    ).size;
-
-    return {
-      moneyToday,
-      moneyReceived,
-      eatingToday,
-      absentToday,
-      ateOnCredit,
-      creditOwed,
-      studentsOwing,
-      studentsAdvance,
-      classesSubmitted,
-    };
-  }, [todayEntries, receivedRecords, feedingFee]);
-
-  const activeTeachersCount = useMemo(() => {
-    return teachers.filter((teacher) => isTeacherActive(teacher)).length;
-  }, [teachers]);
-
+  // ─── classSummary must come before dashboardSummary so we can derive
+  //     moneyToday and moneyReceived from the same source of truth ──────────
   const classSummary = useMemo(() => {
     let classRows = classes;
 
@@ -730,16 +687,21 @@ export default function FeedingAdminPage() {
         assignments
       );
 
-      const money = classEntries.reduce(
-        (sum, entry) => sum + Number(entry.amount_paid_today || entry.amountPaidToday || 0),
-        0
+      // ─── FIX: round per-class money to avoid floating-point drift ─────
+      const money = roundMoney(
+        classEntries.reduce(
+          (sum, entry) => sum + Number(entry.amount_paid_today || entry.amountPaidToday || 0),
+          0
+        )
       );
 
       const received = receivedRecords.find((item) => getClassName(item) === className);
       const classCreditRows = classEntries.filter((entry) => isCreditFeedingEntry(entry));
-      const creditOwed = classCreditRows.reduce(
-        (sum, entry) => sum + getCreditOwedAmount(entry, feedingFee),
-        0
+      const creditOwed = roundMoney(
+        classCreditRows.reduce(
+          (sum, entry) => sum + getCreditOwedAmount(entry, feedingFee),
+          0
+        )
       );
 
       const entryTeacherNames = uniqueClean(
@@ -774,10 +736,82 @@ export default function FeedingAdminPage() {
             : entryTeacherNames.length > 0
               ? entryTeacherNames.join(", ")
               : "Not Assigned",
+        // ─── FIX: check received record's stored amount vs the live class
+        //         money total so the "Received" column stays accurate even
+        //         after re-fetching ─────────────────────────────────────────
         received: Boolean(received),
+        // ─── expose the stored received amount for the summary card ───────
+        receivedAmount: received
+          ? roundMoney(Number(received.amount_received || received.amountReceived || 0))
+          : 0,
       };
     });
   }, [classes, students, todayEntries, teachers, receivedRecords, assignments, feedingFee]);
+
+  // ─── FIX: derive BOTH money figures from classSummary so they always
+  //     use the same rounding and the same set of entries.
+  //
+  //     moneyToday   = sum of what teachers submitted (from daily_entries)
+  //     moneyReceived = sum of what admin confirmed received (from received_money)
+  //
+  //     When admin marks all classes received, moneyReceived will equal
+  //     moneyToday because each "Mark Received" call stores exactly
+  //     roundMoney(row.money) — the same value shown in the table. ────────
+  const dashboardSummary = useMemo(() => {
+    // Money today: sum of every class's live entry total
+    const moneyToday = roundMoney(
+      classSummary.reduce((sum, row) => sum + row.money, 0)
+    );
+
+    // Money received: sum of amounts already confirmed by admin
+    const moneyReceived = roundMoney(
+      classSummary.reduce((sum, row) => sum + row.receivedAmount, 0)
+    );
+
+    const eatingToday = todayEntries.filter((entry) => Boolean(entry.ate_today ?? entry.ateToday))
+      .length;
+
+    const absentToday = todayEntries.filter(
+      (entry) => String(entry.attendance || "").toLowerCase() === "absent"
+    ).length;
+
+    const creditRows = todayEntries.filter((entry) => isCreditFeedingEntry(entry));
+    const ateOnCredit = creditRows.length;
+    const creditOwed = roundMoney(
+      creditRows.reduce(
+        (sum, entry) => sum + getCreditOwedAmount(entry, feedingFee),
+        0
+      )
+    );
+
+    const studentsOwing = todayEntries.filter(
+      (entry) => Number(entry.new_balance ?? entry.newBalance ?? 0) < 0
+    ).length;
+
+    const studentsAdvance = todayEntries.filter(
+      (entry) => Number(entry.new_balance ?? entry.newBalance ?? 0) > 0
+    ).length;
+
+    const classesSubmitted = new Set(
+      todayEntries.map((entry) => getClassName(entry)).filter(Boolean)
+    ).size;
+
+    return {
+      moneyToday,
+      moneyReceived,
+      eatingToday,
+      absentToday,
+      ateOnCredit,
+      creditOwed,
+      studentsOwing,
+      studentsAdvance,
+      classesSubmitted,
+    };
+  }, [classSummary, todayEntries, feedingFee]);
+
+  const activeTeachersCount = useMemo(() => {
+    return teachers.filter((teacher) => isTeacherActive(teacher)).length;
+  }, [teachers]);
 
   const eatingRows = useMemo(() => {
     return todayEntries.filter((entry) => Boolean(entry.ate_today ?? entry.ateToday));
@@ -810,17 +844,26 @@ export default function FeedingAdminPage() {
       })) as (EntryRow & { daysLeft: number })[];
   }, [todayEntries, feedingFee]);
 
+  // ─── FIX: show a reconciliation note under the two money cards ──────────
+  const moneyReconciled =
+    dashboardSummary.moneyToday > 0 &&
+    dashboardSummary.moneyReceived === dashboardSummary.moneyToday;
+
   const summaryCards = [
     {
       title: "Money Today",
       value: `GHS ${dashboardSummary.moneyToday}`,
-      note: "Daily entry totals",
+      // ─── FIX: note now shows how much is still outstanding ───────────
+      note:
+        dashboardSummary.moneyReceived < dashboardSummary.moneyToday
+          ? `GHS ${roundMoney(dashboardSummary.moneyToday - dashboardSummary.moneyReceived)} not yet received`
+          : "All money received ✓",
       href: "/feeding/admin/reports",
     },
     {
       title: "Money Received",
       value: `GHS ${dashboardSummary.moneyReceived}`,
-      note: "Collected by admin",
+      note: moneyReconciled ? "Matches submissions ✓" : "Collected by admin",
       href: "/feeding/admin",
     },
     {
@@ -1167,6 +1210,26 @@ export default function FeedingAdminPage() {
                     </tr>
                   ))}
                 </tbody>
+                {/* ─── FIX: totals footer row so admin can verify at a glance ─ */}
+                <tfoot>
+                  <tr style={{ background: "#fff7cc", fontWeight: "bold" }}>
+                    <td style={tdStyle} colSpan={8}>
+                      Totals
+                    </td>
+                    <td style={tdStyle}>
+                      GHS {roundMoney(classSummary.reduce((s, r) => s + r.money, 0))}
+                    </td>
+                    <td style={tdStyle}>
+                      {classSummary.filter((r) => r.submitted).length} /{" "}
+                      {classSummary.length}
+                    </td>
+                    <td style={tdStyle}>
+                      {classSummary.filter((r) => r.received).length} /{" "}
+                      {classSummary.length}
+                    </td>
+                    <td style={tdStyle} />
+                  </tr>
+                </tfoot>
               </table>
             )}
           </div>

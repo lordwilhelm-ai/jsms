@@ -19,12 +19,23 @@ function generateRandomStudentId(existingStudents: any[]) {
 }
 
 function mapDbStudent(row: any) {
+  const firstName = row.first_name || "";
+  const otherName = row.other_name || "";
+  const lastName = row.last_name || "";
+  const fullName =
+    row.full_name ||
+    [firstName, otherName, lastName].filter(Boolean).join(" ").trim() ||
+    row.student_name ||
+    "Unnamed Student";
+
   return {
     id: row.id,
-    studentId: row.student_id,
-    firstName: row.first_name || "",
-    otherName: row.other_name || "",
-    lastName: row.last_name || "",
+    studentId: row.student_id || row.jvs_id || "",
+    jvsId: row.jvs_id || row.student_id || "",
+    fullName,
+    firstName,
+    otherName,
+    lastName,
     classId: row.class_id || "",
     className: row.class_name || "",
     gender: row.gender || "",
@@ -37,11 +48,19 @@ function mapDbStudent(row: any) {
     guardianPhone: row.guardian_phone || "",
     emergencyContactName: row.emergency_contact_name || "",
     emergencyContactPhone: row.emergency_contact_phone || "",
-    medicalNotes: row.medical_notes || "",
-    status: row.status || "Active",
+    medicalNotes: row.medical_notes || row.health_note || "",
+    status: row.status || (row.is_active === false || row.active === false ? "Inactive" : "Active"),
     photoUrl: row.photo_url || "",
+    isActive: row.is_active !== false && row.active !== false,
     createdAt: row.created_at,
   };
+}
+
+function getStudentInitials(student: any) {
+  const source = String(student.fullName || student.studentId || "JV").trim();
+  const parts = source.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  return source.slice(0, 2).toUpperCase();
 }
 
 export default function Students() {
@@ -59,6 +78,13 @@ export default function Students() {
 
   const [bulkDeleteMode, setBulkDeleteMode] = useState(false);
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+
+  const [showPromoteModal, setShowPromoteModal] = useState(false);
+  const [promoteMode, setPromoteMode] = useState<"individual" | "class" | "all">("all");
+  const [promoteStudentId, setPromoteStudentId] = useState("");
+  const [promoteFromClass, setPromoteFromClass] = useState("");
+  const [promoteToClassId, setPromoteToClassId] = useState("");
+  const [promoteUseAutoNext, setPromoteUseAutoNext] = useState(true);
 
   const [singleForm, setSingleForm] = useState({
     firstName: "",
@@ -119,16 +145,28 @@ export default function Students() {
     if (!query) return byClass;
 
     return byClass.filter((student) => {
-      const fullName =
-        `${student.firstName} ${student.otherName} ${student.lastName}`.toLowerCase();
+      const searchableText = [
+        student.fullName,
+        student.firstName,
+        student.otherName,
+        student.lastName,
+        student.studentId,
+        student.jvsId,
+        student.className,
+        student.gender,
+        student.parentName,
+        student.parentPhone,
+        student.guardianName,
+        student.guardianPhone,
+        student.emergencyContactName,
+        student.emergencyContactPhone,
+        student.status,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
 
-      return (
-        fullName.includes(query) ||
-        String(student.studentId || "").toLowerCase().includes(query) ||
-        String(student.className || "").toLowerCase().includes(query) ||
-        String(student.parentName || "").toLowerCase().includes(query) ||
-        String(student.guardianName || "").toLowerCase().includes(query)
-      );
+      return searchableText.includes(query);
     });
   }, [students, selectedClassFilter, searchText]);
 
@@ -244,6 +282,10 @@ export default function Students() {
 
     const payload = {
       student_id: studentId,
+      full_name: [singleForm.firstName, singleForm.otherName, singleForm.lastName]
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .join(" "),
       first_name: singleForm.firstName.trim(),
       other_name: singleForm.otherName.trim() || null,
       last_name: singleForm.lastName.trim(),
@@ -322,6 +364,7 @@ export default function Students() {
 
       const record = {
         student_id: generateRandomStudentId(currentStudents),
+        full_name: [firstName, lastName].filter(Boolean).join(" "),
         first_name: firstName,
         other_name: null,
         last_name: lastName,
@@ -370,14 +413,55 @@ export default function Students() {
     setBulkText("");
   };
 
-  const handlePromoteAll = async () => {
-    if (students.length === 0) {
-      alert("There are no students to promote.");
+  const openPromoteModal = (
+    mode: "individual" | "class" | "all",
+    student?: any
+  ) => {
+    setPromoteMode(mode);
+    setPromoteStudentId(student?.id || "");
+    setPromoteFromClass(
+      mode === "individual"
+        ? student?.className || ""
+        : selectedClassFilter !== "All"
+          ? selectedClassFilter
+          : ""
+    );
+    setPromoteToClassId("");
+    setPromoteUseAutoNext(true);
+    setShowPromoteModal(true);
+  };
+
+  const getSelectedPromoteStudents = () => {
+    if (promoteMode === "individual") {
+      return students.filter((student) => student.id === promoteStudentId);
+    }
+
+    if (promoteMode === "class") {
+      return students.filter((student) => student.className === promoteFromClass);
+    }
+
+    return students;
+  };
+
+  const handlePromoteStudents = async () => {
+    const selectedStudents = getSelectedPromoteStudents();
+
+    if (selectedStudents.length === 0) {
+      alert("No students found for this promotion.");
+      return;
+    }
+
+    const selectedTargetClass = promoteToClassId
+      ? getClassById(promoteToClassId)
+      : null;
+
+    if (!promoteUseAutoNext && !selectedTargetClass) {
+      alert("Select the class to promote to.");
       return;
     }
 
     const confirmed = window.confirm(
-      "Are you sure you want to promote all students? Final class students will leave the system."
+      `Promote ${selectedStudents.length} student(s)? Final-class students will be marked as Completed, not deleted.`
     );
 
     if (!confirmed) return;
@@ -385,35 +469,33 @@ export default function Students() {
     setBusy(true);
 
     try {
-      const studentsToDelete = students.filter(
-        (student) => getNextClass(student.className) === null
-      );
+      for (const student of selectedStudents) {
+        const targetClass = promoteUseAutoNext
+          ? getNextClass(student.className)
+          : selectedTargetClass;
 
-      const studentsToUpdate = students.filter(
-        (student) => getNextClass(student.className) !== null
-      );
+        if (!targetClass) {
+          const { error: completeError } = await supabase
+            .from("students")
+            .update({
+              status: "Completed",
+              is_active: false,
+              active: false,
+            })
+            .eq("id", student.id);
 
-      if (studentsToDelete.length > 0) {
-        const deleteIds = studentsToDelete.map((student) => student.id);
-
-        const { error: deleteError } = await supabase
-          .from("students")
-          .delete()
-          .in("id", deleteIds);
-
-        if (deleteError) throw deleteError;
-      }
-
-      for (const student of studentsToUpdate) {
-        const nextClass = getNextClass(student.className);
-
-        if (!nextClass) continue;
+          if (completeError) throw completeError;
+          continue;
+        }
 
         const { error: updateError } = await supabase
           .from("students")
           .update({
-            class_id: nextClass.id,
-            class_name: nextClass.class_name,
+            class_id: targetClass.id,
+            class_name: targetClass.class_name,
+            status: "Active",
+            is_active: true,
+            active: true,
           })
           .eq("id", student.id);
 
@@ -423,7 +505,8 @@ export default function Students() {
       await fetchStudents();
       setSelectedClassFilter("All");
       setSelectedStudentIds([]);
-      alert("Students promoted successfully.");
+      setShowPromoteModal(false);
+      alert("Promotion completed successfully.");
     } catch (error) {
       console.error(error);
       alert("Failed to promote students.");
@@ -476,6 +559,10 @@ export default function Students() {
     const { data, error } = await supabase
       .from("students")
       .update({
+        full_name: [editForm.firstName, editForm.otherName, editForm.lastName]
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .join(" "),
         first_name: editForm.firstName.trim(),
         other_name: editForm.otherName.trim() || null,
         last_name: editForm.lastName.trim(),
@@ -628,7 +715,7 @@ export default function Students() {
         <div>
           <h1 className="text-xl font-bold text-gray-800">Students</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Add, bulk add, filter, search, edit, delete and promote students.
+            View student photos, full names, IDs, guardians, status, and promotions.
           </p>
         </div>
 
@@ -650,11 +737,11 @@ export default function Students() {
           </button>
 
           <button
-            onClick={handlePromoteAll}
+            onClick={() => openPromoteModal("all")}
             className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600"
             disabled={busy || bulkDeleteMode}
           >
-            Promote All
+            Promote
           </button>
 
           {!bulkDeleteMode ? (
@@ -762,110 +849,318 @@ export default function Students() {
         )}
       </div>
 
-      <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">
-        <table className="min-w-full text-left text-sm">
-          <thead className="bg-gray-50 text-gray-600">
-            <tr>
-              {bulkDeleteMode && (
-                <th className="px-6 py-4 font-semibold">
-                  <input
-                    type="checkbox"
-                    checked={allVisibleSelected}
-                    onChange={handleSelectAllVisible}
-                  />
-                </th>
-              )}
-              <th className="px-6 py-4 font-semibold">Student ID</th>
-              <th className="px-6 py-4 font-semibold">First Name</th>
-              <th className="px-6 py-4 font-semibold">Other Name</th>
-              <th className="px-6 py-4 font-semibold">Last Name</th>
-              <th className="px-6 py-4 font-semibold">Class</th>
-              <th className="px-6 py-4 font-semibold">Gender</th>
-              <th className="px-6 py-4 font-semibold">Parent Name</th>
-              <th className="px-6 py-4 font-semibold">Parent Phone</th>
-              <th className="px-6 py-4 font-semibold">Guardian Name</th>
-              <th className="px-6 py-4 font-semibold">Guardian Phone</th>
-              <th className="px-6 py-4 font-semibold">Status</th>
-              <th className="px-6 py-4 font-semibold">Actions</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {loading ? (
+      <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-slate-50 text-slate-600">
               <tr>
-                <td
-                  colSpan={bulkDeleteMode ? 13 : 12}
-                  className="px-6 py-8 text-center text-gray-500"
-                >
-                  Loading students...
-                </td>
+                {bulkDeleteMode && (
+                  <th className="px-5 py-4 font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={handleSelectAllVisible}
+                    />
+                  </th>
+                )}
+                <th className="px-5 py-4 font-semibold">Student</th>
+                <th className="px-5 py-4 font-semibold">Class</th>
+                <th className="px-5 py-4 font-semibold">Gender</th>
+                <th className="px-5 py-4 font-semibold">Parent / Guardian</th>
+                <th className="px-5 py-4 font-semibold">Emergency</th>
+                <th className="px-5 py-4 font-semibold">Status</th>
+                <th className="px-5 py-4 font-semibold">Actions</th>
               </tr>
-            ) : filteredStudents.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={bulkDeleteMode ? 13 : 12}
-                  className="px-6 py-8 text-center text-gray-500"
-                >
-                  No students found.
-                </td>
-              </tr>
-            ) : (
-              filteredStudents.map((student, index) => (
-                <tr
-                  key={student.id}
-                  className={
-                    index !== filteredStudents.length - 1
-                      ? "border-b border-gray-100"
-                      : ""
-                  }
-                >
-                  {bulkDeleteMode && (
-                    <td className="px-6 py-4">
-                      <input
-                        type="checkbox"
-                        checked={selectedStudentIds.includes(student.id)}
-                        onChange={() => toggleStudentSelection(student.id)}
-                      />
-                    </td>
-                  )}
+            </thead>
 
-                  <td className="px-6 py-4 font-medium text-gray-800">
-                    {student.studentId}
-                  </td>
-                  <td className="px-6 py-4 text-gray-700">{student.firstName}</td>
-                  <td className="px-6 py-4 text-gray-700">{student.otherName || "-"}</td>
-                  <td className="px-6 py-4 text-gray-700">{student.lastName}</td>
-                  <td className="px-6 py-4 text-gray-700">{student.className}</td>
-                  <td className="px-6 py-4 text-gray-700">{student.gender || "-"}</td>
-                  <td className="px-6 py-4 text-gray-700">{student.parentName || "-"}</td>
-                  <td className="px-6 py-4 text-gray-700">{student.parentPhone || "-"}</td>
-                  <td className="px-6 py-4 text-gray-700">{student.guardianName || "-"}</td>
-                  <td className="px-6 py-4 text-gray-700">{student.guardianPhone || "-"}</td>
-                  <td className="px-6 py-4 text-gray-700">{student.status || "-"}</td>
-                  <td className="px-6 py-4">
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        onClick={() => openEditModal(student)}
-                        className="rounded-lg bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-200"
-                        disabled={busy || bulkDeleteMode}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDeleteStudent(student.id)}
-                        className="rounded-lg bg-red-100 px-3 py-1 text-xs font-semibold text-red-700 hover:bg-red-200"
-                        disabled={busy || bulkDeleteMode}
-                      >
-                        Delete
-                      </button>
-                    </div>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td
+                    colSpan={bulkDeleteMode ? 8 : 7}
+                    className="px-6 py-8 text-center text-gray-500"
+                  >
+                    Loading students...
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : filteredStudents.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={bulkDeleteMode ? 8 : 7}
+                    className="px-6 py-8 text-center text-gray-500"
+                  >
+                    No students found.
+                  </td>
+                </tr>
+              ) : (
+                filteredStudents.map((student, index) => (
+                  <tr
+                    key={student.id}
+                    className={`transition hover:bg-amber-50/50 ${
+                      index !== filteredStudents.length - 1
+                        ? "border-b border-gray-100"
+                        : ""
+                    }`}
+                  >
+                    {bulkDeleteMode && (
+                      <td className="px-5 py-4">
+                        <input
+                          type="checkbox"
+                          checked={selectedStudentIds.includes(student.id)}
+                          onChange={() => toggleStudentSelection(student.id)}
+                        />
+                      </td>
+                    )}
+
+                    <td className="px-5 py-4">
+                      <div className="flex min-w-[260px] items-center gap-3">
+                        {student.photoUrl ? (
+                          <img
+                            src={student.photoUrl}
+                            alt={student.fullName}
+                            className="h-12 w-12 rounded-2xl object-cover ring-2 ring-amber-200"
+                          />
+                        ) : (
+                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-emerald-600 text-sm font-black text-white shadow-md">
+                            {getStudentInitials(student)}
+                          </div>
+                        )}
+
+                        <div>
+                          <div className="font-bold text-slate-900">
+                            {student.fullName}
+                          </div>
+                          <div className="mt-1 text-xs font-semibold text-amber-700">
+                            {student.studentId || student.jvsId || "No ID"}
+                          </div>
+                          {student.residence && (
+                            <div className="mt-0.5 text-xs text-slate-500">
+                              {student.residence}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+
+                    <td className="px-5 py-4 font-semibold text-slate-700">
+                      {student.className || "-"}
+                    </td>
+                    <td className="px-5 py-4 text-slate-700">
+                      {student.gender || "-"}
+                    </td>
+                    <td className="px-5 py-4 text-slate-700">
+                      <div className="min-w-[180px]">
+                        <div className="font-semibold">
+                          {student.parentName || student.guardianName || "-"}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {student.parentPhone || student.guardianPhone || "-"}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-5 py-4 text-slate-700">
+                      <div className="min-w-[150px]">
+                        <div className="font-semibold">
+                          {student.emergencyContactName || "-"}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {student.emergencyContactPhone || "-"}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-5 py-4">
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-bold ${
+                          String(student.status || "").toLowerCase() === "active" &&
+                          student.isActive
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-red-100 text-red-700"
+                        }`}
+                      >
+                        {student.status || "-"}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => openEditModal(student)}
+                          className="rounded-lg bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-200"
+                          disabled={busy || bulkDeleteMode}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => openPromoteModal("individual", student)}
+                          className="rounded-lg bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-200"
+                          disabled={busy || bulkDeleteMode}
+                        >
+                          Promote
+                        </button>
+                        <button
+                          onClick={() => handleDeleteStudent(student.id)}
+                          className="rounded-lg bg-red-100 px-3 py-1 text-xs font-semibold text-red-700 hover:bg-red-200"
+                          disabled={busy || bulkDeleteMode}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
+
+      {showPromoteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-black text-slate-900">
+                  Promote Students
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Promote one student, one class, or all students. Final-class
+                  students will be marked as Completed, not deleted.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowPromoteModal(false)}
+                className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-200"
+                disabled={busy}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              <button
+                onClick={() => {
+                  setPromoteMode("individual");
+                  if (!promoteStudentId && filteredStudents[0]) {
+                    setPromoteStudentId(filteredStudents[0].id);
+                    setPromoteFromClass(filteredStudents[0].className || "");
+                  }
+                }}
+                className={`rounded-2xl border px-4 py-3 text-left text-sm font-bold ${
+                  promoteMode === "individual"
+                    ? "border-amber-400 bg-amber-50 text-amber-800"
+                    : "border-slate-200 bg-white text-slate-700"
+                }`}
+              >
+                Individual
+              </button>
+              <button
+                onClick={() => setPromoteMode("class")}
+                className={`rounded-2xl border px-4 py-3 text-left text-sm font-bold ${
+                  promoteMode === "class"
+                    ? "border-amber-400 bg-amber-50 text-amber-800"
+                    : "border-slate-200 bg-white text-slate-700"
+                }`}
+              >
+                Class
+              </button>
+              <button
+                onClick={() => setPromoteMode("all")}
+                className={`rounded-2xl border px-4 py-3 text-left text-sm font-bold ${
+                  promoteMode === "all"
+                    ? "border-amber-400 bg-amber-50 text-amber-800"
+                    : "border-slate-200 bg-white text-slate-700"
+                }`}
+              >
+                All Students
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              {promoteMode === "individual" && (
+                <select
+                  value={promoteStudentId}
+                  onChange={(e) => {
+                    const selected = students.find(
+                      (student) => student.id === e.target.value
+                    );
+                    setPromoteStudentId(e.target.value);
+                    setPromoteFromClass(selected?.className || "");
+                  }}
+                  className="rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-amber-500"
+                >
+                  <option value="">Select student</option>
+                  {filteredStudents.map((student) => (
+                    <option key={student.id} value={student.id}>
+                      {student.fullName} - {student.studentId}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {promoteMode === "class" && (
+                <select
+                  value={promoteFromClass}
+                  onChange={(e) => setPromoteFromClass(e.target.value)}
+                  className="rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-amber-500"
+                >
+                  <option value="">Select class to promote</option>
+                  {classes.map((classItem) => (
+                    <option key={classItem.id} value={classItem.class_name}>
+                      {classItem.class_name}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              <select
+                value={promoteUseAutoNext ? "auto" : promoteToClassId}
+                onChange={(e) => {
+                  if (e.target.value === "auto") {
+                    setPromoteUseAutoNext(true);
+                    setPromoteToClassId("");
+                    return;
+                  }
+
+                  setPromoteUseAutoNext(false);
+                  setPromoteToClassId(e.target.value);
+                }}
+                className="rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-amber-500"
+              >
+                <option value="auto">Promote to next class automatically</option>
+                {classes.map((classItem) => (
+                  <option key={classItem.id} value={classItem.id}>
+                    Promote to {classItem.class_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mt-5 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
+              Selected:{" "}
+              <span className="font-bold text-slate-900">
+                {getSelectedPromoteStudents().length}
+              </span>{" "}
+              student(s)
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => setShowPromoteModal(false)}
+                className="rounded-xl bg-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-300"
+                disabled={busy}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePromoteStudents}
+                className="rounded-xl bg-amber-500 px-5 py-2 text-sm font-bold text-white hover:bg-amber-600"
+                disabled={busy}
+              >
+                {busy ? "Promoting..." : "Confirm Promotion"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSingleModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

@@ -35,11 +35,9 @@ function getClassName(row: Record<string, any>) {
 function getStudentName(row: Record<string, any>) {
   const fullName = String(row.full_name || row.fullName || "").trim();
   if (fullName) return fullName;
-
   const first = String(row.first_name || "").trim();
   const other = String(row.other_name || "").trim();
   const last = String(row.last_name || "").trim();
-
   return `${first} ${other} ${last}`.replace(/\s+/g, " ").trim();
 }
 
@@ -57,28 +55,21 @@ function getAssignedClasses(row: Record<string, any>): string[] {
   if (Array.isArray(row.assigned_classes)) {
     return row.assigned_classes.map((item: unknown) => String(item).trim()).filter(Boolean);
   }
-
   if (typeof row.assigned_classes === "string") {
     const raw = row.assigned_classes.trim();
     if (!raw) return [];
-
     try {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         return parsed.map((item) => String(item).trim()).filter(Boolean);
       }
     } catch {
-      return raw
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
+      return raw.split(",").map((item) => item.trim()).filter(Boolean);
     }
   }
-
   if (typeof row.assigned_class === "string" && row.assigned_class.trim()) {
     return [row.assigned_class.trim()];
   }
-
   return [];
 }
 
@@ -105,17 +96,8 @@ function isActiveStudent(row: Student) {
     .toLowerCase();
 
   const inactiveWords = [
-    "inactive",
-    "not active",
-    "left",
-    "withdrawn",
-    "transfer",
-    "transferred",
-    "deleted",
-    "disabled",
-    "graduated",
-    "completed",
-    "suspended",
+    "inactive", "not active", "left", "withdrawn", "transfer",
+    "transferred", "deleted", "disabled", "graduated", "completed", "suspended",
   ];
 
   if (row.inactive === true) return false;
@@ -131,15 +113,10 @@ function isActiveStudent(row: Student) {
   if (row.deleted_at) return false;
   if (row.left_date) return false;
   if (row.date_left) return false;
-
   if (row.active === false) return false;
   if (row.is_active === false) return false;
   if (row.isActive === false) return false;
-
-  if (status && inactiveWords.some((word) => status.includes(word))) {
-    return false;
-  }
-
+  if (status && inactiveWords.some((word) => status.includes(word))) return false;
   return true;
 }
 
@@ -157,7 +134,6 @@ async function sendFeedingSubmissionPush(params: {
 }) {
   const title = "Feeding submitted";
   const message = `${params.className} feeding entry for ${params.date} has been submitted. Present: ${params.presentCount}, Absent: ${params.absentCount}, Eating: ${params.eatingCount}.`;
-
   await supabase.functions.invoke("send-jsms-push", {
     body: {
       title,
@@ -166,11 +142,7 @@ async function sendFeedingSubmissionPush(params: {
       module: "feeding",
       type: "feeding_submission",
       recipient_roles: ["owner", "admin", "headmaster"],
-      recipients: [
-        { role: "owner" },
-        { role: "admin" },
-        { role: "headmaster" },
-      ],
+      recipients: [{ role: "owner" }, { role: "admin" }, { role: "headmaster" }],
       data: {
         class_name: params.className,
         date: params.date,
@@ -200,51 +172,29 @@ function calculateAdminFeeding(params: {
   minimumToEat: number;
   ateWithoutPay: boolean;
 }) {
-  const {
-    previousBalance,
-    amountPaidToday,
-    attendance,
-    feedingFee,
-    minimumToEat,
-    ateWithoutPay,
-  } = params;
-
+  const { previousBalance, amountPaidToday, attendance, feedingFee, minimumToEat, ateWithoutPay } = params;
   const availableBeforeMeal = Number(previousBalance) + Number(amountPaidToday);
 
   if (attendance === "absent") {
-    return {
-      availableBeforeMeal,
-      ateToday: false,
-      newBalance: availableBeforeMeal,
-    };
+    return { availableBeforeMeal, ateToday: false, newBalance: availableBeforeMeal };
   }
 
   const qualifiesNormally = availableBeforeMeal >= minimumToEat;
   const ateToday = ateWithoutPay || qualifiesNormally;
-
   const newBalance = ateToday ? availableBeforeMeal - feedingFee : availableBeforeMeal;
 
-  return {
-    availableBeforeMeal,
-    ateToday,
-    newBalance,
-  };
+  return { availableBeforeMeal, ateToday, newBalance };
 }
 
 function getCreditOwedAmount(row: Record<string, any>, feedingFee: number) {
   const newBalance = Number(row.new_balance ?? row.newBalance ?? 0);
-  const availableBeforeMeal = Number(
-    row.available_before_meal ?? row.availableBeforeMeal ?? 0
-  );
+  const availableBeforeMeal = Number(row.available_before_meal ?? row.availableBeforeMeal ?? 0);
   const paidToday = Number(row.amount_paid_today ?? row.amountPaidToday ?? 0);
 
   if (newBalance < 0) return Math.abs(newBalance);
-
   const shortfall = feedingFee - availableBeforeMeal;
   if (shortfall > 0) return shortfall;
-
   if (paidToday <= 0) return feedingFee;
-
   return 0;
 }
 
@@ -261,7 +211,6 @@ async function rebuildStudentBalancesFromLedger() {
   if (error) throw error;
 
   const latestByStudent = new Map<string, LedgerRow>();
-
   (data || []).forEach((row) => {
     const studentId = getStudentIdValue(row);
     if (!studentId) return;
@@ -303,8 +252,15 @@ export default function AdminFillClassPage() {
   const [ateWithoutPayMap, setAteWithoutPayMap] = useState<OverrideMap>({});
   const [balances, setBalances] = useState<BalanceMap>({});
   const [existingEntries, setExistingEntries] = useState<DailyEntry[]>([]);
+  // FIX: teacherCreditEntries now only holds entries for the selected class
   const [teacherCreditEntries, setTeacherCreditEntries] = useState<DailyEntry[]>([]);
   const [teacherAssignmentsByClass, setTeacherAssignmentsByClass] = useState<Record<string, string[]>>({});
+
+  // FIX: track whether the class was already submitted by a teacher so we show the banner
+  const [teacherSubmittedInfo, setTeacherSubmittedInfo] = useState<{
+    submittedByName: string;
+    submittedAt: string;
+  } | null>(null);
 
   const [loadingPage, setLoadingPage] = useState(true);
   const [loadingStudents, setLoadingStudents] = useState(false);
@@ -319,25 +275,159 @@ export default function AdminFillClassPage() {
     void loadPageData();
   }, []);
 
+  // Single coordinated effect: load students, existing entries, balances, and
+  // teacher credits all together so form state is applied only once everything
+  // is ready — no more race between loadStudents and loadExistingEntries.
   useEffect(() => {
     if (selectedClass) {
-      void loadStudents();
-      void loadExistingEntries();
+      void loadClassData();
     } else {
       setStudents([]);
       setExistingEntries([]);
-    }
-
-    void loadTeacherCreditEntries();
-  }, [selectedClass, selectedDate]);
-
-  useEffect(() => {
-    if (students.length > 0) {
-      void loadBalances();
-    } else {
+      setTeacherCreditEntries([]);
+      setTeacherSubmittedInfo(null);
+      setAmounts({});
+      setAttendance({});
+      setAteWithoutPayMap({});
       setBalances({});
     }
-  }, [students]);
+  }, [selectedClass, selectedDate]);
+
+  // loadClassData fetches students + existing entries + balances in one shot so
+  // there is no timing gap where amounts get set before students exist (or get
+  // cleared after students arrive).
+  async function loadClassData() {
+    try {
+      setLoadingStudents(true);
+      setLoadingExisting(true);
+      setLoadingBalances(true);
+      setLoadingTeacherCredits(true);
+      setTeacherSubmittedInfo(null);
+
+      // Step 1: students + existing entries + teacher credits in parallel
+      const [studentsRes, entriesRes, creditRes] = await Promise.all([
+        supabase
+          .from("students")
+          .select("*")
+          .eq("class_name", selectedClass),
+        supabase
+          .from("daily_entries")
+          .select("*")
+          .eq("date", selectedDate)
+          .eq("class_name", selectedClass),
+        supabase
+          .from("daily_entries")
+          .select("*")
+          .eq("date", selectedDate)
+          .eq("class_name", selectedClass)
+          .eq("entered_by_role", "teacher")
+          .eq("admin_override_ate_without_pay", true)
+          .order("student_name", { ascending: true }),
+      ]);
+
+      if (studentsRes.error) throw studentsRes.error;
+      if (entriesRes.error) throw entriesRes.error;
+
+      const activeStudents = (studentsRes.data || [])
+        .filter(isActiveStudent)
+        .sort((a, b) => getStudentName(a).localeCompare(getStudentName(b)));
+
+      const entries = (entriesRes.data || []) as DailyEntry[];
+
+      setStudents(activeStudents);
+      setExistingEntries(entries);
+      setTeacherCreditEntries((creditRes.error ? [] : creditRes.data || []) as DailyEntry[]);
+
+      // Detect teacher submission banner
+      const teacherRow = entries.find(
+        (row) => String(row.entered_by_role || "").toLowerCase() === "teacher"
+      );
+      if (teacherRow) {
+        setTeacherSubmittedInfo({
+          submittedByName: String(
+            teacherRow.entered_by_name || teacherRow.assigned_teacher_name || "Teacher"
+          ),
+          submittedAt: String(teacherRow.created_at || ""),
+        });
+      }
+
+      // Step 2: build form state.
+      // daily_entries stores student_id as the row UUID (not the school code like JVS97163),
+      // so we match primarily by student_name as a reliable cross-table key.
+      const nextAmounts: Record<string, string> = {};
+      const nextAttendance: Record<string, Attendance> = {};
+      const nextAteWithoutPay: OverrideMap = {};
+
+      // Index entries by normalised student name (primary) and by whatever
+      // student_id value is stored (secondary, in case it ever aligns).
+      const entryByName = new Map<string, DailyEntry>();
+      const entryById = new Map<string, DailyEntry>();
+      entries.forEach((row) => {
+        const name = String(row.student_name || row.studentName || "").trim().toLowerCase();
+        if (name) entryByName.set(name, row);
+        const id = String(row.student_id || row.studentId || "").trim();
+        if (id) entryById.set(id, row);
+      });
+
+      activeStudents.forEach((student) => {
+        const sid = getStudentIdValue(student);
+        const sname = getStudentName(student).trim().toLowerCase();
+        const entry = entryByName.get(sname) ?? entryById.get(sid);
+
+        if (entry) {
+          const rawAmount = entry.amount_paid_today ?? entry.amountPaidToday ?? null;
+          nextAmounts[sid] = rawAmount !== null ? String(rawAmount) : "0";
+          nextAttendance[sid] = (
+            String(entry.attendance || "present").toLowerCase() === "absent" ? "absent" : "present"
+          ) as Attendance;
+          nextAteWithoutPay[sid] = Boolean(
+            entry.admin_override_ate_without_pay ?? entry.adminOverrideAteWithoutPay
+          );
+        } else {
+          nextAmounts[sid] = "";
+          nextAttendance[sid] = "present";
+          nextAteWithoutPay[sid] = false;
+        }
+      });
+
+      setAmounts(nextAmounts);
+      setAttendance(nextAttendance);
+      setAteWithoutPayMap(nextAteWithoutPay);
+
+      setLoadingStudents(false);
+      setLoadingExisting(false);
+      setLoadingTeacherCredits(false);
+
+      // Step 3: fetch balances for active students
+      const ids = activeStudents.map((s) => getStudentIdValue(s)).filter(Boolean);
+      if (!ids.length) {
+        setBalances({});
+        setLoadingBalances(false);
+        return;
+      }
+
+      const { data: balanceData, error: balanceError } = await supabase
+        .from("student_balances")
+        .select("*")
+        .in("student_id", ids);
+
+      if (balanceError) throw balanceError;
+
+      const nextBalances: BalanceMap = {};
+      (balanceData || []).forEach((row) => {
+        nextBalances[String(row.student_id || "")] = Number(row.balance || 0);
+      });
+      setBalances(nextBalances);
+    } catch (error) {
+      console.error(error);
+      alert("Failed to load class data.");
+    } finally {
+      setLoadingStudents(false);
+      setLoadingExisting(false);
+      setLoadingBalances(false);
+      setLoadingTeacherCredits(false);
+    }
+  }
 
   async function loadPageData() {
     try {
@@ -381,16 +471,12 @@ export default function AdminFillClassPage() {
       function addTeacherToClass(classValue: unknown, teacherValue: unknown) {
         const rawClass = String(classValue || "").trim();
         const teacherId = String(teacherValue || "").trim();
-
         if (!rawClass || !teacherId) return;
-
         const className = classNameById.get(rawClass) || (validClassNames.has(rawClass) ? rawClass : "");
         if (!className) return;
-
         if (!nextTeacherAssignmentsByClass[className]) {
           nextTeacherAssignmentsByClass[className] = [];
         }
-
         if (!nextTeacherAssignmentsByClass[className].includes(teacherId)) {
           nextTeacherAssignmentsByClass[className].push(teacherId);
         }
@@ -403,8 +489,6 @@ export default function AdminFillClassPage() {
             assignment.teacher_id || assignment.teacherId
           );
         });
-      } else {
-        console.error("Failed to load teacher_class_assignments:", teacherAssignmentsRes.error);
       }
 
       if (!teacherClassesRes.error) {
@@ -414,17 +498,13 @@ export default function AdminFillClassPage() {
             assignment.teacher_id || assignment.teacherId
           );
         });
-      } else {
-        console.error("Failed to load teacher_classes:", teacherClassesRes.error);
       }
 
       (teachersRes.data || []).forEach((teacherRow: any) => {
         const teacherUuid = String(teacherRow.id || "").trim();
         const teacherCode = String(teacherRow.teacher_id || teacherRow.teacherId || "").trim();
         const teacherKey = teacherUuid || teacherCode;
-
         if (!teacherKey) return;
-
         getAssignedClasses(teacherRow).forEach((classValue) => {
           addTeacherToClass(classValue, teacherKey);
         });
@@ -449,129 +529,10 @@ export default function AdminFillClassPage() {
     }
   }
 
-  async function loadStudents() {
-    try {
-      setLoadingStudents(true);
-
-      const { data, error } = await supabase
-        .from("students")
-        .select("*")
-        .eq("class_name", selectedClass);
-
-      if (error) throw error;
-
-      const rows = (data || [])
-        .filter(isActiveStudent)
-        .sort((a, b) => getStudentName(a).localeCompare(getStudentName(b)));
-
-      setStudents(rows);
-    } catch (error) {
-      console.error(error);
-      alert("Failed to load students.");
-    } finally {
-      setLoadingStudents(false);
-    }
-  }
-
-  async function loadBalances() {
-    try {
-      setLoadingBalances(true);
-
-      const ids = students.map((student) => getStudentIdValue(student)).filter(Boolean);
-
-      if (!ids.length) {
-        setBalances({});
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("student_balances")
-        .select("*")
-        .in("student_id", ids);
-
-      if (error) throw error;
-
-      const nextBalances: BalanceMap = {};
-      (data || []).forEach((row) => {
-        nextBalances[String(row.student_id || "")] = Number(row.balance || 0);
-      });
-
-      setBalances(nextBalances);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoadingBalances(false);
-    }
-  }
-
-  async function loadExistingEntries() {
-    try {
-      setLoadingExisting(true);
-
-      const { data, error } = await supabase
-        .from("daily_entries")
-        .select("*")
-        .eq("date", selectedDate)
-        .eq("class_name", selectedClass);
-
-      if (error) throw error;
-
-      const rows = (data || []) as DailyEntry[];
-      setExistingEntries(rows);
-
-      const nextAmounts: Record<string, string> = {};
-      const nextAttendance: Record<string, Attendance> = {};
-      const nextAteWithoutPay: OverrideMap = {};
-
-      rows.forEach((row) => {
-        const studentId = getStudentIdValue(row);
-        nextAmounts[studentId] = String(row.amount_paid_today ?? row.amountPaidToday ?? "");
-        nextAttendance[studentId] = (row.attendance || "present") as Attendance;
-        nextAteWithoutPay[studentId] = Boolean(
-          row.admin_override_ate_without_pay ?? row.adminOverrideAteWithoutPay
-        );
-      });
-
-      setAmounts(nextAmounts);
-      setAttendance(nextAttendance);
-      setAteWithoutPayMap(nextAteWithoutPay);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoadingExisting(false);
-    }
-  }
-
-  async function loadTeacherCreditEntries() {
-    try {
-      setLoadingTeacherCredits(true);
-
-      const { data, error } = await supabase
-        .from("daily_entries")
-        .select("*")
-        .eq("date", selectedDate)
-        .eq("entered_by_role", "teacher")
-        .eq("admin_override_ate_without_pay", true)
-        .order("class_name", { ascending: true })
-        .order("student_name", { ascending: true });
-
-      if (error) throw error;
-
-      setTeacherCreditEntries((data || []) as DailyEntry[]);
-    } catch (error) {
-      console.error(error);
-      setTeacherCreditEntries([]);
-    } finally {
-      setLoadingTeacherCredits(false);
-    }
-  }
-
-
   const assignedTeacherIds = teacherAssignmentsByClass[selectedClass] || [];
   const assignedTeachers = teachers.filter((teacher) => {
     const teacherUuid = String(teacher.id || "").trim();
     const teacherCode = String(teacher.teacher_id || teacher.teacherId || "").trim();
-
     return (
       getAssignedClasses(teacher).includes(selectedClass) ||
       assignedTeacherIds.includes(teacherUuid) ||
@@ -587,12 +548,9 @@ export default function AdminFillClassPage() {
   const matchedClosure = useMemo(() => {
     return closures.find((closure) => {
       if (!Boolean(closure.active ?? true)) return false;
-
       const startDate = String(closure.start_date || closure.startDate || "");
       const endDate = String(closure.end_date || closure.endDate || "");
-
       if (!startDate || !endDate) return false;
-
       return isDateWithinRange(selectedDate, startDate, endDate);
     });
   }, [closures, selectedDate]);
@@ -637,6 +595,12 @@ export default function AdminFillClassPage() {
       availableBeforeMeal: result.availableBeforeMeal,
       ateToday: result.ateToday,
       newBalance: result.newBalance,
+      // FIX: flag students that have an existing entry so we can show it in the row
+      hasExistingEntry: existingEntries.some((e) => getStudentIdValue(e) === studentId),
+      existingEntryRole: (() => {
+        const entry = existingEntries.find((e) => getStudentIdValue(e) === studentId);
+        return entry ? String(entry.entered_by_role || "") : "";
+      })(),
     };
   });
 
@@ -653,14 +617,7 @@ export default function AdminFillClassPage() {
         }
         return acc;
       },
-      {
-        totalCollected: 0,
-        presentCount: 0,
-        absentCount: 0,
-        eatingCount: 0,
-        ateWithoutPayCount: 0,
-        creditOwed: 0,
-      }
+      { totalCollected: 0, presentCount: 0, absentCount: 0, eatingCount: 0, ateWithoutPayCount: 0, creditOwed: 0 }
     );
   }, [previewRows, feedingFee]);
 
@@ -675,33 +632,21 @@ export default function AdminFillClassPage() {
     );
   }, [teacherCreditEntries, feedingFee]);
 
-
   function handleAmountChange(studentId: string, value: string) {
     setAmounts((prev) => ({ ...prev, [studentId]: value }));
   }
 
   function handleAttendanceChange(studentId: string, value: Attendance) {
     setAttendance((prev) => ({ ...prev, [studentId]: value }));
-
     if (value === "absent") {
-      setAteWithoutPayMap((prev) => ({
-        ...prev,
-        [studentId]: false,
-      }));
+      setAteWithoutPayMap((prev) => ({ ...prev, [studentId]: false }));
     }
   }
 
   function handleAteWithoutPayChange(studentId: string, checked: boolean) {
-    setAteWithoutPayMap((prev) => ({
-      ...prev,
-      [studentId]: checked,
-    }));
-
+    setAteWithoutPayMap((prev) => ({ ...prev, [studentId]: checked }));
     if (checked) {
-      setAttendance((prev) => ({
-        ...prev,
-        [studentId]: "present",
-      }));
+      setAttendance((prev) => ({ ...prev, [studentId]: "present" }));
     }
   }
 
@@ -710,7 +655,6 @@ export default function AdminFillClassPage() {
       alert(`Cannot save entry. School is closed for: ${blockedReason}`);
       return;
     }
-
     try {
       setSaving(true);
 
@@ -734,11 +678,7 @@ export default function AdminFillClassPage() {
         const { error: deleteDailyError } = await supabase
           .from("daily_entries")
           .delete()
-          .in(
-            "id",
-            (existingDailyRows || []).map((row) => row.id)
-          );
-
+          .in("id", (existingDailyRows || []).map((row) => row.id));
         if (deleteDailyError) throw deleteDailyError;
       }
 
@@ -746,11 +686,7 @@ export default function AdminFillClassPage() {
         const { error: deleteLedgerError } = await supabase
           .from("balance_ledger")
           .delete()
-          .in(
-            "id",
-            (existingLedgerRows || []).map((row) => row.id)
-          );
-
+          .in("id", (existingLedgerRows || []).map((row) => row.id));
         if (deleteLedgerError) throw deleteLedgerError;
       }
 
@@ -773,10 +709,7 @@ export default function AdminFillClassPage() {
         created_at: new Date().toISOString(),
       }));
 
-      const { error: dailyInsertError } = await supabase
-        .from("daily_entries")
-        .insert(dailyPayload);
-
+      const { error: dailyInsertError } = await supabase.from("daily_entries").insert(dailyPayload);
       if (dailyInsertError) throw dailyInsertError;
 
       const ledgerPayload = previewRows.map((row) => ({
@@ -798,10 +731,7 @@ export default function AdminFillClassPage() {
         created_at: new Date().toISOString(),
       }));
 
-      const { error: ledgerInsertError } = await supabase
-        .from("balance_ledger")
-        .insert(ledgerPayload);
-
+      const { error: ledgerInsertError } = await supabase.from("balance_ledger").insert(ledgerPayload);
       if (ledgerInsertError) throw ledgerInsertError;
 
       const { error: logError } = await supabase.from("activity_logs").insert([
@@ -815,15 +745,10 @@ export default function AdminFillClassPage() {
           created_at: new Date().toISOString(),
         },
       ]);
-
-      if (logError) {
-        console.error(logError);
-      }
+      if (logError) console.error(logError);
 
       await rebuildStudentBalancesFromLedger();
-      await loadExistingEntries();
-      await loadBalances();
-      await loadTeacherCreditEntries();
+      await loadClassData();
 
       try {
         await sendFeedingSubmissionPush({
@@ -914,19 +839,28 @@ export default function AdminFillClassPage() {
           transform: translateX(4px);
           box-shadow: inset 4px 0 0 #f59e0b;
         }
-        .desktop-feeding-row:last-child {
-          border-bottom: 0;
+        .desktop-feeding-row.teacher-submitted {
+          background: #eff6ff;
         }
-        .student-identity strong {
-          display: block;
-          font-size: 14px;
-          color: #111827;
+        .desktop-feeding-row.teacher-submitted:hover {
+          background: #dbeafe;
+          box-shadow: inset 4px 0 0 #3b82f6;
         }
-        .student-identity span, .money-subtext {
-          display: block;
-          color: #6b7280;
-          font-size: 12px;
+        .desktop-feeding-row:last-child { border-bottom: 0; }
+        .student-identity strong { display: block; font-size: 14px; color: #111827; }
+        .student-identity span, .money-subtext { display: block; color: #6b7280; font-size: 12px; margin-top: 3px; }
+        .teacher-badge {
+          display: inline-block;
+          font-size: 10px;
+          font-weight: 800;
+          background: #dbeafe;
+          color: #1d4ed8;
+          border: 1px solid #bfdbfe;
+          border-radius: 6px;
+          padding: 2px 6px;
           margin-top: 3px;
+          text-transform: uppercase;
+          letter-spacing: .04em;
         }
         .desktop-mini-input {
           width: 100%;
@@ -935,6 +869,10 @@ export default function AdminFillClassPage() {
           border: 1px solid #d1d5db;
           font-size: 13px;
           background: #ffffff;
+        }
+        .desktop-mini-input:focus {
+          outline: 2px solid #f59e0b;
+          border-color: #f59e0b;
         }
         .credit-pill {
           display: inline-flex;
@@ -948,6 +886,7 @@ export default function AdminFillClassPage() {
           padding: 9px 10px;
           border-radius: 999px;
           white-space: nowrap;
+          cursor: pointer;
         }
         .status-pill {
           display: inline-flex;
@@ -959,14 +898,8 @@ export default function AdminFillClassPage() {
           font-size: 12px;
           font-weight: 800;
         }
-        .status-pill.eating {
-          background: #dcfce7;
-          color: #166534;
-        }
-        .status-pill.not-eating {
-          background: #fee2e2;
-          color: #991b1b;
-        }
+        .status-pill.eating { background: #dcfce7; color: #166534; }
+        .status-pill.not-eating { background: #fee2e2; color: #991b1b; }
         .floating-summary {
           position: fixed;
           right: 24px;
@@ -996,37 +929,13 @@ export default function AdminFillClassPage() {
           font-weight: 900;
           color: #fbbf24;
         }
-        .floating-summary:hover .summary-collapsed, .floating-summary:focus-within .summary-collapsed {
-          display: none;
-        }
-        .summary-expanded {
-          display: none;
-          padding: 18px;
-        }
-        .floating-summary:hover .summary-expanded, .floating-summary:focus-within .summary-expanded {
-          display: block;
-        }
-        .summary-grid {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 10px;
-          margin: 14px 0;
-        }
-        .summary-stat {
-          background: rgba(255,255,255,0.08);
-          border: 1px solid rgba(255,255,255,0.08);
-          border-radius: 14px;
-          padding: 10px;
-        }
-        .summary-stat span {
-          display: block;
-          font-size: 11px;
-          opacity: .75;
-          margin-bottom: 4px;
-        }
-        .summary-stat strong {
-          font-size: 15px;
-        }
+        .floating-summary:hover .summary-collapsed, .floating-summary:focus-within .summary-collapsed { display: none; }
+        .summary-expanded { display: none; padding: 18px; }
+        .floating-summary:hover .summary-expanded, .floating-summary:focus-within .summary-expanded { display: block; }
+        .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0; }
+        .summary-stat { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 10px; }
+        .summary-stat span { display: block; font-size: 11px; opacity: .75; margin-bottom: 4px; }
+        .summary-stat strong { font-size: 15px; }
         .quick-summary-grid {
           display: grid;
           grid-template-columns: repeat(5, minmax(130px, 1fr));
@@ -1041,53 +950,36 @@ export default function AdminFillClassPage() {
           box-shadow: 0 8px 18px rgba(0,0,0,0.04);
           transition: transform 160ms ease, box-shadow 160ms ease;
         }
-        .quick-summary-card:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 12px 26px rgba(0,0,0,0.08);
+        .quick-summary-card:hover { transform: translateY(-2px); box-shadow: 0 12px 26px rgba(0,0,0,0.08); }
+        .quick-summary-card span { display: block; color: #6b7280; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 5px; }
+        .quick-summary-card strong { color: #111827; font-size: 16px; }
+        .teacher-credit-panel { transition: transform 180ms ease, box-shadow 180ms ease; }
+        .teacher-credit-panel:hover { transform: translateY(-2px); box-shadow: 0 16px 34px rgba(0,0,0,0.12) !important; }
+        .teacher-submitted-banner {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          background: #eff6ff;
+          border: 1px solid #bfdbfe;
+          border-radius: 16px;
+          padding: 14px 18px;
+          margin-bottom: 20px;
+          box-shadow: 0 6px 16px rgba(59,130,246,0.08);
         }
-        .quick-summary-card span {
-          display: block;
-          color: #6b7280;
-          font-size: 11px;
-          font-weight: 800;
-          text-transform: uppercase;
-          letter-spacing: .04em;
-          margin-bottom: 5px;
-        }
-        .quick-summary-card strong {
-          color: #111827;
-          font-size: 16px;
-        }
-        .teacher-credit-panel {
-          transition: transform 180ms ease, box-shadow 180ms ease;
-        }
-        .teacher-credit-panel:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 16px 34px rgba(0,0,0,0.12) !important;
+        .teacher-submitted-banner .icon {
+          font-size: 28px;
+          flex-shrink: 0;
         }
         @media (max-width: 1100px) {
           .desktop-table-header { display: none; }
-          .desktop-feeding-row {
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-          }
-          .quick-summary-grid {
-            grid-template-columns: repeat(2, minmax(130px, 1fr));
-          }
-          .floating-summary {
-            right: 12px;
-            left: auto;
-            top: auto;
-            bottom: 90px;
-            width: 96px;
-          }
-          .floating-summary:hover, .floating-summary:focus-within {
-            width: calc(100vw - 24px);
-            right: 12px;
-          }
+          .desktop-feeding-row { grid-template-columns: 1fr 1fr; gap: 12px; }
+          .quick-summary-grid { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
+          .floating-summary { right: 12px; left: auto; top: auto; bottom: 90px; width: 96px; }
+          .floating-summary:hover, .floating-summary:focus-within { width: calc(100vw - 24px); right: 12px; }
         }
       `}</style>
 
+      {/* Header */}
       <div
         style={{
           background: COLORS.secondary,
@@ -1115,7 +1007,6 @@ export default function AdminFillClassPage() {
               <strong>{academicYear}</strong> • <strong>{currentTerm}</strong>
             </p>
           </div>
-
           <Link href="/feeding/admin" style={backButtonStyle}>
             Back to Feeding Admin
           </Link>
@@ -1123,6 +1014,8 @@ export default function AdminFillClassPage() {
       </div>
 
       <div style={{ maxWidth: "1680px", margin: "0 auto", padding: "24px" }}>
+
+        {/* Controls */}
         <div
           className="admin-feeding-controls"
           style={{
@@ -1153,7 +1046,6 @@ export default function AdminFillClassPage() {
               })}
             </select>
           </div>
-
           <div>
             <label style={labelStyle}>Date</label>
             <input
@@ -1163,20 +1055,18 @@ export default function AdminFillClassPage() {
               style={inputStyle}
             />
           </div>
-
           <div>
             <label style={labelStyle}>Teacher</label>
             <input
               type="text"
-              value={
-                loadingTeachers ? "Loading..." : assignedTeacherName
-              }
+              value={loadingTeachers ? "Loading..." : assignedTeacherName}
               readOnly
               style={{ ...inputStyle, background: "#f3f4f6" }}
             />
           </div>
         </div>
 
+        {/* Blocked banner */}
         {entryBlocked && (
           <div
             style={{
@@ -1194,6 +1084,26 @@ export default function AdminFillClassPage() {
           </div>
         )}
 
+        {/* FIX: Teacher-submitted banner — tells admin this class was already filled by the teacher,
+            and that the amounts below are what the teacher entered (editable) */}
+        {!entryBlocked && teacherSubmittedInfo && (
+          <div className="teacher-submitted-banner">
+            <div className="icon">📋</div>
+            <div>
+              <p style={{ margin: "0 0 4px", fontWeight: "bold", color: "#1d4ed8", fontSize: "15px" }}>
+                Teacher Already Submitted This Class
+              </p>
+              <p style={{ margin: 0, color: "#3b82f6", fontSize: "13px" }}>
+                <strong>{teacherSubmittedInfo.submittedByName}</strong> submitted entries for{" "}
+                <strong>{selectedClass}</strong> on <strong>{selectedDate}</strong>. The amounts and
+                attendance below reflect what the teacher recorded — you can review and edit any
+                values, then save to override.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Teacher credit panel — FIX: now only shows selected class credits */}
         {!entryBlocked && teacherCreditSummary.count > 0 && (
           <div
             className="teacher-credit-panel"
@@ -1218,13 +1128,13 @@ export default function AdminFillClassPage() {
             >
               <div>
                 <h2 style={{ margin: "0 0 6px", fontSize: "18px" }}>
-                  Teacher Credit Feeding
+                  Credit Feeding — {selectedClass}
                 </h2>
                 <p style={{ margin: 0, color: COLORS.muted, fontSize: "13px" }}>
-                  Students teachers marked as eating on credit for {selectedDate}.
+                  Students in <strong>{selectedClass}</strong> that the teacher marked as eating on
+                  credit for <strong>{selectedDate}</strong>.
                 </p>
               </div>
-
               <div
                 style={{
                   background: "#fff7ed",
@@ -1234,9 +1144,7 @@ export default function AdminFillClassPage() {
                   minWidth: "180px",
                 }}
               >
-                <p style={{ margin: "0 0 4px", fontSize: "12px", color: COLORS.muted }}>
-                  Total Owed
-                </p>
+                <p style={{ margin: "0 0 4px", fontSize: "12px", color: COLORS.muted }}>Total Owed</p>
                 <p style={{ margin: 0, fontWeight: "bold", fontSize: "18px" }}>
                   GHS {formatMoney(teacherCreditSummary.totalOwed)}
                 </p>
@@ -1250,7 +1158,6 @@ export default function AdminFillClassPage() {
               {teacherCreditEntries.map((row, index) => {
                 const owed = getCreditOwedAmount(row, feedingFee);
                 const rowKey = String(row.id || `${getStudentIdValue(row)}-${index}`);
-
                 return (
                   <div
                     key={rowKey}
@@ -1294,6 +1201,7 @@ export default function AdminFillClassPage() {
           </div>
         )}
 
+        {/* Empty state */}
         {!loadingStudents && students.length === 0 && (
           <div
             style={{
@@ -1309,13 +1217,20 @@ export default function AdminFillClassPage() {
           </div>
         )}
 
+        {/* Main table */}
         {previewRows.length > 0 && (
           <div className="desktop-feeding-panel">
             <div className="desktop-table-top">
               <div>
                 <h2 style={{ margin: 0, fontSize: "19px" }}>Class Feeding Entry</h2>
                 <p style={{ margin: "5px 0 0", color: COLORS.muted, fontSize: "13px" }}>
-                  Enter feeding records for <strong>{selectedClass}</strong> on <strong>{selectedDate}</strong>.
+                  Enter feeding records for <strong>{selectedClass}</strong> on{" "}
+                  <strong>{selectedDate}</strong>.
+                  {teacherSubmittedInfo && (
+                    <span style={{ marginLeft: "8px", color: "#1d4ed8", fontWeight: "bold" }}>
+                      • Pre-filled from teacher submission
+                    </span>
+                  )}
                 </p>
               </div>
 
@@ -1358,11 +1273,15 @@ export default function AdminFillClassPage() {
               {previewRows.map((student) => (
                 <div
                   key={student.studentId}
-                  className="desktop-feeding-row"
+                  className={`desktop-feeding-row${student.existingEntryRole === "teacher" ? " teacher-submitted" : ""}`}
                 >
                   <div className="student-identity">
                     <strong>{student.fullName}</strong>
                     <span>{student.studentId}</span>
+                    {/* FIX: show badge if this student's entry was submitted by teacher */}
+                    {student.existingEntryRole === "teacher" && (
+                      <span className="teacher-badge">Teacher entry</span>
+                    )}
                   </div>
 
                   <div>
@@ -1382,7 +1301,7 @@ export default function AdminFillClassPage() {
                     <input
                       type="number"
                       min="0"
-                      value={amounts[student.studentId] || ""}
+                      value={amounts[student.studentId] ?? ""}
                       onChange={(e) => handleAmountChange(student.studentId, e.target.value)}
                       disabled={student.attendance === "absent"}
                       className="desktop-mini-input"
@@ -1436,82 +1355,83 @@ export default function AdminFillClassPage() {
             </div>
           </div>
         )}
-      <div className="floating-summary" tabIndex={0}>
-        <div className="summary-collapsed">Save / Summary</div>
 
-        <div className="summary-expanded">
-          <div>
-            <h2 style={{ margin: 0, fontSize: "18px", color: "#fbbf24" }}>Entry Summary</h2>
-            <p style={{ margin: "5px 0 0", fontSize: "12px", opacity: 0.8 }}>
-              Hover here when you need totals or want to save.
+        {/* Floating save/summary */}
+        <div className="floating-summary" tabIndex={0}>
+          <div className="summary-collapsed">Save / Summary</div>
+          <div className="summary-expanded">
+            <div>
+              <h2 style={{ margin: 0, fontSize: "18px", color: "#fbbf24" }}>Entry Summary</h2>
+              <p style={{ margin: "5px 0 0", fontSize: "12px", opacity: 0.8 }}>
+                Hover here when you need totals or want to save.
+              </p>
+            </div>
+            <div className="summary-grid">
+              <div className="summary-stat">
+                <span>Total Collected</span>
+                <strong>GHS {formatMoney(summary.totalCollected)}</strong>
+              </div>
+              <div className="summary-stat">
+                <span>Eating</span>
+                <strong>{summary.eatingCount}</strong>
+              </div>
+              <div className="summary-stat">
+                <span>Present</span>
+                <strong>{summary.presentCount}</strong>
+              </div>
+              <div className="summary-stat">
+                <span>Absent</span>
+                <strong>{summary.absentCount}</strong>
+              </div>
+              <div className="summary-stat">
+                <span>Ate on Credit</span>
+                <strong>{summary.ateWithoutPayCount}</strong>
+              </div>
+              <div className="summary-stat">
+                <span>Credit Owed</span>
+                <strong>GHS {formatMoney(summary.creditOwed + teacherCreditSummary.totalOwed)}</strong>
+              </div>
+            </div>
+
+            <button
+              onClick={handleSave}
+              disabled={
+                saving ||
+                loadingBalances ||
+                loadingExisting ||
+                loadingStudents ||
+                loadingClosures ||
+                entryBlocked
+              }
+              style={{
+                width: "100%",
+                padding: "14px",
+                borderRadius: "14px",
+                border: "none",
+                background: entryBlocked || loadingClosures ? "#9ca3af" : COLORS.primary,
+                color: entryBlocked || loadingClosures ? "#ffffff" : COLORS.secondary,
+                fontWeight: "bold",
+                fontSize: "15px",
+                cursor: entryBlocked || loadingClosures ? "not-allowed" : "pointer",
+              }}
+            >
+              {loadingClosures
+                ? "Checking Closure..."
+                : entryBlocked
+                ? "Blocked by Holiday / Vacation"
+                : saving
+                ? "Saving..."
+                : teacherSubmittedInfo
+                ? "Save & Override Teacher Entry"
+                : "Save Admin Entry"}
+            </button>
+
+            <p style={{ margin: "10px 0 0", fontSize: "11px", textAlign: "center", opacity: 0.72 }}>
+              System developed by Lord Wilhelm (0593410452)
             </p>
           </div>
-
-          <div className="summary-grid">
-            <div className="summary-stat">
-              <span>Total Collected</span>
-              <strong>GHS {formatMoney(summary.totalCollected)}</strong>
-            </div>
-            <div className="summary-stat">
-              <span>Eating</span>
-              <strong>{summary.eatingCount}</strong>
-            </div>
-            <div className="summary-stat">
-              <span>Present</span>
-              <strong>{summary.presentCount}</strong>
-            </div>
-            <div className="summary-stat">
-              <span>Absent</span>
-              <strong>{summary.absentCount}</strong>
-            </div>
-            <div className="summary-stat">
-              <span>Ate on Credit</span>
-              <strong>{summary.ateWithoutPayCount}</strong>
-            </div>
-            <div className="summary-stat">
-              <span>Credit Owed</span>
-              <strong>GHS {formatMoney(summary.creditOwed + teacherCreditSummary.totalOwed)}</strong>
-            </div>
-          </div>
-
-          <button
-            onClick={handleSave}
-            disabled={
-              saving ||
-              loadingBalances ||
-              loadingExisting ||
-              loadingStudents ||
-              loadingClosures ||
-              entryBlocked
-            }
-            style={{
-              width: "100%",
-              padding: "14px",
-              borderRadius: "14px",
-              border: "none",
-              background: entryBlocked || loadingClosures ? "#9ca3af" : COLORS.primary,
-              color: entryBlocked || loadingClosures ? "#ffffff" : COLORS.secondary,
-              fontWeight: "bold",
-              fontSize: "15px",
-              cursor: entryBlocked || loadingClosures ? "not-allowed" : "pointer",
-            }}
-          >
-            {loadingClosures
-              ? "Checking Closure..."
-              : entryBlocked
-              ? "Blocked by Holiday / Vacation"
-              : saving
-              ? "Saving..."
-              : "Save Admin Entry"}
-          </button>
-
-          <p style={{ margin: "10px 0 0", fontSize: "11px", textAlign: "center", opacity: 0.72 }}>
-            System developed by Lord Wilhelm (0593410452)
-          </p>
         </div>
       </div>
-      </div>
-
     </main>
   );
 }
