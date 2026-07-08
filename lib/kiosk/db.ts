@@ -46,11 +46,15 @@ interface KioskDBSchema extends DBSchema {
     key: string;
     value: CachedTeacher;
   };
+
   pending: {
     key: string;
     value: PendingRecord;
-    indexes: { "by-sync-status": string };
+    indexes: {
+      "by-sync-status": SyncStatus;
+    };
   };
+
   today: {
     key: string;
     value: TodayEntry;
@@ -59,122 +63,397 @@ interface KioskDBSchema extends DBSchema {
 
 let dbPromise: Promise<IDBPDatabase<KioskDBSchema>> | null = null;
 
-function getDb(): Promise<IDBPDatabase<KioskDBSchema>> {
+
+function getDb() {
   if (typeof window === "undefined") {
-    throw new Error("kiosk db can only be used in the browser");
+    throw new Error("Kiosk database only works in browser");
   }
 
   if (!dbPromise) {
-    dbPromise = openDB<KioskDBSchema>(DB_NAME, DB_VERSION, {
-      upgrade(db) {
-        if (!db.objectStoreNames.contains("teachers")) {
-          db.createObjectStore("teachers", { keyPath: "teacher_id" });
-        }
-        if (!db.objectStoreNames.contains("pending")) {
-          const store = db.createObjectStore("pending", { keyPath: "offline_id" });
-          store.createIndex("by-sync-status", "sync_status");
-        }
-        if (!db.objectStoreNames.contains("today")) {
-          db.createObjectStore("today", { keyPath: "teacher_id" });
-        }
-      },
-    });
+    dbPromise = openDB<KioskDBSchema>(
+      DB_NAME,
+      DB_VERSION,
+      {
+        upgrade(db) {
+
+          if (!db.objectStoreNames.contains("teachers")) {
+            db.createObjectStore("teachers", {
+              keyPath: "teacher_id",
+            });
+          }
+
+
+          if (!db.objectStoreNames.contains("pending")) {
+            const store = db.createObjectStore("pending", {
+              keyPath: "offline_id",
+            });
+
+            store.createIndex(
+              "by-sync-status",
+              "sync_status"
+            );
+          }
+
+
+          if (!db.objectStoreNames.contains("today")) {
+            db.createObjectStore("today", {
+              keyPath: "teacher_id",
+            });
+          }
+
+        },
+      }
+    );
   }
 
   return dbPromise;
 }
 
-// ---------- teachers ----------
 
-export async function getAllCachedTeachers(): Promise<CachedTeacher[]> {
+// =========================
+// TEACHERS CACHE
+// =========================
+
+export async function getAllCachedTeachers() {
+
   const db = await getDb();
+
   return db.getAll("teachers");
+
 }
 
-export async function getCachedTeacher(teacherId: string): Promise<CachedTeacher | undefined> {
+
+export async function getCachedTeacher(
+  teacherId:string
+) {
+
   const db = await getDb();
-  return db.get("teachers", teacherId);
+
+  return db.get(
+    "teachers",
+    teacherId
+  );
+
 }
 
-export async function bulkPutCachedTeachers(teachers: CachedTeacher[]): Promise<void> {
+
+export async function bulkPutCachedTeachers(
+  teachers:CachedTeacher[]
+) {
+
   const db = await getDb();
-  const tx = db.transaction("teachers", "readwrite");
-  await Promise.all([...teachers.map((t) => tx.store.put(t)), tx.done]);
+
+  const tx = db.transaction(
+    "teachers",
+    "readwrite"
+  );
+
+
+  for (const teacher of teachers) {
+    await tx.store.put(teacher);
+  }
+
+
+  await tx.done;
+
 }
 
-export async function replaceCachedTeachers(teachers: CachedTeacher[]): Promise<void> {
+
+
+export async function replaceCachedTeachers(
+  teachers:CachedTeacher[]
+){
+
   const db = await getDb();
-  const tx = db.transaction("teachers", "readwrite");
+
+  const tx = db.transaction(
+    "teachers",
+    "readwrite"
+  );
+
+
   await tx.store.clear();
-  await Promise.all([...teachers.map((t) => tx.store.put(t)), tx.done]);
+
+
+  for (const teacher of teachers){
+    await tx.store.put(teacher);
+  }
+
+
+  await tx.done;
+
 }
 
-// ---------- pending ----------
 
-export async function getAllPending(): Promise<PendingRecord[]> {
+
+// =========================
+// PENDING OFFLINE QUEUE
+// =========================
+
+
+export async function getAllPending(){
+
   const db = await getDb();
+
   return db.getAll("pending");
+
 }
 
-export async function queuePending(record: PendingRecord): Promise<void> {
+
+
+export async function getPendingByStatus(
+  status:SyncStatus
+){
+
   const db = await getDb();
-  await db.put("pending", record);
+
+  return db.getAllFromIndex(
+    "pending",
+    "by-sync-status",
+    status
+  );
+
 }
 
-export async function updatePendingStatus(offlineId: string, status: SyncStatus): Promise<void> {
+
+
+export async function queuePending(
+  record:PendingRecord
+){
+
   const db = await getDb();
-  const existing = await db.get("pending", offlineId);
-  if (!existing) return;
-  existing.sync_status = status;
-  await db.put("pending", existing);
+
+
+  await db.put(
+    "pending",
+    {
+      ...record,
+      created_at:
+        record.created_at ??
+        new Date().toISOString()
+    }
+  );
+
 }
 
-export async function removePending(offlineId: string): Promise<void> {
+
+
+export async function updatePendingStatus(
+  offlineId:string,
+  status:SyncStatus
+){
+
   const db = await getDb();
-  await db.delete("pending", offlineId);
+
+  const record =
+    await db.get(
+      "pending",
+      offlineId
+    );
+
+
+  if(!record) return;
+
+
+  record.sync_status = status;
+
+
+  await db.put(
+    "pending",
+    record
+  );
+
 }
 
-// ---------- today ----------
 
-export async function getAllTodayEntries(): Promise<TodayEntry[]> {
+
+export async function removePending(
+  offlineId:string
+){
+
   const db = await getDb();
-  return db.getAll("today");
+
+  await db.delete(
+    "pending",
+    offlineId
+  );
+
 }
 
-export async function getTodayEntry(teacherId: string): Promise<TodayEntry | undefined> {
+
+
+export async function clearPending(){
+
   const db = await getDb();
-  return db.get("today", teacherId);
+
+  await db.clear(
+    "pending"
+  );
+
 }
 
-export async function upsertTodayEntry(entry: TodayEntry): Promise<void> {
+
+
+// =========================
+// TODAY LOCAL ATTENDANCE
+// =========================
+
+
+export async function getAllTodayEntries(){
+
   const db = await getDb();
-  await db.put("today", entry);
+
+  return db.getAll(
+    "today"
+  );
+
 }
 
-export async function bulkPutTodayEntries(entries: TodayEntry[]): Promise<void> {
+
+
+export async function getTodayEntry(
+  teacherId:string
+){
+
   const db = await getDb();
-  const tx = db.transaction("today", "readwrite");
-  await Promise.all([...entries.map((e) => tx.store.put(e)), tx.done]);
+
+  return db.get(
+    "today",
+    teacherId
+  );
+
 }
 
-export async function mergeTodayEntriesFromServer(entries: TodayEntry[]): Promise<void> {
-  // Only overwrite entries that are already marked as synced locally,
-  // so we never clobber an unsynced local check-in/out with stale server data.
+
+
+export async function upsertTodayEntry(
+  entry:TodayEntry
+){
+
   const db = await getDb();
-  const tx = db.transaction("today", "readwrite");
-  for (const entry of entries) {
-    const local = await tx.store.get(entry.teacher_id);
-    if (!local || local.synced) {
+
+  await db.put(
+    "today",
+    entry
+  );
+
+}
+
+
+
+export async function deleteTodayEntry(
+  teacherId:string
+){
+
+  const db = await getDb();
+
+  await db.delete(
+    "today",
+    teacherId
+  );
+
+}
+
+
+
+export async function bulkPutTodayEntries(
+  entries:TodayEntry[]
+){
+
+  const db = await getDb();
+
+
+  const tx = db.transaction(
+    "today",
+    "readwrite"
+  );
+
+
+  for(const entry of entries){
+    await tx.store.put(entry);
+  }
+
+
+  await tx.done;
+
+}
+
+
+
+export async function clearTodayEntries(){
+
+  const db = await getDb();
+
+  await db.clear(
+    "today"
+  );
+
+}
+
+
+
+// Merge server data without overwriting
+// offline changes
+
+export async function mergeTodayEntriesFromServer(
+  entries:TodayEntry[]
+){
+
+  const db = await getDb();
+
+  const tx = db.transaction(
+    "today",
+    "readwrite"
+  );
+
+
+  for(const entry of entries){
+
+    const local =
+      await tx.store.get(
+        entry.teacher_id
+      );
+
+
+    if(
+      !local ||
+      local.synced
+    ){
       await tx.store.put(entry);
     }
+
   }
+
+
   await tx.done;
+
 }
 
-export async function markTodayEntrySynced(teacherId: string): Promise<void> {
+
+
+export async function markTodayEntrySynced(
+  teacherId:string
+){
+
   const db = await getDb();
-  const existing = await db.get("today", teacherId);
-  if (!existing) return;
-  existing.synced = true;
-  await db.put("today", existing);
+
+
+  const entry =
+    await db.get(
+      "today",
+      teacherId
+    );
+
+
+  if(!entry) return;
+
+
+  entry.synced = true;
+
+
+  await db.put(
+    "today",
+    entry
+  );
+
 }

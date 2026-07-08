@@ -161,11 +161,13 @@ export default function KioskPage() {
   const [successTime, setSuccessTime] = useState("");
 
   const [roster, setRoster] = useState<RosterRow[]>([]);
+  const [liveSync, setLiveSync] = useState(false);
   const [weekLog, setWeekLog] = useState<WeekLog>({});
   const [school, setSchool] = useState<SchoolInfo>(FALLBACK_SCHOOL);
 
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastDateRef = useRef(toIsoDate(new Date()));
+  const realtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ---------------------------------------------------------------------
   // School branding — fetched from school_settings, cached for offline use
@@ -336,6 +338,68 @@ export default function KioskPage() {
     setSuccessLabel("");
     setSuccessTime("");
   }, []);
+
+  // ---------------------------------------------------------------------
+  // Realtime bridge to phone check-ins. Teachers can also mark attendance
+  // from their own phone (the separate teacher-attendance page), which
+  // writes straight to Supabase's `teacher_attendance` table — the same
+  // table this kiosk's own sync layer pushes into. Rather than wait for
+  // the next 30s poll, we listen for changes on that table and pull a
+  // fresh snapshot the moment one lands, so a phone check-in shows up on
+  // the wall display within a second or two.
+  //
+  // NOTE: this assumes `@/lib/kiosk/sync` targets a table literally named
+  // "teacher_attendance" — the same one the phone page writes to. If your
+  // kiosk sync layer uses a different table name, update it below.
+  //
+  // This only ever runs when online — the kiosk's PIN check-in/out flow
+  // still writes to local IndexedDB first and queues for sync exactly as
+  // before, so it keeps working perfectly with no connection at all. This
+  // effect is purely an enhancement for the "online + someone else moved
+  // faster on their phone" case.
+  // ---------------------------------------------------------------------
+  useEffect(() => {
+    if (!isOnline) {
+      setLiveSync(false);
+      return;
+    }
+
+    function scheduleRefresh() {
+      if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current);
+      realtimeDebounceRef.current = setTimeout(() => {
+        void refreshTodayCache();
+        void reloadLiveBoard();
+      }, 400);
+    }
+
+    const channel = supabase
+      .channel("kiosk-teacher-attendance")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teacher_attendance" },
+        (payload) => {
+          const changedRow = (payload.new ?? payload.old) as
+            | { attendance_date?: string }
+            | null;
+          const todayIso = toIsoDate(new Date());
+
+          // Ignore changes to other days (e.g. an admin editing history)
+          // so the kiosk doesn't do pointless work.
+          if (!changedRow?.attendance_date || changedRow.attendance_date === todayIso) {
+            scheduleRefresh();
+          }
+        }
+      )
+      .subscribe((status) => {
+        setLiveSync(status === "SUBSCRIBED");
+      });
+
+    return () => {
+      if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current);
+      supabase.removeChannel(channel);
+      setLiveSync(false);
+    };
+  }, [isOnline, reloadLiveBoard]);
 
   // Clock tick + the actual "resets at 12am" behavior: the moment the
   // calendar date rolls over, bounce back to the PIN screen and force a
@@ -587,7 +651,7 @@ export default function KioskPage() {
             <div style={clockStyle}>{formatTime12(now.toISOString())}</div>
             <div style={dateStyle}>{formatDateLong(now)}</div>
             <div style={statusPillStyle(isOnline)}>
-              {isOnline ? "Online" : "Offline"}
+              {isOnline ? (liveSync ? "Online • Live" : "Online") : "Offline"}
               {pendingCount > 0 ? ` • ${pendingCount} pending` : ""}
               {syncing ? " • Syncing..." : ""}
             </div>
