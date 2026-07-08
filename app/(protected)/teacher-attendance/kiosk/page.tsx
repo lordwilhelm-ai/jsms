@@ -19,15 +19,13 @@ import {
   syncPendingRecords,
 } from "@/lib/kiosk/sync";
 import { comparePin } from "@/lib/kiosk/pin";
-import { formatClock, formatDateLong, formatTime12, toIsoDate } from "@/lib/kiosk/format";
+import { formatDateLong, formatTime12, toIsoDate } from "@/lib/kiosk/format";
 // NOTE: adjust this import to match your actual Supabase client path/export.
 import { supabase } from "@/lib/supabase";
 
 const COLORS = {
   bg: "#0a1120",
   bgDeep: "#050810",
-  panel: "#111827",
-  panelLight: "#1a2436",
   card: "#ffffff",
   gold: "#d4a017",
   goldBright: "#f0c443",
@@ -51,6 +49,11 @@ const FALLBACK_SCHOOL = {
 };
 
 const SCHOOL_CACHE_KEY = "kiosk_school_settings_v1";
+// Rolling local cache: only the current 7-day window lives on the device.
+// Supabase (via the existing queuePendingRecord/syncPendingRecords pipeline)
+// remains the permanent, full-history record — this is just a fast local
+// mirror of the current week for the kiosk's own display.
+const WEEK_LOG_KEY = "kiosk_week_log_v1";
 
 type Screen = "pin" | "invalid" | "status" | "success";
 
@@ -59,6 +62,18 @@ type SchoolInfo = {
   motto: string | null;
   logo_url: string | null;
 };
+
+// Full staff roster row for the sidebar — every teacher shows up here,
+// whether they've checked in yet or not, so absentees are just as visible
+// as arrivals.
+type RosterRow = {
+  teacher_id: string;
+  teacher_name: string;
+  check_in_time: string | null;
+  check_out_time: string | null;
+};
+
+type WeekLog = Record<string, RosterRow[]>;
 
 function generateId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -77,6 +92,61 @@ function computeCheckInStatus(now: Date): "Present" | "Late" {
   return totalMinutes <= 7 * 60 + 30 ? "Present" : "Late";
 }
 
+// ---------------------------------------------------------------------
+// Local weekly report cache — rolling 7-day window, pruned on every write.
+// ---------------------------------------------------------------------
+function loadWeekLog(): WeekLog {
+  try {
+    const raw = localStorage.getItem(WEEK_LOG_KEY);
+    return raw ? (JSON.parse(raw) as WeekLog) : {};
+  } catch {
+    return {};
+  }
+}
+
+function pruneToCurrentWeek(log: WeekLog): WeekLog {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 6);
+  const cutoffIso = toIsoDate(cutoff);
+
+  const pruned: WeekLog = {};
+  Object.entries(log).forEach(([dateIso, rows]) => {
+    if (dateIso >= cutoffIso) pruned[dateIso] = rows;
+  });
+  return pruned;
+}
+
+function saveDaySnapshot(dateIso: string, rows: RosterRow[]): WeekLog {
+  const log = pruneToCurrentWeek(loadWeekLog());
+  log[dateIso] = rows;
+  try {
+    localStorage.setItem(WEEK_LOG_KEY, JSON.stringify(log));
+  } catch {
+    // storage full/unavailable — Supabase already has the authoritative copy
+  }
+  return log;
+}
+
+function buildWeekChips(weekLog: WeekLog) {
+  const todayIso = toIsoDate(new Date());
+  const chips: { dateIso: string; label: string; count: number; isToday: boolean }[] = [];
+
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateIso = toIsoDate(d);
+    const rows = weekLog[dateIso] ?? [];
+    chips.push({
+      dateIso,
+      label: d.toLocaleDateString(undefined, { weekday: "short" }).slice(0, 2),
+      count: rows.filter((r) => r.check_in_time).length,
+      isToday: dateIso === todayIso,
+    });
+  }
+
+  return chips;
+}
+
 export default function KioskPage() {
   const [screen, setScreen] = useState<Screen>("pin");
   const [pin, setPin] = useState("");
@@ -90,10 +160,12 @@ export default function KioskPage() {
   const [successLabel, setSuccessLabel] = useState("");
   const [successTime, setSuccessTime] = useState("");
 
-  const [liveBoard, setLiveBoard] = useState<TodayEntry[]>([]);
+  const [roster, setRoster] = useState<RosterRow[]>([]);
+  const [weekLog, setWeekLog] = useState<WeekLog>({});
   const [school, setSchool] = useState<SchoolInfo>(FALLBACK_SCHOOL);
 
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastDateRef = useRef(toIsoDate(new Date()));
 
   // ---------------------------------------------------------------------
   // School branding — fetched from school_settings, cached for offline use
@@ -105,6 +177,8 @@ export default function KioskPage() {
     } catch {
       // ignore malformed cache
     }
+
+    setWeekLog(pruneToCurrentWeek(loadWeekLog()));
 
     async function loadSchoolSettings() {
       const { data, error } = await supabase
@@ -201,10 +275,41 @@ export default function KioskPage() {
     return () => window.removeEventListener("pointerdown", requestFullscreenOnce);
   }, []);
 
+  // ---------------------------------------------------------------------
+  // Full staff roster: every cached teacher, merged with today's entries,
+  // strictly filtered to today's date (the 12am–11:59pm window). Checked-in
+  // teachers are ordered by arrival time; everyone still missing is grouped
+  // below, alphabetically, so gaps are obvious at a glance. Every reload
+  // also mirrors today's snapshot into the rolling local weekly log.
+  // ---------------------------------------------------------------------
   const reloadLiveBoard = useCallback(async () => {
-    const entries = await getAllTodayEntries();
-    entries.sort((a, b) => a.teacher_name.localeCompare(b.teacher_name));
-    setLiveBoard(entries);
+    const [entries, teachers] = await Promise.all([getAllTodayEntries(), getAllCachedTeachers()]);
+    const todayIso = toIsoDate(new Date());
+    const entryByTeacher = new Map(
+      entries.filter((e) => e.attendance_date === todayIso).map((e) => [e.teacher_id, e])
+    );
+
+    const combined: RosterRow[] = teachers.map((t) => {
+      const existing = entryByTeacher.get(t.teacher_id);
+      return {
+        teacher_id: t.teacher_id,
+        teacher_name: t.full_name,
+        check_in_time: existing?.check_in_time ?? null,
+        check_out_time: existing?.check_out_time ?? null,
+      };
+    });
+
+    combined.sort((a, b) => {
+      if (a.check_in_time && b.check_in_time) {
+        return new Date(a.check_in_time).getTime() - new Date(b.check_in_time).getTime();
+      }
+      if (a.check_in_time) return -1;
+      if (b.check_in_time) return 1;
+      return a.teacher_name.localeCompare(b.teacher_name);
+    });
+
+    setRoster(combined);
+    setWeekLog(saveDaySnapshot(todayIso, combined));
   }, []);
 
   const refreshPendingCount = useCallback(async () => {
@@ -223,10 +328,34 @@ export default function KioskPage() {
     setSyncing(false);
   }, [reloadLiveBoard, refreshPendingCount]);
 
-  useEffect(() => {
-    const clockId = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(clockId);
+  const goToPinScreen = useCallback(() => {
+    setScreen("pin");
+    setPin("");
+    setTeacher(null);
+    setEntry(null);
+    setSuccessLabel("");
+    setSuccessTime("");
   }, []);
+
+  // Clock tick + the actual "resets at 12am" behavior: the moment the
+  // calendar date rolls over, bounce back to the PIN screen and force a
+  // fresh roster/sync pull so today's board starts genuinely empty.
+  useEffect(() => {
+    const clockId = setInterval(() => {
+      const nowDate = new Date();
+      setNow(nowDate);
+
+      const iso = toIsoDate(nowDate);
+      if (iso !== lastDateRef.current) {
+        lastDateRef.current = iso;
+        goToPinScreen();
+        void reloadLiveBoard();
+        void runSync();
+      }
+    }, 1000);
+
+    return () => clearInterval(clockId);
+  }, [reloadLiveBoard, runSync, goToPinScreen]);
 
   useEffect(() => {
     setIsOnline(navigator.onLine);
@@ -253,15 +382,6 @@ export default function KioskPage() {
       clearInterval(syncId);
     };
   }, [runSync, reloadLiveBoard, refreshPendingCount]);
-
-  const goToPinScreen = useCallback(() => {
-    setScreen("pin");
-    setPin("");
-    setTeacher(null);
-    setEntry(null);
-    setSuccessLabel("");
-    setSuccessTime("");
-  }, []);
 
   const scheduleReset = useCallback(
     (ms: number) => {
@@ -433,21 +553,24 @@ export default function KioskPage() {
     }
   }, [screen, teacher, entry, scheduleReset]);
 
+  const checkedInCount = roster.filter((r) => r.check_in_time).length;
+  const weekChips = buildWeekChips(weekLog);
+
   return (
     <main style={pageStyle}>
+      <div style={auroraGoldStyle} />
+      <div style={auroraBlueStyle} />
       <div style={vignetteStyle} />
 
       <div style={mainColumnStyle}>
         <header style={plaqueStyle}>
-          <div style={plaqueGlowStyle} />
-
           <div style={crestWrapStyle}>
             <div style={crestRingStyle}>
               {school.logo_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={school.logo_url} alt={school.school_name} style={crestImgStyle} />
               ) : (
-                <span style={{ color: COLORS.gold, fontWeight: 800, fontSize: 22 }}>
+                <span style={{ color: COLORS.gold, fontWeight: 800, fontSize: 18 }}>
                   {school.school_name.charAt(0)}
                 </span>
               )}
@@ -461,7 +584,7 @@ export default function KioskPage() {
           </div>
 
           <div style={headerRightStyle}>
-            <div style={clockStyle}>{formatClock(now)}</div>
+            <div style={clockStyle}>{formatTime12(now.toISOString())}</div>
             <div style={dateStyle}>{formatDateLong(now)}</div>
             <div style={statusPillStyle(isOnline)}>
               {isOnline ? "Online" : "Offline"}
@@ -495,26 +618,47 @@ export default function KioskPage() {
       </div>
 
       <aside style={sideColumnStyle}>
-        <h2 style={sideTitleStyle}>Today&apos;s Attendance</h2>
+        <div style={sideHeaderRowStyle}>
+          <h2 style={sideTitleStyle}>Today&apos;s Attendance</h2>
+          <span style={rosterCountStyle}>
+            {checkedInCount}/{roster.length}
+          </span>
+        </div>
 
         <div style={boardListStyle}>
-          {liveBoard.length === 0 ? (
+          {roster.length === 0 ? (
             <p style={{ color: "rgba(255,255,255,0.55)", fontSize: "13px" }}>
-              No attendance recorded yet.
+              No teachers found. Sync to load the staff list.
             </p>
           ) : (
-            liveBoard.map((row) => (
-              <div key={row.teacher_id} style={boardRowStyle}>
-                <span>
-                  {row.check_in_time ? "✓" : "⏳"} {row.teacher_name}
-                </span>
-                <span style={{ color: "rgba(255,255,255,0.7)" }}>
-                  {row.check_in_time ? formatTime12(row.check_in_time) : ""}
-                  {row.check_out_time ? ` → ${formatTime12(row.check_out_time)}` : ""}
-                </span>
-              </div>
-            ))
+            roster.map((row) => {
+              const checkedIn = Boolean(row.check_in_time);
+              const checkedOut = Boolean(row.check_out_time);
+
+              return (
+                <div key={row.teacher_id} style={boardRowStyle(checkedIn)}>
+                  <span style={boardStatusDotStyle(checkedIn)} />
+                  <span style={boardNameStyle(checkedIn)}>{row.teacher_name}</span>
+                  <span style={boardTimeStyle(checkedIn)}>
+                    {checkedIn ? formatTime12(row.check_in_time) : "Not checked in"}
+                    {checkedOut ? ` → ${formatTime12(row.check_out_time)}` : ""}
+                  </span>
+                </div>
+              );
+            })
           )}
+        </div>
+
+        <div style={weekStripStyle}>
+          <p style={weekStripLabelStyle}>This Week (on device)</p>
+          <div style={weekChipsRowStyle}>
+            {weekChips.map((chip) => (
+              <div key={chip.dateIso} style={weekChipStyle(chip.isToday)}>
+                <span style={weekChipDayStyle(chip.isToday)}>{chip.label}</span>
+                <span style={weekChipCountStyle(chip.isToday)}>{chip.count}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </aside>
     </main>
@@ -592,7 +736,7 @@ function StatusScreen({
       <p style={welcomeEyebrowStyle}>Welcome</p>
       <h2 style={welcomeNameStyle}>{teacher.full_name.toUpperCase()}</h2>
       <p style={{ color: COLORS.muted, marginBottom: "18px" }}>
-        {formatDateLong(now)} • {formatClock(now)}
+        {formatDateLong(now)} • {formatTime12(now.toISOString())}
       </p>
 
       {!hasCheckedIn && (
@@ -643,7 +787,8 @@ function SuccessScreen({ label, time }: { label: string; time: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Styles
+// Styles — glassmorphism pass: frosted translucent panels, blurred backdrops,
+// soft diffused shadows instead of hard skeuomorphic bevels.
 // ---------------------------------------------------------------------------
 
 const pageStyle: React.CSSProperties = {
@@ -653,15 +798,38 @@ const pageStyle: React.CSSProperties = {
   width: "100vw",
   display: "flex",
   overflow: "hidden",
-  background: `radial-gradient(1200px 800px at 20% -10%, #14213d 0%, ${COLORS.bg} 45%, ${COLORS.bgDeep} 100%)`,
-  fontFamily: "'Segoe UI', Arial, sans-serif",
+  background: `linear-gradient(160deg, #0b1220 0%, ${COLORS.bg} 55%, ${COLORS.bgDeep} 100%)`,
+  fontFamily:
+    "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Arial, sans-serif",
+};
+
+const auroraGoldStyle: React.CSSProperties = {
+  position: "absolute",
+  top: "-18%",
+  left: "8%",
+  width: "480px",
+  height: "480px",
+  borderRadius: "50%",
+  background: "radial-gradient(circle, rgba(240,196,67,0.22) 0%, rgba(240,196,67,0) 70%)",
+  pointerEvents: "none",
+};
+
+const auroraBlueStyle: React.CSSProperties = {
+  position: "absolute",
+  bottom: "-22%",
+  right: "4%",
+  width: "540px",
+  height: "540px",
+  borderRadius: "50%",
+  background: "radial-gradient(circle, rgba(80,130,255,0.16) 0%, rgba(80,130,255,0) 70%)",
+  pointerEvents: "none",
 };
 
 const vignetteStyle: React.CSSProperties = {
   position: "absolute",
   inset: 0,
   pointerEvents: "none",
-  boxShadow: "inset 0 0 180px rgba(0,0,0,0.55)",
+  boxShadow: "inset 0 0 180px rgba(0,0,0,0.45)",
 };
 
 const mainColumnStyle: React.CSSProperties = {
@@ -670,44 +838,40 @@ const mainColumnStyle: React.CSSProperties = {
   flexDirection: "column",
   padding: "22px 24px",
   minWidth: 0,
+  position: "relative",
+  zIndex: 1,
 };
 
 const sideColumnStyle: React.CSSProperties = {
   width: "320px",
   flexShrink: 0,
-  background: `linear-gradient(180deg, ${COLORS.panelLight} 0%, ${COLORS.panel} 100%)`,
-  padding: "24px 18px",
-  borderLeft: "1px solid rgba(212,160,23,0.15)",
-  boxShadow: "inset 6px 0 24px rgba(0,0,0,0.35)",
+  background: "rgba(255,255,255,0.05)",
+  backdropFilter: "blur(28px) saturate(160%)",
+  WebkitBackdropFilter: "blur(28px) saturate(160%)",
+  padding: "22px 16px",
+  borderLeft: "1px solid rgba(255,255,255,0.1)",
   color: "#fff",
   overflow: "hidden",
+  display: "flex",
+  flexDirection: "column",
+  position: "relative",
+  zIndex: 1,
 };
 
 const plaqueStyle: React.CSSProperties = {
   position: "relative",
   display: "flex",
   alignItems: "center",
-  gap: "18px",
+  gap: "16px",
   color: "#fff",
-  marginBottom: "18px",
-  padding: "16px 22px",
-  borderRadius: "18px",
-  background: "linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%)",
-  border: "1px solid rgba(212,160,23,0.25)",
-  boxShadow:
-    "0 18px 40px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -1px 0 rgba(0,0,0,0.4)",
-  overflow: "hidden",
-};
-
-const plaqueGlowStyle: React.CSSProperties = {
-  position: "absolute",
-  top: "-60%",
-  left: "-10%",
-  width: "260px",
-  height: "260px",
-  borderRadius: "50%",
-  background: "radial-gradient(circle, rgba(240,196,67,0.28) 0%, rgba(240,196,67,0) 70%)",
-  pointerEvents: "none",
+  marginBottom: "16px",
+  padding: "14px 20px",
+  borderRadius: "22px",
+  background: "rgba(255,255,255,0.07)",
+  border: "1px solid rgba(255,255,255,0.14)",
+  backdropFilter: "blur(24px) saturate(160%)",
+  WebkitBackdropFilter: "blur(24px) saturate(160%)",
+  boxShadow: "0 8px 32px rgba(0,0,0,0.35)",
 };
 
 const crestWrapStyle: React.CSSProperties = {
@@ -716,15 +880,15 @@ const crestWrapStyle: React.CSSProperties = {
 };
 
 const crestRingStyle: React.CSSProperties = {
-  width: "62px",
-  height: "62px",
+  width: "54px",
+  height: "54px",
   borderRadius: "50%",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
   background: `linear-gradient(145deg, ${COLORS.goldBright} 0%, ${COLORS.gold} 55%, ${COLORS.goldDeep} 100%)`,
   boxShadow:
-    "0 6px 14px rgba(0,0,0,0.5), inset 0 2px 2px rgba(255,255,255,0.5), inset 0 -3px 4px rgba(0,0,0,0.35)",
+    "0 6px 14px rgba(0,0,0,0.4), inset 0 2px 2px rgba(255,255,255,0.5), inset 0 -3px 4px rgba(0,0,0,0.3)",
   padding: "3px",
 };
 
@@ -744,25 +908,25 @@ const plaqueTextStyle: React.CSSProperties = {
 
 const schoolNameStyle: React.CSSProperties = {
   margin: 0,
-  fontSize: "24px",
-  fontWeight: 800,
-  letterSpacing: "0.5px",
+  fontSize: "18px",
+  fontWeight: 700,
+  letterSpacing: "0.3px",
   whiteSpace: "nowrap",
   overflow: "hidden",
   textOverflow: "ellipsis",
-  textShadow: "0 2px 6px rgba(0,0,0,0.4)",
+  textShadow: "0 2px 6px rgba(0,0,0,0.35)",
 };
 
 const mottoStyle: React.CSSProperties = {
   margin: "2px 0 0",
-  fontSize: "13px",
+  fontSize: "12px",
   fontStyle: "italic",
   color: "rgba(240,196,67,0.85)",
 };
 
 const subEyebrowStyle: React.CSSProperties = {
-  margin: "6px 0 0",
-  fontSize: "11px",
+  margin: "5px 0 0",
+  fontSize: "10px",
   letterSpacing: "1.5px",
   textTransform: "uppercase",
   color: "rgba(255,255,255,0.5)",
@@ -774,14 +938,14 @@ const headerRightStyle: React.CSSProperties = {
 };
 
 const clockStyle: React.CSSProperties = {
-  fontSize: "26px",
-  fontWeight: 800,
+  fontSize: "24px",
+  fontWeight: 700,
   fontVariantNumeric: "tabular-nums",
 };
 
 const dateStyle: React.CSSProperties = {
-  fontSize: "13px",
-  color: "rgba(255,255,255,0.7)",
+  fontSize: "12px",
+  color: "rgba(255,255,255,0.65)",
   marginTop: "2px",
 };
 
@@ -790,12 +954,13 @@ function statusPillStyle(online: boolean): React.CSSProperties {
     marginTop: "8px",
     display: "inline-block",
     fontSize: "11px",
-    fontWeight: 700,
+    fontWeight: 600,
     padding: "4px 10px",
     borderRadius: "999px",
     background: online ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.18)",
     color: online ? "#4ade80" : "#f87171",
     border: `1px solid ${online ? "rgba(74,222,128,0.3)" : "rgba(248,113,113,0.3)"}`,
+    backdropFilter: "blur(6px)",
   };
 }
 
@@ -807,15 +972,16 @@ const cardOuterStyle: React.CSSProperties = {
 
 const cardStyle: React.CSSProperties = {
   flex: 1,
-  background: `linear-gradient(180deg, #ffffff 0%, #fbfbfc 100%)`,
-  borderRadius: "24px",
+  background: "rgba(255,255,255,0.82)",
+  backdropFilter: "blur(30px) saturate(180%)",
+  WebkitBackdropFilter: "blur(30px) saturate(180%)",
+  borderRadius: "28px",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
   padding: "32px",
-  boxShadow:
-    "0 30px 60px rgba(0,0,0,0.5), 0 2px 0 rgba(255,255,255,0.6) inset, 0 -6px 18px rgba(0,0,0,0.06) inset",
-  border: "1px solid rgba(255,255,255,0.4)",
+  boxShadow: "0 24px 60px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.7)",
+  border: "1px solid rgba(255,255,255,0.5)",
 };
 
 const centerColStyle: React.CSSProperties = {
@@ -829,7 +995,7 @@ const centerColStyle: React.CSSProperties = {
 
 const promptStyle: React.CSSProperties = {
   fontSize: "22px",
-  fontWeight: 800,
+  fontWeight: 700,
   color: COLORS.text,
   marginBottom: "14px",
 };
@@ -864,12 +1030,13 @@ const keypadStyle: React.CSSProperties = {
 const keyStyle: React.CSSProperties = {
   padding: "18px",
   fontSize: "22px",
-  fontWeight: 700,
-  borderRadius: "14px",
-  border: `1px solid ${COLORS.border}`,
-  background: "linear-gradient(180deg, #ffffff 0%, #f3f4f6 100%)",
-  boxShadow:
-    "0 4px 0 rgba(0,0,0,0.08), 0 6px 12px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,0.9)",
+  fontWeight: 600,
+  borderRadius: "18px",
+  border: "1px solid rgba(0,0,0,0.06)",
+  background: "rgba(255,255,255,0.65)",
+  backdropFilter: "blur(12px)",
+  WebkitBackdropFilter: "blur(12px)",
+  boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 6px 16px rgba(0,0,0,0.08)",
   color: COLORS.text,
   cursor: "pointer",
   transition: "transform 0.08s ease, box-shadow 0.08s ease",
@@ -878,9 +1045,9 @@ const keyStyle: React.CSSProperties = {
 const keySecondaryStyle: React.CSSProperties = {
   ...keyStyle,
   fontSize: "15px",
-  fontWeight: 700,
+  fontWeight: 600,
   color: COLORS.muted,
-  background: "linear-gradient(180deg, #f9fafb 0%, #eef0f3 100%)",
+  background: "rgba(249,250,251,0.6)",
 };
 
 const welcomeEyebrowStyle: React.CSSProperties = {
@@ -902,7 +1069,7 @@ function statusBadgeStyle(bg: string, color: string): React.CSSProperties {
     color,
     padding: "10px 16px",
     borderRadius: "999px",
-    fontWeight: 800,
+    fontWeight: 700,
     fontSize: "15px",
     boxShadow: "0 2px 6px rgba(0,0,0,0.08)",
   };
@@ -913,34 +1080,137 @@ const actionButtonStyle: React.CSSProperties = {
   border: "none",
   background: `linear-gradient(180deg, ${COLORS.goldBright} 0%, ${COLORS.gold} 60%, ${COLORS.goldDeep} 100%)`,
   color: "#1a1305",
-  fontWeight: 800,
+  fontWeight: 700,
   fontSize: "18px",
   padding: "16px 40px",
-  borderRadius: "16px",
+  borderRadius: "18px",
   cursor: "pointer",
-  boxShadow:
-    "0 6px 0 rgba(138,106,13,0.6), 0 10px 20px rgba(212,160,23,0.35), inset 0 1px 0 rgba(255,255,255,0.5)",
+  boxShadow: "0 10px 24px rgba(212,160,23,0.35), inset 0 1px 0 rgba(255,255,255,0.5)",
+};
+
+const sideHeaderRowStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "baseline",
+  justifyContent: "space-between",
+  marginBottom: "14px",
 };
 
 const sideTitleStyle: React.CSSProperties = {
-  margin: "0 0 14px",
-  fontSize: "16px",
+  margin: 0,
+  fontSize: "15px",
   color: COLORS.goldBright,
-  letterSpacing: "0.5px",
+  letterSpacing: "0.3px",
+};
+
+const rosterCountStyle: React.CSSProperties = {
+  fontSize: "13px",
+  fontWeight: 600,
+  color: "rgba(255,255,255,0.6)",
+  fontVariantNumeric: "tabular-nums",
 };
 
 const boardListStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  gap: "8px",
-  maxHeight: "calc(100dvh - 90px)",
+  gap: "6px",
   overflowY: "auto",
+  flex: 1,
+  minHeight: 0,
 };
 
-const boardRowStyle: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  fontSize: "13px",
-  padding: "8px 0",
-  borderBottom: "1px solid rgba(255,255,255,0.08)",
+function boardRowStyle(checkedIn: boolean): React.CSSProperties {
+  return {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    fontSize: "13px",
+    padding: "9px 10px",
+    borderRadius: "12px",
+    background: checkedIn ? "rgba(74,222,128,0.10)" : "rgba(255,255,255,0.03)",
+    border: checkedIn ? "1px solid rgba(74,222,128,0.2)" : "1px solid rgba(255,255,255,0.05)",
+  };
+}
+
+function boardStatusDotStyle(checkedIn: boolean): React.CSSProperties {
+  return {
+    width: "8px",
+    height: "8px",
+    borderRadius: "50%",
+    flexShrink: 0,
+    background: checkedIn ? "#4ade80" : "rgba(255,255,255,0.25)",
+    boxShadow: checkedIn ? "0 0 6px rgba(74,222,128,0.8)" : "none",
+  };
+}
+
+function boardNameStyle(checkedIn: boolean): React.CSSProperties {
+  return {
+    flex: 1,
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    fontWeight: checkedIn ? 600 : 500,
+    color: checkedIn ? "#fff" : "rgba(255,255,255,0.5)",
+  };
+}
+
+function boardTimeStyle(checkedIn: boolean): React.CSSProperties {
+  return {
+    flexShrink: 0,
+    fontSize: "12px",
+    color: checkedIn ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.32)",
+    fontVariantNumeric: "tabular-nums",
+  };
+}
+
+const weekStripStyle: React.CSSProperties = {
+  marginTop: "14px",
+  paddingTop: "14px",
+  borderTop: "1px solid rgba(255,255,255,0.08)",
+  flexShrink: 0,
 };
+
+const weekStripLabelStyle: React.CSSProperties = {
+  margin: "0 0 8px",
+  fontSize: "10px",
+  letterSpacing: "1px",
+  textTransform: "uppercase",
+  color: "rgba(255,255,255,0.4)",
+};
+
+const weekChipsRowStyle: React.CSSProperties = {
+  display: "flex",
+  gap: "5px",
+};
+
+function weekChipStyle(isToday: boolean): React.CSSProperties {
+  return {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "3px",
+    padding: "7px 2px",
+    borderRadius: "10px",
+    background: isToday ? "rgba(240,196,67,0.16)" : "rgba(255,255,255,0.04)",
+    border: isToday ? "1px solid rgba(240,196,67,0.35)" : "1px solid rgba(255,255,255,0.06)",
+  };
+}
+
+function weekChipDayStyle(isToday: boolean): React.CSSProperties {
+  return {
+    fontSize: "10px",
+    fontWeight: 600,
+    color: isToday ? COLORS.goldBright : "rgba(255,255,255,0.45)",
+    textTransform: "uppercase",
+  };
+}
+
+function weekChipCountStyle(isToday: boolean): React.CSSProperties {
+  return {
+    fontSize: "13px",
+    fontWeight: 700,
+    color: isToday ? "#fff" : "rgba(255,255,255,0.7)",
+    fontVariantNumeric: "tabular-nums",
+  };
+}
