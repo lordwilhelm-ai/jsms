@@ -2,7 +2,7 @@
 
 import type React from "react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -223,6 +223,8 @@ function getAttendanceLocationSettings(row: AnyRow | null): AttendanceLocationSe
   };
 }
 
+const AUTO_REFRESH_MS = 30000;
+
 export default function TeacherAttendancePage() {
   const router = useRouter();
 
@@ -244,161 +246,244 @@ export default function TeacherAttendancePage() {
   const [messageType, setMessageType] = useState<"success" | "error" | "info">("info");
   const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
   const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
-  useEffect(() => {
-    let active = true;
+  const currentUserRowRef = useRef<AnyRow | null>(null);
+  const roleRef = useRef<string>("");
+  const teacherIdRef = useRef<string>("");
 
-    async function loadPage() {
-      try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+  const fetchAllData = useCallback(async (isBackground: boolean) => {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-        if (!active) return;
+      if (!session?.user) {
+        if (!isBackground) router.replace("/");
+        return;
+      }
 
-        if (!session?.user) {
-          router.replace("/");
-          return;
-        }
+      const [teachersRes, settingsRes, attendanceSettingsRes] = await Promise.all([
+        supabase.from("teachers").select("*"),
+        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
+        supabase.from("teacher_attendance_settings").select("*").limit(1).maybeSingle(),
+      ]);
 
-        const [teachersRes, settingsRes, attendanceSettingsRes] = await Promise.all([
-          supabase.from("teachers").select("*"),
-          supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-          supabase.from("teacher_attendance_settings").select("*").limit(1).maybeSingle(),
-        ]);
+      const teachers = teachersRes.data || [];
 
-        if (!active) return;
+      if (teachersRes.error) {
+        if (!isBackground) router.replace("/");
+        return;
+      }
 
-        const teachers = teachersRes.data || [];
+      const matchedUser =
+        teachers.find((item) => item.auth_user_id === session.user.id) ||
+        teachers.find(
+          (item) =>
+            String(item.email || "").trim().toLowerCase() ===
+            String(session.user.email || "").trim().toLowerCase()
+        ) ||
+        null;
 
-        if (teachersRes.error) {
-          router.replace("/");
-          return;
-        }
+      const fallbackAdminUser = {
+        id: session.user.id,
+        auth_user_id: session.user.id,
+        email: session.user.email || "",
+        full_name: "Admin",
+        role: "admin",
+        teacher_id: "",
+        username: "",
+        phone: "",
+      };
 
-        const matchedUser =
-          teachers.find((item) => item.auth_user_id === session.user.id) ||
-          teachers.find(
-            (item) =>
-              String(item.email || "").trim().toLowerCase() ===
-              String(session.user.email || "").trim().toLowerCase()
-          ) ||
-          null;
+      const finalUser = matchedUser || fallbackAdminUser;
+      const role = getRole(finalUser);
 
-        const fallbackAdminUser = {
-          id: session.user.id,
-          auth_user_id: session.user.id,
-          email: session.user.email || "",
-          full_name: "Admin",
-          role: "admin",
-          teacher_id: "",
-          username: "",
-          phone: "",
-        };
+      const now = new Date();
+      const today = toIsoDate(now);
+      const weekStart = toIsoDate(startOfWeekMonday(now));
+      const weekEnd = toIsoDate(endOfWeekSunday(now));
+      const nextStart = toIsoDate(nextWeekStart(now));
+      const nextEnd = toIsoDate(nextWeekEnd(now));
 
-        const finalUser = matchedUser || fallbackAdminUser;
-        const role = getRole(finalUser);
+      const realTeachers = teachers.filter((item) => isTeacherRole(getRole(item)));
 
-        const now = new Date();
-        const today = toIsoDate(now);
-        const weekStart = toIsoDate(startOfWeekMonday(now));
-        const weekEnd = toIsoDate(endOfWeekSunday(now));
-        const nextStart = toIsoDate(nextWeekStart(now));
-        const nextEnd = toIsoDate(nextWeekEnd(now));
+      setCurrentUserRow(finalUser);
+      currentUserRowRef.current = finalUser;
+      roleRef.current = role;
+      setSettingsRow(settingsRes.data || null);
+      setAttendanceSettings(getAttendanceLocationSettings(attendanceSettingsRes.data || null));
+      setAllTeachers(realTeachers);
 
-        const realTeachers = teachers.filter((item) => isTeacherRole(getRole(item)));
-
-        setCurrentUserRow(finalUser);
-        setSettingsRow(settingsRes.data || null);
-        setAttendanceSettings(getAttendanceLocationSettings(attendanceSettingsRes.data || null));
-        setAllTeachers(realTeachers);
-
-        if (isAdminRole(role)) {
-          const [todayAllRes, dutyThisRes, dutyNextRes] = await Promise.all([
-            supabase
-              .from("teacher_attendance")
-              .select("*")
-              .eq("attendance_date", today)
-              .order("teacher_name", { ascending: true }),
-            supabase
-              .from("teacher_duty_roster")
-              .select("*")
-              .gte("week_start_date", weekStart)
-              .lte("week_start_date", weekEnd)
-              .order("week_start_date", { ascending: true }),
-            supabase
-              .from("teacher_duty_roster")
-              .select("*")
-              .gte("week_start_date", nextStart)
-              .lte("week_start_date", nextEnd)
-              .order("week_start_date", { ascending: true }),
-          ]);
-
-          if (!active) return;
-
-          setTodayAllAttendance(todayAllRes.data || []);
-          setDutyThisWeek(dutyThisRes.data || []);
-          setDutyNextWeek(dutyNextRes.data || []);
-          return;
-        }
-
-        if (!isTeacherRole(role)) {
-          router.replace("/dashboard");
-          return;
-        }
-
-        const teacherId = getTeacherId(finalUser);
-
-        const [todayRes, historyRes, dutyThisRes, dutyNextRes] = await Promise.all([
+      if (isAdminRole(role)) {
+        const [todayAllRes, dutyThisRes, dutyNextRes] = await Promise.all([
           supabase
             .from("teacher_attendance")
             .select("*")
-            .eq("teacher_id", teacherId)
             .eq("attendance_date", today)
-            .maybeSingle(),
-          supabase
-            .from("teacher_attendance")
-            .select("*")
-            .eq("teacher_id", teacherId)
-            .order("attendance_date", { ascending: false })
-            .limit(30),
+            .order("teacher_name", { ascending: true }),
           supabase
             .from("teacher_duty_roster")
             .select("*")
-            .eq("teacher_id", teacherId)
             .gte("week_start_date", weekStart)
             .lte("week_start_date", weekEnd)
             .order("week_start_date", { ascending: true }),
           supabase
             .from("teacher_duty_roster")
             .select("*")
-            .eq("teacher_id", teacherId)
             .gte("week_start_date", nextStart)
             .lte("week_start_date", nextEnd)
             .order("week_start_date", { ascending: true }),
         ]);
 
-        if (!active) return;
-
-        setTodayAttendance(todayRes.data || null);
-        setAttendanceHistory(historyRes.data || []);
+        setTodayAllAttendance(todayAllRes.data || []);
         setDutyThisWeek(dutyThisRes.data || []);
         setDutyNextWeek(dutyNextRes.data || []);
-      } catch (error) {
-        console.error(error);
+        setLastSyncedAt(new Date());
+        return;
+      }
+
+      if (!isTeacherRole(role)) {
+        if (!isBackground) router.replace("/dashboard");
+        return;
+      }
+
+      const teacherId = getTeacherId(finalUser);
+      teacherIdRef.current = teacherId;
+
+      const [todayRes, historyRes, dutyThisRes, dutyNextRes] = await Promise.all([
+        supabase
+          .from("teacher_attendance")
+          .select("*")
+          .eq("teacher_id", teacherId)
+          .eq("attendance_date", today)
+          .maybeSingle(),
+        supabase
+          .from("teacher_attendance")
+          .select("*")
+          .eq("teacher_id", teacherId)
+          .order("attendance_date", { ascending: false })
+          .limit(30),
+        supabase
+          .from("teacher_duty_roster")
+          .select("*")
+          .eq("teacher_id", teacherId)
+          .gte("week_start_date", weekStart)
+          .lte("week_start_date", weekEnd)
+          .order("week_start_date", { ascending: true }),
+        supabase
+          .from("teacher_duty_roster")
+          .select("*")
+          .eq("teacher_id", teacherId)
+          .gte("week_start_date", nextStart)
+          .lte("week_start_date", nextEnd)
+          .order("week_start_date", { ascending: true }),
+      ]);
+
+      setTodayAttendance(todayRes.data || null);
+      setAttendanceHistory(historyRes.data || []);
+      setDutyThisWeek(dutyThisRes.data || []);
+      setDutyNextWeek(dutyNextRes.data || []);
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error(error);
+      if (!isBackground) {
         setMessage("Failed to load attendance page.");
         setMessageType("error");
-      } finally {
-        if (active) setLoading(false);
       }
+    } finally {
+      if (!isBackground) setLoading(false);
     }
+  }, [router]);
 
-    void loadPage();
+  useEffect(() => {
+    let active = true;
+
+    (async () => {
+      if (!active) return;
+      await fetchAllData(false);
+    })();
 
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [fetchAllData]);
+
+  useEffect(() => {
+    const attendanceChannel = supabase
+      .channel("teacher_attendance_live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teacher_attendance" },
+        () => {
+          void fetchAllData(true);
+        }
+      )
+      .subscribe();
+
+    const dutyChannel = supabase
+      .channel("teacher_duty_roster_live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teacher_duty_roster" },
+        () => {
+          void fetchAllData(true);
+        }
+      )
+      .subscribe();
+
+    const teachersChannel = supabase
+      .channel("teachers_live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teachers" },
+        () => {
+          void fetchAllData(true);
+        }
+      )
+      .subscribe();
+
+    const settingsChannel = supabase
+      .channel("attendance_settings_live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teacher_attendance_settings" },
+        () => {
+          void fetchAllData(true);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "school_settings" },
+        () => {
+          void fetchAllData(true);
+        }
+      )
+      .subscribe();
+
+    const intervalId = window.setInterval(() => {
+      void fetchAllData(true);
+    }, AUTO_REFRESH_MS);
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        void fetchAllData(true);
+      }
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", onVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onVisibilityChange);
+      supabase.removeChannel(attendanceChannel);
+      supabase.removeChannel(dutyChannel);
+      supabase.removeChannel(teachersChannel);
+      supabase.removeChannel(settingsChannel);
+    };
+  }, [fetchAllData]);
 
   const role = getRole(currentUserRow);
   const teacherId = useMemo(() => getTeacherId(currentUserRow), [currentUserRow]);
@@ -437,6 +522,7 @@ export default function TeacherAttendancePage() {
 
     setTodayAttendance(todayRes.data || null);
     setAttendanceHistory(historyRes.data || []);
+    setLastSyncedAt(new Date());
   }
 
   async function readLocationAndValidate(mode: "checkin" | "checkout") {
@@ -606,6 +692,7 @@ export default function TeacherAttendancePage() {
         dutyThisWeek={dutyThisWeek}
         dutyNextWeek={dutyNextWeek}
         attendanceSettings={attendanceSettings}
+        lastSyncedAt={lastSyncedAt}
       />
     );
   }
@@ -738,6 +825,12 @@ export default function TeacherAttendancePage() {
               GPS accuracy: {Math.round(gpsAccuracy)}m
             </div>
           )}
+
+          {lastSyncedAt && (
+            <div style={{ marginTop: "5px", fontSize: "11px", color: COLORS.muted }}>
+              Last synced: {formatTime(lastSyncedAt.toISOString())}
+            </div>
+          )}
         </div>
 
         <div style={{ height: "8px" }} />
@@ -756,6 +849,7 @@ function AdminTeacherAttendanceView({
   dutyThisWeek,
   dutyNextWeek,
   attendanceSettings,
+  lastSyncedAt,
 }: {
   currentUserRow: AnyRow | null;
   settingsRow: AnyRow | null;
@@ -764,6 +858,7 @@ function AdminTeacherAttendanceView({
   dutyThisWeek: AnyRow[];
   dutyNextWeek: AnyRow[];
   attendanceSettings: AttendanceLocationSettings;
+  lastSyncedAt: Date | null;
 }) {
   const [search, setSearch] = useState("");
 
@@ -868,6 +963,11 @@ function AdminTeacherAttendanceView({
                   {academicYear && currentTerm ? " • " : ""}
                   {currentTerm}
                 </div>
+                {lastSyncedAt && (
+                  <div style={{ marginTop: "3px" }}>
+                    Live • synced {formatTime(lastSyncedAt.toISOString())}
+                  </div>
+                )}
               </div>
             </div>
           </div>
