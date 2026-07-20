@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 import SDSFileUpload from "@/app/components/SDSFileUpload";
 
 type TeacherRow = Record<string, any>;
@@ -165,7 +166,7 @@ export default function SDSAdminStudentProfilePage() {
         // If it's a teacher, verify they're assigned to this student's class
         if (role === "teacher") {
           try {
-            const assignResponse = await fetch(`/api/teacher-assignments/get?teacher_id=${userRow.id}`);
+            const assignResponse = await authedFetch(`/api/teacher-assignments/get?teacher_id=${userRow.id}`);
             const assignData = await assignResponse.json();
 
             if (!assignResponse.ok || assignData.error) {

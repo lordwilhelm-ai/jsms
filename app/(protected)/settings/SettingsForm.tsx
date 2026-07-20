@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 import LogoUpload from "./LogoUpload";
 
 type SettingsRecord = {
@@ -64,7 +65,7 @@ export default function SettingsForm() {
     setMessage("");
 
     try {
-      const response = await fetch("/api/settings/update", {
+      const response = await authedFetch("/api/settings/update", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

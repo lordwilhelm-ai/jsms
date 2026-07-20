@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { authedFetch } from "@/lib/apiClient";
 
 type SubjectItem = {
   id: string;
@@ -31,7 +32,7 @@ export default function SubjectsPage() {
   const [message, setMessage] = useState("");
 
   async function loadSubjects() {
-    const response = await fetch("/api/subjects/list");
+    const response = await authedFetch("/api/subjects/list");
     const data = await response.json();
 
     if (!response.ok) {
@@ -42,7 +43,7 @@ export default function SubjectsPage() {
   }
 
   async function loadClasses() {
-    const response = await fetch("/api/classes/list");
+    const response = await authedFetch("/api/classes/list");
     const data = await response.json();
 
     if (!response.ok) {
@@ -57,13 +58,13 @@ export default function SubjectsPage() {
     }
   }
 
-  async function loadClassSubjects(classId: string) {
+  async function loadClassSubjects(classId: string, isStale?: () => boolean) {
     if (!classId) {
       setSelectedSubjectIds([]);
       return;
     }
 
-    const response = await fetch(
+    const response = await authedFetch(
       `/api/subjects/class-subjects/get?class_id=${classId}`
     );
     const data = await response.json();
@@ -71,6 +72,10 @@ export default function SubjectsPage() {
     if (!response.ok) {
       throw new Error(data.error || "Failed to load class subjects.");
     }
+
+    // A faster response for a class picked after this one can already have
+    // rendered — don't let this slower response clobber it.
+    if (isStale?.()) return;
 
     setSelectedSubjectIds(data.subject_ids || []);
   }
@@ -95,8 +100,11 @@ export default function SubjectsPage() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+
     if (selectedClassId) {
-      loadClassSubjects(selectedClassId).catch((error) => {
+      loadClassSubjects(selectedClassId, () => !active).catch((error) => {
+        if (!active) return;
         setMessage(
           error instanceof Error
             ? `Error: ${error.message}`
@@ -104,6 +112,10 @@ export default function SubjectsPage() {
         );
       });
     }
+
+    return () => {
+      active = false;
+    };
   }, [selectedClassId]);
 
   const selectedClass = useMemo(
@@ -124,7 +136,7 @@ export default function SubjectsPage() {
     setMessage("");
 
     try {
-      const response = await fetch("/api/subjects/seed", {
+      const response = await authedFetch("/api/subjects/seed", {
         method: "POST",
       });
 
@@ -168,7 +180,7 @@ export default function SubjectsPage() {
     setMessage("");
 
     try {
-      const response = await fetch("/api/subjects/create", {
+      const response = await authedFetch("/api/subjects/create", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -208,7 +220,7 @@ export default function SubjectsPage() {
     setMessage("");
 
     try {
-      const response = await fetch("/api/subjects/class-subjects/save", {
+      const response = await authedFetch("/api/subjects/class-subjects/save", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -618,7 +630,7 @@ function EditableSubjectCard({
     setMessage("");
 
     try {
-      const response = await fetch("/api/subjects/update", {
+      const response = await authedFetch("/api/subjects/update", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -659,7 +671,7 @@ function EditableSubjectCard({
     setMessage("");
 
     try {
-      const response = await fetch("/api/subjects/delete", {
+      const response = await authedFetch("/api/subjects/delete", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

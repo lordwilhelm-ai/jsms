@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { notifyFeedingSubmitted } from "@/lib/jsmsNotify";
+import { authedFetch } from "@/lib/apiClient";
 
 type Attendance = "present" | "absent";
 type BalanceMap = Record<string, number>;
@@ -529,7 +530,7 @@ export default function FeedingTeacherPage() {
         }
 
         try {
-          const assignResponse = await fetch(`/api/teacher-assignments/get?teacher_id=${row.id}`);
+          const assignResponse = await authedFetch(`/api/teacher-assignments/get?teacher_id=${row.id}`);
           const assignData = await assignResponse.json();
 
           if (assignResponse.ok && !assignData.error) {

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { FiRefreshCw } from "react-icons/fi";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 
 type TeacherRow = Record<string, any>;
 
@@ -447,7 +448,7 @@ export default function ReportCardTeacherRemarksPage() {
     setTeacher(row);
 
     try {
-      const assignResponse = await fetch(
+      const assignResponse = await authedFetch(
         `/api/teacher-assignments/get?teacher_id=${row.id}`
       );
       const assignData = await assignResponse.json();

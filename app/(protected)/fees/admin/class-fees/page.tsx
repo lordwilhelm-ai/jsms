@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 import Link from "next/link";
 
 const inputStyle: React.CSSProperties = {
@@ -53,7 +54,7 @@ export default function ClassFeesPage() {
     try {
       const cls = classes.find((c) => c.id === id);
       if (!cls) throw new Error("Class not found");
-      const res = await fetch("/api/classes/update-fees", {
+      const res = await authedFetch("/api/classes/update-fees", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -79,7 +80,7 @@ export default function ClassFeesPage() {
     setError(null);
     try {
       for (const cls of classes) {
-        const res = await fetch("/api/classes/update-fees", {
+        const res = await authedFetch("/api/classes/update-fees", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

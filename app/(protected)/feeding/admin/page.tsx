@@ -443,7 +443,6 @@ export default function FeedingAdminPage() {
         receivedRes,
         settingsRes,
         closuresRes,
-        feedingHolidaysRes,
         ghanaHolidaysRes,
         assignmentsRes,
       ] = await Promise.all([
@@ -454,7 +453,6 @@ export default function FeedingAdminPage() {
         supabase.from("received_money").select("*").eq("date", today),
         supabase.from("school_settings").select("*").limit(1).maybeSingle(),
         supabase.from("school_closures").select("*").order("start_date", { ascending: true }),
-        supabase.from("feeding_holidays").select("*"),
         supabase.from("ghana_public_holidays").select("*"),
         supabase.from("teacher_class_assignments").select("*"),
       ]);
@@ -467,7 +465,6 @@ export default function FeedingAdminPage() {
       setSettingsRow(settingsRes.data || null);
       setClosures([
         ...(closuresRes.data || []),
-        ...(!feedingHolidaysRes.error ? feedingHolidaysRes.data || [] : []),
         ...(!ghanaHolidaysRes.error ? ghanaHolidaysRes.data || [] : []),
       ]);
       setAssignments(!assignmentsRes.error ? assignmentsRes.data || [] : []);

@@ -371,9 +371,11 @@ export default function SDSAdminPage() {
       }
     } catch (error) {
       console.error(error);
-      setMessage(
-        error instanceof Error ? `Error: ${error.message}` : "Error: Failed to save student."
-      );
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : String((error as Record<string, any>)?.message || "Failed to save student.");
+      setMessage(`Error: ${errorMessage}`);
     } finally {
       setSavingStudent(false);
     }

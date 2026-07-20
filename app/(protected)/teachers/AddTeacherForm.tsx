@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { authedFetch } from "@/lib/apiClient";
 import TeacherImageUpload from "./TeacherImageUpload";
 
 export default function AddTeacherForm() {
@@ -20,7 +21,7 @@ export default function AddTeacherForm() {
     setMessage("");
 
     try {
-      const response = await fetch("/api/teachers/create", {
+      const response = await authedFetch("/api/teachers/create", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

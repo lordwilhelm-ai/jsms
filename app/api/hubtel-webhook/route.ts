@@ -1,20 +1,6 @@
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
-
-const BILL_RATE = 2;
-
-function cleanLower(value: unknown) { 
-  return String(value || "").trim().toLowerCase(); 
-}
-
-function isActiveStudent(student: any) {
-  const status = cleanLower(student.status);
-  if (student.left_school === true) return false;
-  if (student.is_active === false) return false;
-  if (student.active === false) return false;
-  if (status === "inactive" || status === "left" || status === "withdrawn") return false;
-  return true;
-}
+import { supabaseAdmin } from "@/lib/supabase-admin";
+import { computeReportCardLicenseAmount } from "@/lib/reportCardLicense";
 
 export async function POST(req: Request) {
   try {
@@ -37,7 +23,7 @@ export async function POST(req: Request) {
     }
 
     // 1. Check if already processed to avoid double updates
-    const { data: existingLicense } = await supabase
+    const { data: existingLicense } = await supabaseAdmin
       .from("rc_licenses")
       .select("id, payment_status")
       .eq("invoice_id", invoiceId)
@@ -48,19 +34,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ received: true, already_paid: true });
     }
 
-    // 2. Count active students
-    const { data: allStudents, error: studentError } = await supabase
-      .from("students")
-      .select("id,student_id,jvs_id,class_name,is_active,active,left_school,status");
-
-    if (studentError) throw studentError;
-
-    const activeStudents = (allStudents || []).filter(isActiveStudent);
-    const studentsPaid = activeStudents.length;
-    const totalAmount = studentsPaid * BILL_RATE;
+    // 2. Count active students (server-computed, never trust the webhook's Amount for the license total)
+    const { studentsPaid, totalAmount } = await computeReportCardLicenseAmount();
 
     // 3. Get current academic settings
-    const { data: settings } = await supabase
+    const { data: settings } = await supabaseAdmin
       .from("school_settings")
       .select("current_academic_year, current_term")
       .order("updated_at", { ascending: false })
@@ -68,7 +46,7 @@ export async function POST(req: Request) {
       .single();
 
     // 4. Update license
-    const { error: updateError } = await supabase.from("rc_licenses").update({
+    const { error: updateError } = await supabaseAdmin.from("rc_licenses").update({
       payment_status: 'paid',
       is_paid: true,
       amount: totalAmount, // total amount paid, not 0

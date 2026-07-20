@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 
 type Teacher = {
   id: string;
@@ -820,7 +821,7 @@ export default function TeachersPage() {
     setMessage("");
 
     try {
-      const createResponse = await fetch("/api/teachers/create", {
+      const createResponse = await authedFetch("/api/teachers/create", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -923,7 +924,7 @@ export default function TeachersPage() {
     setMessage("");
 
     try {
-      const updateResponse = await fetch("/api/teachers/update", {
+      const updateResponse = await authedFetch("/api/teachers/update", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -961,7 +962,7 @@ export default function TeachersPage() {
       );
 
       if (editForm.newPassword?.trim()) {
-        const passwordResponse = await fetch("/api/teachers/reset-password", {
+        const passwordResponse = await authedFetch("/api/teachers/reset-password", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1001,7 +1002,7 @@ export default function TeachersPage() {
     setMessage("");
 
     try {
-      const response = await fetch("/api/teachers/delete", {
+      const response = await authedFetch("/api/teachers/delete", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { authedFetch } from "@/lib/apiClient";
 
 type SDSFileUploadProps = {
   label: string;
@@ -96,7 +97,7 @@ export default function SDSFileUpload({
       formData.append("file", selectedFile);
       formData.append("folder", folder);
 
-      const res = await fetch("/api/sds-upload", {
+      const res = await authedFetch("/api/sds-upload", {
         method: "POST",
         body: formData,
       });

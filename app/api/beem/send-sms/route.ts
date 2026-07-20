@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 
 type SmsRecipient = {
   phone?: string;
@@ -41,6 +42,9 @@ async function readJsonSafe(response: Response) {
 
 export async function POST(request: Request) {
   try {
+    const staffAuth = await requireStaffRole(request, ["owner", "admin", "headmaster", "teacher"]);
+    if (!staffAuth.ok) return unauthorizedResponse(staffAuth);
+
     const apiKey = process.env.BEEM_API_KEY;
     const secretKey = process.env.BEEM_SECRET_KEY;
     const sourceAddr = process.env.BEEM_SOURCE_ADDR || "Froove";

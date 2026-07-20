@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 import TeacherImageUpload from "../TeacherImageUpload";
 
 type Teacher = {
@@ -220,7 +221,7 @@ function EditableTeacherCard({
     setMessage("");
 
     try {
-      const response = await fetch("/api/teachers/update", {
+      const response = await authedFetch("/api/teachers/update", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -259,7 +260,7 @@ function EditableTeacherCard({
     setMessage("");
 
     try {
-      const response = await fetch("/api/teachers/reset-password", {
+      const response = await authedFetch("/api/teachers/reset-password", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -298,7 +299,7 @@ function EditableTeacherCard({
     setMessage("");
 
     try {
-      const response = await fetch("/api/teachers/delete", {
+      const response = await authedFetch("/api/teachers/delete", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

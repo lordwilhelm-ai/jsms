@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 
 function makeTeacherId() {
   const randomNumber = Math.floor(10000 + Math.random() * 90000);
@@ -37,6 +38,9 @@ function makeLoginEmail(username: string) {
 
 export async function POST(request: Request) {
   try {
+    const auth = await requireStaffRole(request, ["owner", "admin", "headmaster"]);
+    if (!auth.ok) return unauthorizedResponse(auth);
+
     const body = await request.json();
 
     const fullName = String(body.fullName || "").trim();

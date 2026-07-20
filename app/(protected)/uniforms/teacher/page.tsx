@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 
 type TeacherRow = Record<string, any>;
 type ClassRow = Record<string, any>;
@@ -325,7 +326,7 @@ export default function UniformsTeacherPage() {
 
         setTeacherName(getTeacherName(teacherRow));
 
-        const assignmentRes = await fetch(
+        const assignmentRes = await authedFetch(
           `/api/teacher-assignments/get?teacher_id=${teacherRow.id}`
         );
         const assignmentData = await assignmentRes.json().catch(() => ({}));

@@ -20,6 +20,85 @@ const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
 
 const TOKEN_MAX_AGE_MS = 10 * 60 * 1000;
 
+const THROTTLE_WINDOW_MS = 15 * 60 * 1000;
+const THROTTLE_LOCKOUT_MS = 30 * 60 * 1000;
+const MAX_QUESTION_REQUESTS = 8;
+const MAX_FAILED_VERIFICATIONS = 5;
+
+// Distinguishes "too many attempts" from other failures so the route can
+// respond 429 instead of the generic 500 used for everything else below.
+class ThrottleError extends Error {}
+
+// Loads (or lazily creates/resets) this teacher's reset-attempt counters.
+// Throws ThrottleError if they're currently locked out.
+async function getOrInitThrottleRow(teacherId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("jsms_password_reset_throttle")
+    .select("*")
+    .eq("teacher_id", teacherId)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+
+  if (data?.locked_until && new Date(data.locked_until).getTime() > Date.now()) {
+    throw new ThrottleError("Too many attempts. Please try again in 30 minutes.");
+  }
+
+  const windowStart = data?.window_started_at
+    ? new Date(data.window_started_at).getTime()
+    : 0;
+  const windowExpired = !data || Date.now() - windowStart > THROTTLE_WINDOW_MS;
+
+  if (windowExpired) {
+    const { data: reset, error: upsertError } = await supabaseAdmin
+      .from("jsms_password_reset_throttle")
+      .upsert(
+        {
+          teacher_id: teacherId,
+          window_started_at: new Date().toISOString(),
+          question_requests: 0,
+          failed_verifications: 0,
+          locked_until: null,
+        },
+        { onConflict: "teacher_id" }
+      )
+      .select("*")
+      .single();
+
+    if (upsertError) throw new Error(upsertError.message);
+    return reset;
+  }
+
+  return data;
+}
+
+// Increments one counter (question_requests or failed_verifications) for this
+// teacher and locks them out once it exceeds max — throws ThrottleError either way.
+async function bumpThrottleCounter(
+  teacherId: string,
+  field: "question_requests" | "failed_verifications",
+  max: number
+) {
+  const row = await getOrInitThrottleRow(teacherId);
+  const nextCount = (row[field] || 0) + 1;
+  const patch: Record<string, any> = { [field]: nextCount };
+
+  if (nextCount > max) {
+    patch.locked_until = new Date(Date.now() + THROTTLE_LOCKOUT_MS).toISOString();
+  }
+
+  const { error } = await supabaseAdmin
+    .from("jsms_password_reset_throttle")
+    .update(patch)
+    .eq("teacher_id", teacherId);
+
+  if (error) throw new Error(error.message);
+
+  if (nextCount > max) {
+    throw new ThrottleError("Too many attempts. Please try again in 30 minutes.");
+  }
+}
+
 const leadershipQuestions = [
   {
     question: "Who is the proprietor of JEFSEM Vision School?",
@@ -417,6 +496,8 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Teacher account is missing." }, { status: 400 });
       }
 
+      await bumpThrottleCounter(teacherId, "question_requests", MAX_QUESTION_REQUESTS);
+
       const [
         teacherRes,
         teachersRes,
@@ -507,12 +588,18 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Invalid reset stage." }, { status: 400 });
       }
 
+      // Enforces the lockout even for a correct submission, and resets the
+      // window if it's expired — doesn't consume an attempt on its own.
+      await getOrInitThrottleRow(payload.teacherId);
+
       const submittedAnswers = body.answers || {};
       const correct = (payload.answers || []).every((item: any) => {
         return hashAnswer(submittedAnswers[item.id] || "") === item.answerHash;
       });
 
       if (!correct) {
+        await bumpThrottleCounter(payload.teacherId, "failed_verifications", MAX_FAILED_VERIFICATIONS);
+
         return NextResponse.json(
           { error: "Some answers are incorrect. Try again." },
           { status: 400 }
@@ -572,6 +659,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "Invalid action." }, { status: 400 });
   } catch (error) {
+    if (error instanceof ThrottleError) {
+      return NextResponse.json({ error: error.message }, { status: 429 });
+    }
+
     return NextResponse.json(
       {
         error:

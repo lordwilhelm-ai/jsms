@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
+import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 
 function getEnv(name: string) {
   const value = process.env[name];
@@ -11,6 +12,9 @@ function getEnv(name: string) {
 
 export async function POST(req: Request) {
   try {
+    const auth = await requireStaffRole(req, ["owner", "admin", "headmaster", "teacher"]);
+    if (!auth.ok) return unauthorizedResponse(auth);
+
     const cloudName = getEnv("CLOUDINARY_CLOUD_NAME");
     const apiKey = getEnv("CLOUDINARY_API_KEY");
     const apiSecret = getEnv("CLOUDINARY_API_SECRET");

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 
 type AnyRow = Record<string, any>;
 type SendMode = "owing" | "all" | "class" | "level" | "individual";
@@ -438,7 +439,7 @@ export default function FeeReminderPage() {
         studentId: row.studentId,
       }));
 
-      const response = await fetch("/api/beem/send-sms", {
+      const response = await authedFetch("/api/beem/send-sms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ recipients }),

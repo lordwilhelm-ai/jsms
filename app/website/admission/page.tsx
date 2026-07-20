@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type ClassItem = {
@@ -9,11 +10,11 @@ type ClassItem = {
 };
 
 type SubmitResult = {
-  application_id: string;
   student_id: string;
+  student_name: string;
+  class_applying: string;
   receipt_number: string;
   amount: number;
-  status: string;
 };
 
 const STORAGE_BUCKET = "admission-documents";
@@ -35,12 +36,26 @@ const fallbackClasses = [
 ];
 
 export default function PublicAdmissionPage() {
+  return (
+    <Suspense fallback={<main style={styles.page} />}>
+      <AdmissionForm />
+    </Suspense>
+  );
+}
+
+function AdmissionForm() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [formPrice, setFormPrice] = useState(0);
+  const [admissionsOpen, setAdmissionsOpen] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [checkingReturn, setCheckingReturn] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [result, setResult] = useState<SubmitResult | null>(null);
+  const [cancelledAppId, setCancelledAppId] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     student_name: "",
@@ -83,14 +98,75 @@ export default function PublicAdmissionPage() {
     loadStartupData();
   }, []);
 
+  useEffect(() => {
+    const appId = searchParams.get("app");
+
+    if (searchParams.get("paid") === "1" && appId) {
+      setCheckingReturn(true);
+
+      fetch(`/api/admission-status?id=${encodeURIComponent(appId)}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.error || !data.application) {
+            showError(data.error || "Could not confirm payment. Contact the school with your details.");
+            return;
+          }
+
+          const app = data.application;
+          setResult({
+            student_id: app.student_id,
+            student_name: app.student_name,
+            class_applying: app.class_applying,
+            receipt_number: app.form_receipt_number,
+            amount: Number(app.form_price || 0),
+          });
+        })
+        .catch(() => showError("Could not confirm payment. Contact the school with your details."))
+        .finally(() => {
+          setCheckingReturn(false);
+          router.replace("/website/admission");
+        });
+    }
+
+    if (searchParams.get("cancelled") === "1" && appId) {
+      setCancelledAppId(appId);
+      router.replace("/website/admission");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleRetryPayment() {
+    if (!cancelledAppId) return;
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/admission-retry-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ applicationId: cancelledAppId }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || "Failed to start payment.");
+
+      window.location.href = data.checkoutUrl;
+    } catch (err: any) {
+      showError(err?.message || "Failed to start payment.");
+      setBusy(false);
+    }
+  }
+
   async function loadStartupData() {
     const [settingsRes, classesRes] = await Promise.all([
-      supabase.from("admission_settings").select("form_price").limit(1).maybeSingle(),
+      supabase.from("admission_settings").select("form_price, online_admission_open").limit(1).maybeSingle(),
       supabase.from("classes").select("*").order("class_order", { ascending: true }),
     ]);
 
     if (settingsRes.data) {
       setFormPrice(Number(settingsRes.data.form_price || 0));
+      setAdmissionsOpen(settingsRes.data.online_admission_open !== false);
     }
 
     if (classesRes.data && classesRes.data.length > 0) {
@@ -202,6 +278,7 @@ export default function PublicAdmissionPage() {
   async function submitAdmission(e: React.FormEvent) {
     e.preventDefault();
 
+    if (!admissionsOpen) return showError("Online admissions are currently closed.");
     if (!form.student_name.trim()) return showError("Student name is required.");
     if (!form.class_applying.trim()) return showError("Select the class applying for.");
     if (!form.payer_name.trim()) return showError("Payer name is required.");
@@ -218,58 +295,66 @@ export default function PublicAdmissionPage() {
     try {
       const uploaded = await uploadOptionalFiles();
 
-      // Paystack comes later. For now, this acts like payment has been made.
-      const fakePaymentReference = `OFFLINE-${Date.now()}`;
+      const res = await fetch("/api/admission-submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          student_name: form.student_name.trim(),
+          class_applying: form.class_applying,
 
-      const { data, error } = await supabase.rpc("create_online_admission_application", {
-        p_student_name: form.student_name.trim(),
-        p_class_applying: form.class_applying,
+          gender: form.gender,
+          date_of_birth: form.date_of_birth,
+          address: form.address,
 
-        p_gender: form.gender || null,
-        p_date_of_birth: form.date_of_birth || null,
-        p_address: form.address || null,
+          father_name: form.father_name,
+          father_address: form.father_address,
+          father_phone: form.father_phone,
 
-        p_father_name: form.father_name || null,
-        p_father_address: form.father_address || null,
-        p_father_phone: form.father_phone || null,
+          mother_name: form.mother_name,
+          mother_address: form.mother_address,
+          mother_phone: form.mother_phone,
 
-        p_mother_name: form.mother_name || null,
-        p_mother_address: form.mother_address || null,
-        p_mother_phone: form.mother_phone || null,
+          stays_with: form.stays_with,
 
-        p_stays_with: form.stays_with || null,
+          guardian_name: form.guardian_name,
+          guardian_address: form.guardian_address,
+          guardian_phone: form.guardian_phone,
+          guardian_relationship: form.guardian_relationship,
 
-        p_guardian_name: form.guardian_name || null,
-        p_guardian_address: form.guardian_address || null,
-        p_guardian_phone: form.guardian_phone || null,
-        p_guardian_relationship: form.guardian_relationship || null,
+          nhis_number: form.nhis_number,
 
-        p_nhis_number: form.nhis_number || null,
+          photo_url: uploaded.photo_url,
+          nhis_card_url: uploaded.nhis_card_url,
+          weighing_card_url: uploaded.weighing_card_url,
+          birth_certificate_url: uploaded.birth_certificate_url,
+          document_1_url: uploaded.document_1_url,
+          document_2_url: uploaded.document_2_url,
+          document_3_url: uploaded.document_3_url,
 
-        p_photo_url: uploaded.photo_url,
-        p_nhis_card_url: uploaded.nhis_card_url,
-        p_weighing_card_url: uploaded.weighing_card_url,
-        p_birth_certificate_url: uploaded.birth_certificate_url,
-        p_document_1_url: uploaded.document_1_url,
-        p_document_2_url: uploaded.document_2_url,
-        p_document_3_url: uploaded.document_3_url,
-
-        p_amount: formPrice,
-        p_payment_method: "online_placeholder",
-        p_payment_status: "paid",
-        p_payer_name: form.payer_name,
-        p_payer_phone: form.payer_phone,
-        p_payment_reference: fakePaymentReference,
-        p_paystack_reference: null,
+          payer_name: form.payer_name,
+          payer_phone: form.payer_phone,
+        }),
       });
 
-      if (error) throw new Error(error.message);
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || "Failed to submit admission form.");
 
-      const row = Array.isArray(data) ? data[0] : data;
-      setResult(row as SubmitResult);
+      if (data.checkoutUrl) {
+        // Redirect to Hubtel to complete payment — the page picks back up
+        // from the returnUrl/cancellationUrl query params on return.
+        window.location.href = data.checkoutUrl;
+        return;
+      }
 
-      // Automatically process the global JSMS push queue after this admission notification is created.
-      // This is not admission-only; every JSMS module can call the same Edge Function after creating notifications.
+      // No payment was needed (form price is currently GHS 0) — already paid.
+      setResult({
+        student_id: data.studentId,
+        student_name: form.student_name.trim(),
+        class_applying: form.class_applying,
+        receipt_number: data.receiptNumber,
+        amount: Number(data.amount || 0),
+      });
+
       const pushResult = await triggerPushNotificationsNow();
 
       if (pushResult.ok) {
@@ -308,11 +393,9 @@ export default function PublicAdmissionPage() {
             <h2>Admission Form Receipt</h2>
             <div class="receipt-no">${result.receipt_number}</div>
             <div class="row"><span class="label">Student ID</span><span>${result.student_id}</span></div>
-            <div class="row"><span class="label">Student Name</span><span>${form.student_name}</span></div>
-            <div class="row"><span class="label">Class Applying</span><span>${form.class_applying}</span></div>
+            <div class="row"><span class="label">Student Name</span><span>${result.student_name}</span></div>
+            <div class="row"><span class="label">Class Applying</span><span>${result.class_applying}</span></div>
             <div class="row"><span class="label">Amount</span><span>GHS ${Number(result.amount || 0).toFixed(2)}</span></div>
-            <div class="row"><span class="label">Payer Name</span><span>${form.payer_name}</span></div>
-            <div class="row"><span class="label">Payer Phone</span><span>${form.payer_phone}</span></div>
             <div class="footer">Bring this receipt or receipt number to the school for confirmation.</div>
           </div>
           <script>window.print();</script>
@@ -324,6 +407,17 @@ export default function PublicAdmissionPage() {
     if (!win) return;
     win.document.write(html);
     win.document.close();
+  }
+
+  if (checkingReturn) {
+    return (
+      <main style={styles.page}>
+        <section style={styles.successCard}>
+          <p style={styles.eyebrow}>Please wait</p>
+          <h1 style={styles.title}>Confirming your payment...</h1>
+        </section>
+      </main>
+    );
   }
 
   if (result) {
@@ -339,8 +433,8 @@ export default function PublicAdmissionPage() {
 
           <div style={styles.resultGrid}>
             <ResultItem label="Student ID" value={result.student_id} />
-            <ResultItem label="Student Name" value={form.student_name} />
-            <ResultItem label="Class" value={form.class_applying} />
+            <ResultItem label="Student Name" value={result.student_name} />
+            <ResultItem label="Class" value={result.class_applying} />
             <ResultItem label="Amount" value={`GHS ${Number(result.amount || 0).toFixed(2)}`} />
           </div>
 
@@ -353,6 +447,34 @@ export default function PublicAdmissionPage() {
             }}
           >
             Submit Another Application
+          </button>
+        </section>
+      </main>
+    );
+  }
+
+  if (cancelledAppId) {
+    return (
+      <main style={styles.page}>
+        <section style={styles.successCard}>
+          <div style={styles.bigIcon}>⚠️</div>
+          <p style={styles.eyebrow}>Payment Cancelled</p>
+          <h1 style={styles.title}>Your admission form wasn&apos;t paid for</h1>
+          <p style={styles.subtitle}>Your details are saved. You can try the payment again, or start over.</p>
+
+          {error && <div style={styles.errorBox}>⚠️ {error}</div>}
+
+          <button style={styles.primaryBtn} onClick={handleRetryPayment} disabled={busy}>
+            {busy ? "Starting payment..." : "Try Payment Again"}
+          </button>
+          <button
+            style={styles.lightBtn}
+            onClick={() => {
+              setCancelledAppId(null);
+              setError(null);
+            }}
+          >
+            Start a New Application
           </button>
         </section>
       </main>
@@ -376,6 +498,9 @@ export default function PublicAdmissionPage() {
 
       {error && <div style={styles.errorBox}>⚠️ {error}</div>}
       {success && <div style={styles.successBox}>✅ {success}</div>}
+      {!admissionsOpen && (
+        <div style={styles.errorBox}>⚠️ Online admissions are currently closed. Please contact the school directly.</div>
+      )}
 
       <form onSubmit={submitAdmission} style={styles.formCard}>
         <FormSection title="Student Details">
@@ -439,12 +564,12 @@ export default function PublicAdmissionPage() {
           <Input label="Payer Name" value={form.payer_name} onChange={(v) => updateField("payer_name", v)} required />
           <Input label="Payer Phone" value={form.payer_phone} onChange={(v) => updateField("payer_phone", v)} required />
           <div style={styles.noticeBox}>
-            Paystack will be added later. For now, clicking submit works as if the admission form payment has been made.
+            You&apos;ll be redirected to Hubtel to pay GHS {Number(formPrice || 0).toFixed(2)} securely via Mobile Money or Card. Your form is saved before you pay.
           </div>
         </FormSection>
 
-        <button style={styles.primaryBtn} disabled={busy}>
-          {busy ? "Submitting..." : "Submit Admission Form"}
+        <button style={styles.primaryBtn} disabled={busy || !admissionsOpen}>
+          {busy ? "Please wait..." : "Continue to Payment"}
         </button>
       </form>
     </main>
@@ -539,7 +664,7 @@ function FileInput({ label, onChange }: { label: string; onChange: (file: File |
 const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: "100vh",
-    padding: "24px",
+    padding: "clamp(12px, 4vw, 24px)",
     background: "linear-gradient(135deg, #f8f2df 0%, #eef7ef 45%, #ffffff 100%)",
     color: "#102016",
     fontFamily: "Inter, Arial, sans-serif",
@@ -548,6 +673,7 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: "1100px",
     margin: "0 auto 18px",
     display: "flex",
+    flexWrap: "wrap",
     justifyContent: "space-between",
     alignItems: "center",
     gap: "14px",
@@ -562,8 +688,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   title: {
     margin: "6px 0",
-    fontSize: "32px",
-    lineHeight: 1.1,
+    fontSize: "clamp(24px, 6vw, 32px)",
+    lineHeight: 1.15,
     color: "#0f2a17",
   },
   subtitle: {
@@ -578,6 +704,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "18px",
     padding: "16px 18px",
     minWidth: "180px",
+    width: "100%",
+    maxWidth: "260px",
     boxShadow: "0 14px 35px rgba(16,32,22,0.08)",
     display: "grid",
     gap: "4px",
@@ -588,7 +716,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: "rgba(255,255,255,0.95)",
     border: "1px solid rgba(15,122,59,0.12)",
     borderRadius: "24px",
-    padding: "20px",
+    padding: "clamp(14px, 4vw, 20px)",
     boxShadow: "0 18px 45px rgba(16,32,22,0.08)",
     display: "grid",
     gap: "16px",
@@ -606,7 +734,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: "12px",
   },
   field: {
@@ -622,7 +750,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #ccd8cf",
     borderRadius: "12px",
     padding: "11px 12px",
-    fontSize: "14px",
+    fontSize: "16px",
     outline: "none",
     background: "#ffffff",
   },
@@ -632,7 +760,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #ccd8cf",
     borderRadius: "12px",
     padding: "11px 12px",
-    fontSize: "14px",
+    fontSize: "16px",
     outline: "none",
     resize: "vertical",
     background: "#ffffff",
@@ -669,6 +797,9 @@ const styles: Record<string, React.CSSProperties> = {
     background: "linear-gradient(135deg, #0f7a3b, #0f2a17)",
     color: "#ffffff",
     padding: "13px 18px",
+    minHeight: "48px",
+    width: "100%",
+    fontSize: "15px",
     borderRadius: "14px",
     cursor: "pointer",
     fontWeight: 900,
@@ -679,6 +810,9 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#ffffff",
     color: "#0f2a17",
     padding: "13px 18px",
+    minHeight: "48px",
+    width: "100%",
+    fontSize: "15px",
     borderRadius: "14px",
     cursor: "pointer",
     fontWeight: 900,
@@ -706,11 +840,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   successCard: {
     maxWidth: "720px",
-    margin: "50px auto",
+    margin: "clamp(20px, 8vw, 50px) auto",
     background: "#ffffff",
     border: "1px solid rgba(15,122,59,0.14)",
     borderRadius: "26px",
-    padding: "28px",
+    padding: "clamp(18px, 5vw, 28px)",
     boxShadow: "0 18px 45px rgba(16,32,22,0.1)",
     textAlign: "center",
   },
@@ -736,7 +870,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   resultGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
     gap: "12px",
     margin: "20px 0",
   },

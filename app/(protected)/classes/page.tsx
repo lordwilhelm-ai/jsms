@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { authedFetch } from "@/lib/apiClient";
 
 type ClassItem = {
   id: string;
@@ -20,7 +21,7 @@ export default function ClassesPage() {
     setMessage("");
 
     try {
-      const response = await fetch("/api/classes/list", {
+      const response = await authedFetch("/api/classes/list", {
         method: "GET",
       });
 
@@ -49,7 +50,7 @@ export default function ClassesPage() {
     setMessage("");
 
     try {
-      const response = await fetch("/api/classes/seed", {
+      const response = await authedFetch("/api/classes/seed", {
         method: "POST",
       });
 
@@ -274,7 +275,7 @@ function EditableClassCard({
     setMessage("");
 
     try {
-      const response = await fetch("/api/classes/update", {
+      const response = await authedFetch("/api/classes/update", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -316,7 +317,7 @@ function EditableClassCard({
     setMessage("");
 
     try {
-      const response = await fetch("/api/classes/delete", {
+      const response = await authedFetch("/api/classes/delete", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

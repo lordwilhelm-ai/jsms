@@ -470,7 +470,11 @@ export default function RecordPaymentPage() {
       setMessage(`${String(student.full_name || "Student")} setup saved.`);
     } catch (error) {
       console.error(error);
-      setMessage(error instanceof Error ? `Error: ${error.message}` : "Error: Failed to save.");
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : String((error as AnyRow)?.message || "Failed to save.");
+      setMessage(`Error: ${errorMessage}`);
     } finally {
       setSavingStudentId("");
     }
@@ -568,9 +572,11 @@ export default function RecordPaymentPage() {
       setMessage(`Payment recorded successfully. Receipt: ${receiptNo}`);
     } catch (error) {
       console.error(error);
-      setMessage(
-        error instanceof Error ? `Error: ${error.message}` : "Error: Failed to record payment."
-      );
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : String((error as AnyRow)?.message || "Failed to record payment.");
+      setMessage(`Error: ${errorMessage}`);
     } finally {
       setSavingPayment(false);
     }

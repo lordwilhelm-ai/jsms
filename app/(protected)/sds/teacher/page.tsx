@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 
 type AnyRow = Record<string, any>;
 
@@ -247,7 +248,7 @@ export default function TeacherStudentDataPage() {
         let classIds: string[] = [];
 
         try {
-          const response = await fetch(`/api/teacher-assignments/get?teacher_id=${teacherRow.id}`);
+          const response = await authedFetch(`/api/teacher-assignments/get?teacher_id=${teacherRow.id}`);
           const payload = await response.json();
           if (response.ok && !payload?.error && Array.isArray(payload?.class_ids)) {
             classIds = payload.class_ids.map((id: any) => String(id));

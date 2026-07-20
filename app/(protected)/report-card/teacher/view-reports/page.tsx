@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FiEye, FiPrinter, FiRefreshCw } from "react-icons/fi";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 
 const CLASS_OPTIONS = [
   "All",
@@ -1289,7 +1290,7 @@ export default function ReportCardsPage() {
 
     setTeacherName(getTeacherDisplayName(teacherRow));
 
-    const assignmentRes = await fetch(
+    const assignmentRes = await authedFetch(
       `/api/teacher-assignments/get?teacher_id=${teacherRow.id}`
     );
 

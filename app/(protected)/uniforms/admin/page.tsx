@@ -682,6 +682,7 @@ export default function UniformsPage() {
 
   async function safeInsert(table: string, payload: AnyRow) {
     const result = await supabase.from(table).insert(payload);
+    if (result.error) console.error(`safeInsert(${table}) failed:`, result.error);
     return !result.error;
   }
 
@@ -722,6 +723,7 @@ export default function UniformsPage() {
         class_name: paymentForm.class_name,
         receipt_number: receipt,
         item_name: itemNames,
+        quantity: selectedUniformOptions.length || 1,
         selected_items: selectedUniformOptions.map((item) => ({
           key: item.key,
           item_name: item.label,
@@ -774,7 +776,8 @@ export default function UniformsPage() {
         amount_paid: paymentPaid,
         total_amount: paymentTotal,
         balance: paymentBalance,
-        payment_status: nextPaymentStatus,
+        source_id: paymentData.id,
+        source_table: "jsms_uniform_payments",
         received_by: currentUserName,
         term: currentTerm,
         academic_year: academicYear,
@@ -790,7 +793,7 @@ export default function UniformsPage() {
         amount_paid: paymentPaid,
         total_amount: paymentTotal,
         balance: paymentBalance,
-        issued_by: currentUserName,
+        received_by: currentUserName,
         term: currentTerm,
         academic_year: academicYear,
       });

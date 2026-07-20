@@ -378,7 +378,11 @@ export default function DebtorsPage() {
         }
       } catch (error) {
         console.error(error);
-        setMessage(error instanceof Error ? `Error: ${error.message}` : "Error: Failed to load debtors.");
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : String((error as Record<string, any>)?.message || "Failed to load debtors.");
+        setMessage(`Error: ${errorMessage}`);
       } finally {
         if (active) {
           setCheckingUser(false);

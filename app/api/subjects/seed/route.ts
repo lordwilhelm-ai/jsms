@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 
 const officialSubjects = [
   { name: "Literacy", subject_name: "Literacy", subject_order: 1 },
@@ -21,8 +22,11 @@ const officialSubjects = [
   { name: "Integrated Science", subject_name: "Integrated Science", subject_order: 16 },
 ];
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    const auth = await requireStaffRole(request, ["owner", "admin", "headmaster"]);
+    if (!auth.ok) return unauthorizedResponse(auth);
+
     const { error: deleteLinksError } = await supabaseAdmin
       .from("class_subjects")
       .delete()

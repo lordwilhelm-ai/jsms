@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 
 export async function POST(request: Request) {
   try {
+    const auth = await requireStaffRole(request, ["owner", "admin", "headmaster"]);
+    if (!auth.ok) return unauthorizedResponse(auth);
+
     const body = await request.json();
 
     const id = body.id ? String(body.id) : null;

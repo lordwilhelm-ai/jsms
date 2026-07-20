@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 
 const officialClasses = [
     { name: "Playroom 1", class_name: "Playroom 1", class_order: 1, level: "Pre-School" },
@@ -17,8 +18,11 @@ const officialClasses = [
     { name: "JHS 3", class_name: "JHS 3", class_order: 13, level: "JHS" },
 ];
 
-export async function POST() {
+export async function POST(request: Request) {
     try {
+        const auth = await requireStaffRole(request, ["owner", "admin", "headmaster"]);
+        if (!auth.ok) return unauthorizedResponse(auth);
+
         const { error: deleteError } = await supabaseAdmin
             .from("classes")
             .delete()

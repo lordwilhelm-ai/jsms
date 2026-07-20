@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useReportCardAccess } from "@/hooks/useReportCardAccess";
+import { authedFetch } from "@/lib/apiClient";
 import { FiLoader, FiShield, FiUsers, FiFileText, FiCheckCircle, FiX, FiAlertCircle } from "react-icons/fi";
 
 function formatMoney(value: number) { return `₵${value.toFixed(2)}`; }
@@ -41,22 +42,23 @@ export default function CheckoutPage() {
     setLoading(true);
     
     try {
-      // 1. Create unique invoiceId
-      const invoiceId = `JVS-${license.id}-${Date.now()}`;
-
-      // 2. Save invoiceId to license first so webhook can find it
-      const saveRes = await fetch("/api/save-invoice", {
+      // 1. Ask the server to mint a fresh, unguessable invoiceId and save it to
+      // the license so the webhook can find it later. Never generate this
+      // client-side — it's the value that proves a payment belongs to this license.
+      const saveRes = await authedFetch("/api/save-invoice", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ licenseId: license.id, invoiceId, amount: amountDue }),
+        body: JSON.stringify({ licenseId: license.id }),
       });
       if (!saveRes.ok) throw new Error("Failed to save invoice");
+      const { invoiceId, error: saveError } = await saveRes.json();
+      if (saveError || !invoiceId) throw new Error(saveError || "Failed to save invoice");
 
-      // 3. Call our server to get Hubtel checkoutUrl
-      const res = await fetch("/api/initiate-payment", {
+      // 2. Call our server to get Hubtel checkoutUrl
+      const res = await authedFetch("/api/initiate-payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: amountDue, invoiceId }),
+        body: JSON.stringify({ invoiceId }),
       });
 
       if (!res.ok) throw new Error("Failed to initiate payment");
