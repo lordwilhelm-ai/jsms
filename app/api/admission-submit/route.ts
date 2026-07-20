@@ -134,9 +134,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ applicationId, checkoutUrl });
   } catch (error) {
     console.error("Admission submit error:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to submit admission form." },
-      { status: 500 }
-    );
+    const message =
+      error instanceof Error
+        ? error.message
+        : String((error as Record<string, any>)?.message || "Failed to submit admission form.");
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

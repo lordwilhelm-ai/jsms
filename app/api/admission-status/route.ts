@@ -24,9 +24,10 @@ export async function GET(req: Request) {
     return NextResponse.json({ application: data });
   } catch (error) {
     console.error("Admission status error:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to load application status." },
-      { status: 500 }
-    );
+    const message =
+      error instanceof Error
+        ? error.message
+        : String((error as Record<string, any>)?.message || "Failed to load application status.");
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

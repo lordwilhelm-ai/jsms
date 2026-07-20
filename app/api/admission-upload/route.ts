@@ -46,9 +46,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ url: data.publicUrl });
   } catch (error) {
     console.error("Admission upload error:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Upload failed." },
-      { status: 500 }
-    );
+    const message =
+      error instanceof Error
+        ? error.message
+        : String((error as Record<string, any>)?.message || "Upload failed.");
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

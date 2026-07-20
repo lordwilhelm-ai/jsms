@@ -55,9 +55,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ checkoutUrl });
   } catch (error) {
     console.error("Admission retry payment error:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to start payment." },
-      { status: 500 }
-    );
+    const message =
+      error instanceof Error
+        ? error.message
+        : String((error as Record<string, any>)?.message || "Failed to start payment.");
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
