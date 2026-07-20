@@ -221,13 +221,14 @@ function getNextTermLabel(currentTerm: string) {
   return "Next Term";
 }
 
-function getParentPortalUrl(studentId?: string) {
+function getParentPortalUrl(studentId?: string, className?: string) {
   const baseUrl = "https://jefsemvision.cc/parent";
   const cleanStudentId = cleanText(studentId);
+  const cleanClassName = cleanText(className);
 
-  if (!cleanStudentId) return baseUrl;
+  if (!cleanStudentId || !cleanClassName) return baseUrl;
 
-  return `${baseUrl}?student=${encodeURIComponent(cleanStudentId)}`;
+  return `${baseUrl}?student=${encodeURIComponent(cleanStudentId)}&class=${encodeURIComponent(cleanClassName)}`;
 }
 
 function getQrCodeUrl(url: string) {
@@ -803,7 +804,7 @@ function ReportCardSheet({ data }: { data: ReportData }) {
   const schoolLogo = getSchoolLogo(settings);
   const className = student.className;
   const levelTitle = getLevelTitle(className);
-  const parentPortalUrl = getParentPortalUrl(student.studentId);
+  const parentPortalUrl = getParentPortalUrl(student.studentId, className);
   const parentQrUrl = getQrCodeUrl(parentPortalUrl);
 
   const sortedScores = [...scores].sort((a, b) => {

@@ -142,7 +142,7 @@ export default function WebsiteHomePage() {
         <section className="grid gap-3 pb-5 md:grid-cols-3">
           <SmallCard label="Website" value="jefsemvision.cc/website" />
           <SmallCard label="Online Admission" value="jefsemvision.cc/website/admission" />
-          <SmallCard label="Parent Portal" value="jefsemvision.cc/parent?student=STUDENT_ID" />
+          <SmallCard label="Parent Portal" value="jefsemvision.cc/parent?student=STUDENT_ID&class=CLASS" />
         </section>
       </section>
     </main>
