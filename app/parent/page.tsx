@@ -942,8 +942,9 @@ function FeesPanel({
         </span>
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+      <div className="mt-4 grid gap-3 sm:grid-cols-4">
         <MiniTotal label="Current Term Fee" value={money(fees.currentTermFee)} />
+        <MiniTotal label="Amount Paid" value={money(fees.amountPaid)} />
         <MiniTotal label="Arrears" value={money(fees.arrears)} danger={fees.arrears > 0} />
         <MiniTotal label="Next Term Total" value={money(fees.total)} danger={fees.total > 0} />
       </div>
