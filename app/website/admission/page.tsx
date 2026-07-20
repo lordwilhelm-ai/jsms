@@ -17,8 +17,6 @@ type SubmitResult = {
   amount: number;
 };
 
-const STORAGE_BUCKET = "admission-documents";
-
 const fallbackClasses = [
   "Playroom 1",
   "Playroom 2",
@@ -221,7 +219,6 @@ function AdmissionForm() {
 
   async function uploadOptionalFiles() {
     const urls: Record<string, string | null> = {};
-    const tempId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
     for (const [field, file] of Object.entries(files)) {
       if (!file) {
@@ -229,21 +226,22 @@ function AdmissionForm() {
         continue;
       }
 
-      const ext = file.name.split(".").pop() || "file";
-      const path = `online-temp/${tempId}/${field}.${ext}`;
+      // These are optional supporting documents — a failed upload (network
+      // blip, one bad file) should never block the applicant from paying.
+      try {
+        const body = new FormData();
+        body.append("file", file);
+        body.append("field", field);
 
-      const { error: uploadError } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, {
-        upsert: true,
-      });
+        const res = await fetch("/api/admission-upload", { method: "POST", body });
+        const data = await res.json();
 
-      if (uploadError) {
-        throw new Error(
-          `${uploadError.message}. Create a public Supabase Storage bucket named "${STORAGE_BUCKET}".`
-        );
+        if (!res.ok || data.error) throw new Error(data.error || "Upload failed.");
+        urls[field] = data.url;
+      } catch (err) {
+        console.warn(`Could not upload ${field}, continuing without it:`, err);
+        urls[field] = null;
       }
-
-      const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
-      urls[field] = data.publicUrl;
     }
 
     return urls;
