@@ -297,12 +297,21 @@ export default function ReportCardAdminDashboardPage() {
               { label: "Total Students", value: loading ? "..." : students.length, sub: "Active students only" },
               { label: "Total Teachers", value: loading ? "..." : teacherCount, sub: "Teachers added" },
               { label: "Reports Ready", value: loading ? "..." : reportsReady, sub: "Fully ready report cards" },
-              { label: "Amount Due", value: loading ? "..." : formatMoney(amountDue), sub: "Active students × ₵2" },
+              { label: "Amount Due", value: loading ? "..." : formatMoney(amountDue), sub: "Active students × ₵2", payNow: true },
             ].map((stat) => (
               <div key={stat.label} className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-sm">
                 <p className="text-sm font-bold text-slate-500">{stat.label}</p>
                 <h3 className="mt-4 text-4xl font-black tracking-[0.2em] text-slate-900">{stat.value}</h3>
                 <p className="mt-3 text-sm text-slate-400">{stat.sub}</p>
+                {stat.payNow && !loading && amountDue > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => router.push("/report-card/admin/checkout")}
+                    className="mt-4 w-full rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-black text-white transition hover:bg-sky-700"
+                  >
+                    Pay Now
+                  </button>
+                )}
               </div>
             ))}
           </section>
