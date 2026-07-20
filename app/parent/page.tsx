@@ -408,15 +408,7 @@ function getTotalPaidFromFeePayments(
   return feePaymentRows
     .filter((row) => rowBelongsToStudent(row, student))
     .filter((row) => isSameAcademicPeriod(row, settings))
-    .reduce((sum, row) => {
-      return (
-        sum +
-        safeNumber(row.amount) +
-        safeNumber(row.amount_paid) +
-        safeNumber(row.paid_amount) +
-        safeNumber(row.payment_amount)
-      );
-    }, 0);
+    .reduce((sum, row) => sum + getPaidAmount(row), 0);
 }
 
 function getFeeFromFeeStructure(
@@ -467,7 +459,11 @@ function computeFees(
   const feeLive = feeLiveRows.find((row) => rowBelongsToStudent(row, student));
   const balanceRow = balanceRows.find((row) => rowBelongsToStudent(row, student));
 
-  const currentTermBaseFee = getFeeFromFeeStructure(student, settings, feeStructureRows, classRows);
+  // fee_structure only ever holds rows for the upcoming term (see
+  // getFeeFromFeeStructure, used below for nextTermFee) — the fee actually
+  // owed for the term the student is currently in comes from the class's
+  // own rate, same source the admin's record-payment page charges against.
+  const currentTermBaseFee = getClassBaseFee(student, classRows);
   const currentTermScholarship = applyScholarship(student, currentTermBaseFee);
   const expectedCurrentTermFee = currentTermScholarship.payable;
 
@@ -836,7 +832,7 @@ function ReportCardPanel({
         <p className="mt-1 text-xs font-black uppercase tracking-[0.22em] text-white/60">{levelTitle}</p>
       </div>
 
-      <div className="grid gap-4 border-b border-yellow-100 p-5 md:grid-cols-[1fr_120px]">
+      <div className="grid grid-cols-[1fr_auto] items-start gap-4 border-b border-yellow-100 p-5">
         <div className="grid gap-2 text-sm font-bold text-slate-700 sm:grid-cols-2">
           <InfoLine label="Name" value={studentName} />
           <InfoLine label="Class" value={className} />
@@ -850,7 +846,7 @@ function ReportCardPanel({
           <img
             src={photoUrl}
             alt={studentName}
-            className="h-28 w-28 rounded-3xl border border-yellow-200 object-cover"
+            className="h-16 w-16 shrink-0 rounded-2xl border border-yellow-200 object-cover md:h-28 md:w-28 md:rounded-3xl"
           />
         ) : null}
       </div>
