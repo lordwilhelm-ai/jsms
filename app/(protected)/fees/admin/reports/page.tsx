@@ -626,13 +626,23 @@ export default function FinanceReportsPage() {
           .report-card { break-inside: avoid; box-shadow: none !important; }
           table { font-size: 11px !important; }
         }
+
+        @media (max-width: 900px) {
+          .reports-shell { flex-direction: column; }
+          .reports-sidebar {
+            width: auto !important;
+            position: relative !important;
+            height: auto !important;
+          }
+          .reports-main { padding: 16px !important; }
+        }
       `}</style>
 
-      <div style={{ display: "flex", minHeight: "100vh" }}>
+      <div className="reports-shell" style={{ display: "flex", minHeight: "100vh" }}>
         <aside
-          className="no-print"
+          className="reports-sidebar no-print"
           style={{
-            width: "250px",
+            width: "clamp(220px, 22vw, 250px)",
             background: COLORS.sidebar,
             color: "white",
             padding: "24px 18px",
@@ -674,7 +684,7 @@ export default function FinanceReportsPage() {
           ))}
         </aside>
 
-        <section className="print-area" style={{ flex: 1, padding: "28px", maxWidth: "1500px", margin: "0 auto" }}>
+        <section className="reports-main print-area" style={{ flex: 1, padding: "28px", maxWidth: "1500px", margin: "0 auto" }}>
           <div
             style={{
               display: "flex",

@@ -1119,7 +1119,7 @@ const inputStyle: React.CSSProperties = {
   padding: "10px 12px",
   borderRadius: "10px",
   border: `1px solid ${COLORS.border}`,
-  fontSize: "14px",
+  fontSize: "16px",
   outline: "none",
   background: "#fff",
 };
@@ -1129,7 +1129,7 @@ const searchInputStyle: React.CSSProperties = {
   padding: "12px 14px",
   borderRadius: "12px",
   border: `1px solid ${COLORS.border}`,
-  fontSize: "14px",
+  fontSize: "16px",
   outline: "none",
   background: "#fff",
 };

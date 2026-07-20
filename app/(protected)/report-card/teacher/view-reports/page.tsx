@@ -2164,20 +2164,22 @@ export default function ReportCardsPage() {
             </div>
           )}
 
-          <div className="print-root space-y-8">
-            {loading ? (
-              <div className="rounded-3xl bg-white p-6 text-center text-sm font-bold text-gray-500 shadow-sm">
-                Loading report cards...
-              </div>
-            ) : reports.length === 0 ? (
-              <div className="rounded-3xl bg-white p-6 text-center text-sm font-bold text-gray-500 shadow-sm">
-                No report cards found for this class.
-              </div>
-            ) : (
-              reports.map((report, index) => (
-                <ReportCardSheet key={`${report.student.id}-${index}`} data={report} />
-              ))
-            )}
+          <div className="overflow-x-auto">
+            <div className="print-root space-y-8">
+              {loading ? (
+                <div className="rounded-3xl bg-white p-6 text-center text-sm font-bold text-gray-500 shadow-sm">
+                  Loading report cards...
+                </div>
+              ) : reports.length === 0 ? (
+                <div className="rounded-3xl bg-white p-6 text-center text-sm font-bold text-gray-500 shadow-sm">
+                  No report cards found for this class.
+                </div>
+              ) : (
+                reports.map((report, index) => (
+                  <ReportCardSheet key={`${report.student.id}-${index}`} data={report} />
+                ))
+              )}
+            </div>
           </div>
         </div>
 
@@ -2216,16 +2218,18 @@ export default function ReportCardsPage() {
             </div>
           </div>
 
-          <div className="print-root space-y-8">
-            {reports.length === 0 ? (
-              <div className="no-print rounded-3xl bg-white p-6 text-sm text-gray-500 shadow-sm">
-                No report cards found.
-              </div>
-            ) : (
-              reports.map((report, index) => (
-                <ReportCardSheet key={`${report.student.id}-${index}`} data={report} />
-              ))
-            )}
+          <div className="overflow-x-auto">
+            <div className="print-root space-y-8">
+              {reports.length === 0 ? (
+                <div className="no-print rounded-3xl bg-white p-6 text-sm text-gray-500 shadow-sm">
+                  No report cards found.
+                </div>
+              ) : (
+                reports.map((report, index) => (
+                  <ReportCardSheet key={`${report.student.id}-${index}`} data={report} />
+                ))
+              )}
+            </div>
           </div>
         </>
       )}

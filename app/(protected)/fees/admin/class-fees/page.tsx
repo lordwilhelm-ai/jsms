@@ -10,7 +10,7 @@ const inputStyle: React.CSSProperties = {
   padding: "8px 10px",
   borderRadius: "8px",
   border: "1px solid #ddd",
-  fontSize: "14px",
+  fontSize: "16px",
 };
 
 export default function ClassFeesPage() {

@@ -359,7 +359,7 @@ function EditableClassCard({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "2fr 1fr 1fr auto",
+              gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))",
               gap: "12px",
               alignItems: "center",
             }}
@@ -459,7 +459,7 @@ function EditableClassCard({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "2fr 1fr 1fr",
+              gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
               gap: "12px",
               alignItems: "end",
             }}

@@ -556,10 +556,21 @@ export default function FeeReminderPage() {
             display: none;
           }
         }
+
+        @media (max-width: 900px) {
+          .reminder-shell { flex-direction: column; }
+          .reminder-sidebar {
+            width: auto !important;
+            position: relative !important;
+            min-height: auto !important;
+          }
+          .reminder-main { padding: 16px !important; }
+          .reminder-two-pane { grid-template-columns: 1fr !important; }
+        }
       `}</style>
 
-      <div className="no-print" style={{ display: "flex", minHeight: "100vh" }}>
-        <aside style={{ width: 260, background: COLORS.sidebar, color: "#fff", padding: 18, borderRight: `4px solid ${COLORS.gold}` }}>
+      <div className="reminder-shell no-print" style={{ display: "flex", minHeight: "100vh" }}>
+        <aside className="reminder-sidebar" style={{ width: "clamp(220px, 22vw, 260px)", background: COLORS.sidebar, color: "#fff", padding: 18, borderRight: `4px solid ${COLORS.gold}` }}>
           <h2 style={{ margin: "10px 0 4px" }}>JVS Fees</h2>
           <p style={{ margin: "0 0 20px", opacity: 0.8 }}>Fee Reminder</p>
 
@@ -593,7 +604,7 @@ export default function FeeReminderPage() {
           </nav>
         </aside>
 
-        <section style={{ flex: 1, padding: 28 }}>
+        <section className="reminder-main" style={{ flex: 1, padding: 28 }}>
           <Link href="/fees/admin" style={{ color: COLORS.muted, textDecoration: "none", fontWeight: 800 }}>
             ← Back to Fees Dashboard
           </Link>
@@ -643,7 +654,7 @@ export default function FeeReminderPage() {
               </button>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginTop: 18 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginTop: 18 }}>
               <Summary title="Students" value={printRows.length} />
               <MoneySummary title="Fees Due" value={printTotals.expected} />
               <MoneySummary title="Amount Paid" value={printTotals.paid} />
@@ -651,7 +662,7 @@ export default function FeeReminderPage() {
             </div>
           </section>
 
-          <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 22, alignItems: "start" }}>
+          <div className="reminder-two-pane" style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 22, alignItems: "start" }}>
             <section style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 24, padding: 22 }}>
               <h2 style={{ marginTop: 0 }}>Send To</h2>
 
@@ -746,7 +757,7 @@ export default function FeeReminderPage() {
             </section>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 18, marginTop: 22 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 18, marginTop: 22 }}>
             <Summary title="Selected" value={selectedRecipients.length} />
             <Summary title="Can Send" value={canSend.length} />
             <Summary title="No Phone" value={noPhone} danger />
@@ -804,7 +815,7 @@ export default function FeeReminderPage() {
           <p style={{ margin: "5px 0 0", fontSize: 11 }}>Printed on {formatDate(new Date().toISOString())}</p>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 12, fontSize: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 12, fontSize: 12 }}>
           <div style={printBoxStyle()}>
             <b>Students:</b> {printRows.length}
           </div>

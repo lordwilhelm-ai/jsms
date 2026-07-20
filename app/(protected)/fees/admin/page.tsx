@@ -681,7 +681,7 @@ export default function FeesAdminPage() {
             </div>
           </Section>
 
-          <div className="dashboard-two-col" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "20px", marginBottom: "20px" }}>
+          <div className="dashboard-two-col" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px", marginBottom: "20px" }}>
             <Section title="Recent Payments">
               <ReportTable
                 headers={["Receipt", "Student", "Class", "Amount", "Date"]}
@@ -749,7 +749,7 @@ function ReceiptModal({ result, onClose }: { result: UniversalReceiptResult; onC
           </div>
         ) : searchedReceipt ? (
           <>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "14px", marginBottom: "18px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "14px", marginBottom: "18px" }}>
               <MiniInfo label="Student" value={searchedReceipt.student_name} />
               <MiniInfo label="Student ID" value={searchedReceipt.student_id} />
               <MiniInfo label="Class" value={searchedReceipt.class_name} />
@@ -944,7 +944,7 @@ const inputStyle: React.CSSProperties = {
   padding: "14px",
   borderRadius: "12px",
   border: "1px solid #d1d5db",
-  fontSize: "14px",
+  fontSize: "16px",
   outline: "none",
 };
 

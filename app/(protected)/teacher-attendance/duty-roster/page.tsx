@@ -323,6 +323,14 @@ export default function DutyRosterPage() {
 
   return (
     <main style={pageStyle}>
+      <style jsx global>{`
+        @media (max-width: 560px) {
+          .duty-roster-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
+
       <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
         <div style={headerStyle}>
           <div style={headerFlexStyle}>
@@ -353,7 +361,7 @@ export default function DutyRosterPage() {
 
         {message && <MessageBox message={message} messageType={messageType} />}
 
-        <div style={gridStyle}>
+        <div className="duty-roster-grid" style={gridStyle}>
           <section style={sectionCardStyle}>
             <h3 style={sectionTitleStyle}>Assign Teacher</h3>
 
@@ -663,7 +671,7 @@ const inputStyle: React.CSSProperties = {
   borderRadius: "11px",
   padding: "11px 12px",
   outline: "none",
-  fontSize: "13px",
+  fontSize: "16px",
   background: "#fff",
   color: COLORS.dark,
 };
@@ -729,7 +737,7 @@ const searchInputStyle: React.CSSProperties = {
   borderRadius: "11px",
   padding: "10px 12px",
   outline: "none",
-  fontSize: "13px",
+  fontSize: "16px",
 };
 
 const tableWrapStyle: React.CSSProperties = {

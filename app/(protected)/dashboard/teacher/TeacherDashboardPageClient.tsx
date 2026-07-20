@@ -1062,6 +1062,8 @@ const styles: Record<string, CSSProperties> = {
       "radial-gradient(circle at top left, #dcfce7 0, transparent 28%), linear-gradient(180deg, #f7f3e8 0%, #eef7ef 45%, #ffffff 100%)",
     fontFamily: "Inter, Arial, sans-serif",
     color: "#0f2a17",
+    maxWidth: 1100,
+    margin: "0 auto",
   },
   loadingPage: {
     minHeight: "100vh",
@@ -1337,7 +1339,7 @@ const styles: Record<string, CSSProperties> = {
     position: "relative",
     zIndex: 2,
     display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
     gap: 12,
   },
   softwareCard: {

@@ -650,7 +650,7 @@ const inputStyle: React.CSSProperties = {
   borderRadius: "12px",
   border: "1px solid #d1d5db",
   outline: "none",
-  fontSize: "14px",
+  fontSize: "16px",
 };
 
 const labelStyle: React.CSSProperties = {

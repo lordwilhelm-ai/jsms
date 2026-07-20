@@ -838,8 +838,7 @@ export default function ReportCardAttendancePage() {
                     </span>
                   </div>
 
-                  <div className="overflow-x-auto">
-                    <div className="flex min-w-[760px] gap-3">
+                  <div className="flex flex-wrap gap-3">
                       <div className="w-36">
                         <label className="mb-2 block text-sm font-semibold text-gray-700">
                           School Days
@@ -901,7 +900,6 @@ export default function ReportCardAttendancePage() {
                           Use Feeding
                         </button>
                       </div>
-                    </div>
                   </div>
                 </div>
               );

@@ -259,6 +259,14 @@ export default function SubjectsPage() {
         padding: "18px",
       }}
     >
+      <style>{`
+        @media (max-width: 640px) {
+          .subjects-split-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
+
       <div style={{ maxWidth: "1300px", margin: "0 auto" }}>
         <div
           style={{
@@ -325,6 +333,7 @@ export default function SubjectsPage() {
         )}
 
         <div
+          className="subjects-split-grid"
           style={{
             display: "grid",
             gridTemplateColumns: "1.1fr 1fr",
@@ -387,7 +396,7 @@ export default function SubjectsPage() {
               onSubmit={handleAddCustomSubject}
               style={{
                 display: "grid",
-                gridTemplateColumns: "2fr 1fr auto",
+                gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
                 gap: "10px",
                 marginBottom: "18px",
               }}
@@ -712,7 +721,7 @@ function EditableSubjectCard({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "2fr 80px auto",
+              gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))",
               gap: "12px",
               alignItems: "center",
             }}
@@ -785,7 +794,7 @@ function EditableSubjectCard({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "2fr 1fr",
+              gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
               gap: "12px",
               alignItems: "end",
             }}

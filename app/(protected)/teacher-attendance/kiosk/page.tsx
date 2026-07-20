@@ -621,7 +621,20 @@ export default function KioskPage() {
   const weekChips = buildWeekChips(weekLog);
 
   return (
-    <main style={pageStyle}>
+    <main className="kiosk-page" style={pageStyle}>
+      <style jsx global>{`
+        @media (max-width: 700px) {
+          .kiosk-page {
+            flex-direction: column !important;
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
+          }
+          .kiosk-side {
+            width: 100% !important;
+          }
+        }
+      `}</style>
+
       <div style={auroraGoldStyle} />
       <div style={auroraBlueStyle} />
       <div style={vignetteStyle} />
@@ -681,7 +694,7 @@ export default function KioskPage() {
         </section>
       </div>
 
-      <aside style={sideColumnStyle}>
+      <aside className="kiosk-side" style={sideColumnStyle}>
         <div style={sideHeaderRowStyle}>
           <h2 style={sideTitleStyle}>Today&apos;s Attendance</h2>
           <span style={rosterCountStyle}>

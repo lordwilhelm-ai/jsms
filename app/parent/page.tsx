@@ -984,8 +984,8 @@ function FeesPanel({
 
 function GradeTable({ rows }: { rows: AnyRow[] }) {
   return (
-    <div className="overflow-hidden rounded-3xl border border-slate-200">
-      <table className="w-full text-left text-sm">
+    <div className="overflow-x-auto rounded-3xl border border-slate-200">
+      <table className="w-full min-w-[560px] text-left text-sm">
         <thead className="bg-slate-950 text-white">
           <tr>
             <th className="px-3 py-3 font-black">Subject</th>
@@ -1026,8 +1026,8 @@ function GradeTable({ rows }: { rows: AnyRow[] }) {
 
 function ScoreTable({ rows, className }: { rows: AnyRow[]; className: string }) {
   return (
-    <div className="overflow-hidden rounded-3xl border border-slate-200">
-      <table className="w-full text-left text-sm">
+    <div className="overflow-x-auto rounded-3xl border border-slate-200">
+      <table className="w-full min-w-[560px] text-left text-sm">
         <thead className="bg-slate-950 text-white">
           <tr>
             <th className="px-3 py-3 font-black">Subject</th>

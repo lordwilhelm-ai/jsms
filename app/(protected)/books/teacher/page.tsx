@@ -380,7 +380,7 @@ export default function BooksTeacherPage() {
 
   return (
     <main className="min-h-screen bg-[#f7f3df] px-3 py-4">
-      <section className="mx-auto max-w-md space-y-3">
+      <section className="mx-auto max-w-2xl space-y-3">
         <header className="rounded-3xl border border-yellow-200 bg-white p-4 shadow-sm">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -418,13 +418,13 @@ export default function BooksTeacherPage() {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search student or book..."
-                  className="h-11 rounded-2xl border border-yellow-200 bg-[#fffdf6] px-3 text-sm font-bold outline-none"
+                  className="h-11 rounded-2xl border border-yellow-200 bg-[#fffdf6] px-3 text-base font-bold outline-none"
                 />
 
                 <select
                   value={classFilter}
                   onChange={(e) => setClassFilter(e.target.value)}
-                  className="h-11 rounded-2xl border border-yellow-200 bg-[#fffdf6] px-3 text-sm font-bold outline-none"
+                  className="h-11 rounded-2xl border border-yellow-200 bg-[#fffdf6] px-3 text-base font-bold outline-none"
                 >
                   <option value="">All assigned classes</option>
                   {assignedClassNames.map((className) => (
@@ -438,7 +438,7 @@ export default function BooksTeacherPage() {
               <button
                 type="button"
                 onClick={() => void loadBooksData()}
-                className="mt-2 w-full rounded-2xl bg-yellow-500 px-4 py-3 text-sm font-black text-white shadow-sm active:scale-[0.99]"
+                className="mt-2 w-full rounded-2xl bg-yellow-500 px-4 py-3 text-base font-black text-white shadow-sm active:scale-[0.99]"
               >
                 {loading ? "Refreshing..." : "Refresh"}
               </button>

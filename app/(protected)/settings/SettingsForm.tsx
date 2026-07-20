@@ -130,7 +130,16 @@ export default function SettingsForm() {
         gap: "18px",
       }}
     >
+      <style>{`
+        @media (max-width: 480px) {
+          .settings-form-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
+
       <div
+        className="settings-form-grid"
         style={{
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
@@ -163,6 +172,7 @@ export default function SettingsForm() {
       </div>
 
       <div
+        className="settings-form-grid"
         style={{
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
@@ -194,6 +204,7 @@ export default function SettingsForm() {
       </div>
 
       <div
+        className="settings-form-grid"
         style={{
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
@@ -264,7 +275,7 @@ const inputStyle: React.CSSProperties = {
   borderRadius: "10px",
   border: "1px solid #d1d5db",
   outline: "none",
-  fontSize: "14px",
+  fontSize: "16px",
 };
 
 const labelStyle: React.CSSProperties = {

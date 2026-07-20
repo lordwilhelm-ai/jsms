@@ -125,17 +125,32 @@ function AdminDashboardPageClient() {
         padding: "18px",
       }}
     >
+      <style>{`
+        @media (max-width: 980px) {
+          .dash-shell-grid {
+            grid-template-columns: 1fr !important;
+          }
+          .dash-shell-sidebar {
+            position: relative !important;
+            top: 0 !important;
+            min-height: auto !important;
+          }
+        }
+      `}</style>
+
       <div
+        className="dash-shell-grid"
         style={{
           maxWidth: "1450px",
           margin: "0 auto",
           display: "grid",
-          gridTemplateColumns: "280px 1fr",
+          gridTemplateColumns: "clamp(218px, 22vw, 280px) 1fr",
           gap: "22px",
           alignItems: "start",
         }}
       >
         <aside
+          className="dash-shell-sidebar"
           style={{
             position: "sticky",
             top: "18px",

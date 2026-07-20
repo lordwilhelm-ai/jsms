@@ -601,6 +601,8 @@ const styles: Record<string, React.CSSProperties> = {
     paddingBottom: "90px",
     fontFamily: "Inter, Arial, sans-serif",
     color: COLORS.text,
+    maxWidth: 900,
+    margin: "0 auto",
   },
   loadingCard: {
     minHeight: "60vh",
@@ -685,6 +687,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: COLORS.deep,
     background: COLORS.soft,
     outline: "none",
+    fontSize: "16px",
   },
   countBox: {
     minWidth: "84px",
@@ -738,7 +741,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "999px",
     padding: "14px 16px",
     outline: "none",
-    fontSize: "14px",
+    fontSize: "16px",
     background: "#fff",
     boxShadow: "0 8px 24px rgba(16,32,22,0.05)",
   },

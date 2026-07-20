@@ -1032,7 +1032,7 @@ function AdminTeacherAttendanceView({
             />
           </div>
 
-          <div style={desktopTableWrapStyle}>
+          <div className="hidden md:block" style={desktopTableWrapStyle}>
             <table style={tableStyle}>
               <thead>
                 <tr>
@@ -1089,7 +1089,7 @@ function AdminTeacherAttendanceView({
             </table>
           </div>
 
-          <div style={mobileCardsWrapStyle}>
+          <div className="flex md:hidden" style={mobileCardsWrapStyle}>
             {filteredRows.length === 0 ? (
               <p style={{ margin: 0, color: COLORS.muted, fontSize: "13px" }}>
                 No teacher found.
@@ -1407,6 +1407,7 @@ const headerFlexStyle: React.CSSProperties = {
   justifyContent: "space-between",
   gap: "10px",
   alignItems: "flex-start",
+  flexWrap: "wrap",
 };
 
 const eyebrowStyle: React.CSSProperties = {
@@ -1613,7 +1614,7 @@ const searchInputStyle: React.CSSProperties = {
   borderRadius: "11px",
   padding: "10px 12px",
   outline: "none",
-  fontSize: "13px",
+  fontSize: "16px",
 };
 
 const desktopTableWrapStyle: React.CSSProperties = {
@@ -1650,7 +1651,7 @@ const tinyMutedStyle: React.CSSProperties = {
 };
 
 const mobileCardsWrapStyle: React.CSSProperties = {
-  display: "none",
+  flexDirection: "column",
   gap: "8px",
 };
 

@@ -587,7 +587,7 @@ export default function DebtorsPage() {
         <aside
           className="debtors-sidebar no-print"
           style={{
-            width: "270px",
+            width: "clamp(220px, 22vw, 270px)",
             background: `linear-gradient(180deg, ${COLORS.sidebar} 0%, ${COLORS.sidebarSoft} 100%)`,
             color: "#fff",
             padding: "24px 18px",

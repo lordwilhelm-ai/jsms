@@ -455,6 +455,14 @@ export default function AdmissionAdminPage() {
 
   return (
     <main style={styles.page}>
+      <style>{`
+        @media (max-width: 900px) {
+          .admission-top-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
+
       <section style={styles.header}>
         <div>
           <p style={styles.eyebrow}>🎓 JSMS Admission</p>
@@ -486,7 +494,7 @@ export default function AdmissionAdminPage() {
         <StatCard label="Online" value={stats.online} icon="🌐" />
       </section>
 
-      <section style={styles.topGrid}>
+      <section className="admission-top-grid" style={styles.topGrid}>
         <div style={styles.card}>
           <h2 style={styles.cardTitle}>Sell Admission Form</h2>
           <p style={styles.cardText}>Student ID and JVSA receipt will be generated automatically.</p>
@@ -748,7 +756,7 @@ const styles: Record<string, React.CSSProperties> = {
   title: { margin: "6px 0", fontSize: "32px", lineHeight: 1.1, color: "#0f2a17" },
   subtitle: { margin: 0, color: "#526157", fontSize: "14px", maxWidth: "720px" },
   refreshBtn: { border: "1px solid #c9d7cd", background: "#ffffff", color: "#0f2a17", padding: "12px 16px", borderRadius: "12px", cursor: "pointer", fontWeight: 800 },
-  statsGrid: { display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "14px", marginBottom: "18px" },
+  statsGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "14px", marginBottom: "18px" },
   statCard: { background: "rgba(255,255,255,0.92)", border: "1px solid rgba(15,122,59,0.12)", borderRadius: "18px", padding: "16px", display: "flex", alignItems: "center", gap: "12px", boxShadow: "0 12px 30px rgba(16,32,22,0.06)" },
   statIcon: { width: "42px", height: "42px", borderRadius: "14px", display: "grid", placeItems: "center", background: "#f4e7bd", fontSize: "20px" },
   statValue: { fontSize: "24px", fontWeight: 900, color: "#0f2a17" },
@@ -757,16 +765,16 @@ const styles: Record<string, React.CSSProperties> = {
   card: { background: "rgba(255,255,255,0.95)", border: "1px solid rgba(15,122,59,0.12)", borderRadius: "22px", padding: "20px", boxShadow: "0 18px 45px rgba(16,32,22,0.08)", marginBottom: "18px" },
   cardTitle: { margin: 0, color: "#0f2a17", fontSize: "20px" },
   cardText: { margin: "6px 0 0", color: "#647067", fontSize: "13px" },
-  form: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px", marginTop: "16px" },
+  form: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", marginTop: "16px" },
   settingsRow: { display: "grid", gridTemplateColumns: "1fr", gap: "12px", marginTop: "16px" },
   detailsForm: { display: "grid", gap: "16px", marginTop: "16px" },
   formSection: { border: "1px solid #e4e9e5", borderRadius: "18px", padding: "16px", background: "#fbfdfb" },
   sectionTitle: { margin: "0 0 14px", fontSize: "16px", color: "#0f2a17" },
-  formGrid: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "12px" },
+  formGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px" },
   field: { display: "flex", flexDirection: "column", gap: "7px" },
   label: { fontSize: "12px", color: "#26352b", fontWeight: 800 },
-  input: { width: "100%", padding: "11px 12px", borderRadius: "12px", border: "1px solid #ccd8cf", fontSize: "14px", outline: "none", background: "#ffffff" },
-  textarea: { width: "100%", minHeight: "82px", padding: "11px 12px", borderRadius: "12px", border: "1px solid #ccd8cf", fontSize: "14px", outline: "none", resize: "vertical", background: "#ffffff" },
+  input: { width: "100%", padding: "11px 12px", borderRadius: "12px", border: "1px solid #ccd8cf", fontSize: "16px", outline: "none", background: "#ffffff" },
+  textarea: { width: "100%", minHeight: "82px", padding: "11px 12px", borderRadius: "12px", border: "1px solid #ccd8cf", fontSize: "16px", outline: "none", resize: "vertical", background: "#ffffff" },
   fileInput: { padding: "10px", borderRadius: "12px", border: "1px dashed #a8b7ad", background: "#ffffff", fontSize: "13px" },
   fileLink: { fontSize: "12px", color: "#0f7a3b", fontWeight: 800, textDecoration: "none" },
   primaryBtn: { border: "none", background: "linear-gradient(135deg, #0f7a3b, #0f2a17)", color: "#ffffff", padding: "12px 16px", borderRadius: "14px", cursor: "pointer", fontWeight: 900, gridColumn: "1 / -1", boxShadow: "0 12px 24px rgba(15,122,59,0.22)" },

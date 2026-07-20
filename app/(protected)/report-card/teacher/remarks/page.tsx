@@ -854,8 +854,7 @@ export default function ReportCardTeacherRemarksPage() {
                       </select>
                     </div>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <div className="flex min-w-[1120px] gap-3">
+                    <div className="flex flex-wrap gap-3">
                         <div className="w-44">
                           <label className="mb-2 block text-sm font-semibold text-gray-700">
                             Average Score
@@ -963,7 +962,6 @@ export default function ReportCardTeacherRemarksPage() {
                             ))}
                           </select>
                         </div>
-                      </div>
                     </div>
                   )}
                 </div>

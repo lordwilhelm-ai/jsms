@@ -125,17 +125,32 @@ function HeadmasterDashboardPageClient() {
         padding: "18px",
       }}
     >
+      <style>{`
+        @media (max-width: 980px) {
+          .hm-dashboard-grid {
+            grid-template-columns: 1fr !important;
+          }
+          .hm-sidebar {
+            position: relative !important;
+            top: 0 !important;
+            min-height: auto !important;
+          }
+        }
+      `}</style>
+
       <div
+        className="hm-dashboard-grid"
         style={{
           maxWidth: "1450px",
           margin: "0 auto",
           display: "grid",
-          gridTemplateColumns: "280px 1fr",
+          gridTemplateColumns: "clamp(218px, 22vw, 280px) 1fr",
           gap: "22px",
           alignItems: "start",
         }}
       >
         <aside
+          className="hm-sidebar"
           style={{
             position: "sticky",
             top: "18px",

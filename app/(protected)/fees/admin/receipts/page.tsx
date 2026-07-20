@@ -497,13 +497,23 @@ export default function UniversalReceiptsPage() {
           }
           .no-print { display: none !important; }
         }
+
+        @media (max-width: 900px) {
+          .receipts-shell { flex-direction: column; height: auto !important; }
+          .receipts-sidebar {
+            width: auto !important;
+            position: relative !important;
+            min-height: auto !important;
+          }
+          .receipts-main { height: auto !important; padding: 16px !important; }
+        }
       `}</style>
 
-      <div style={{ display: "flex", height: "100%" }}>
+      <div className="receipts-shell" style={{ display: "flex", height: "100%" }}>
         <aside
-          className="no-print"
+          className="receipts-sidebar no-print"
           style={{
-            width: "280px",
+            width: "clamp(220px, 22vw, 280px)",
             background: `linear-gradient(180deg, ${COLORS.sidebar} 0%, ${COLORS.sidebarSoft} 100%)`,
             color: "#fff",
             padding: "20px 16px",
@@ -548,7 +558,7 @@ export default function UniversalReceiptsPage() {
           </div>
         </aside>
 
-        <section className="no-print" style={{ flex: 1, height: "100%", overflowY: "auto", padding: "24px" }}>
+        <section className="receipts-main no-print" style={{ flex: 1, height: "100%", overflowY: "auto", padding: "24px" }}>
           <div
             style={{
               background: `linear-gradient(135deg, ${COLORS.sidebar} 0%, #1f2937 100%)`,
@@ -698,7 +708,7 @@ function ReceiptModal({
             <span style={{ ...badgeStyle, ...getModuleBadgeStyle(receipt.module), alignSelf: "start" }}>{receipt.module}</span>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px", marginBottom: "18px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", marginBottom: "18px" }}>
             <MiniInfo label="Student" value={receipt.student_name || "-"} />
             <MiniInfo label="JVS ID" value={receipt.student_id || "-"} />
             <MiniInfo label="Class" value={receipt.class_name || "-"} />
@@ -801,7 +811,7 @@ const inputStyle: React.CSSProperties = {
   outline: "none",
   background: "#fff",
   color: COLORS.text,
-  fontSize: "14px",
+  fontSize: "16px",
 };
 
 const thStyle: React.CSSProperties = {

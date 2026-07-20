@@ -976,6 +976,9 @@ export default function AdminFillClassPage() {
           .quick-summary-grid { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
           .floating-summary { right: 12px; left: auto; top: auto; bottom: 90px; width: 96px; }
           .floating-summary:hover, .floating-summary:focus-within { width: calc(100vw - 24px); right: 12px; }
+          .admin-feeding-controls { grid-template-columns: 1fr !important; }
+          .teacher-credit-row { grid-template-columns: 1fr !important; }
+          .summary-grid { grid-template-columns: 1fr !important; }
         }
       `}</style>
 
@@ -1161,6 +1164,7 @@ export default function AdminFillClassPage() {
                 return (
                   <div
                     key={rowKey}
+                    className="teacher-credit-row"
                     style={{
                       display: "grid",
                       gridTemplateColumns: "1.4fr 0.8fr 0.8fr 0.7fr",

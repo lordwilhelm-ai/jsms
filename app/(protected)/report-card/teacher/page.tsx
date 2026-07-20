@@ -185,7 +185,7 @@ export default function ReportCardTeacherDashboardPage() {
       </div>
 
       {/* Action cards */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
         {cards.map((item) => {
           const Icon = item.icon;
           const locked = !access.canAccess && !access.checking;

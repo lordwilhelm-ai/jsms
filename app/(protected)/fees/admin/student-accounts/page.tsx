@@ -688,7 +688,7 @@ export default function StudentAccountsPage() {
         <aside
           className="sidebar"
           style={{
-            width: "290px",
+            width: "clamp(220px, 22vw, 290px)",
             background: `linear-gradient(180deg, ${COLORS.sidebar} 0%, ${COLORS.sidebarSoft} 100%)`,
             color: "#fff",
             padding: "24px 18px",
@@ -1010,7 +1010,7 @@ const inputStyle: CSSProperties = {
   borderRadius: "14px",
   border: `1px solid ${COLORS.border}`,
   background: "#fff",
-  fontSize: "14px",
+  fontSize: "16px",
 };
 
 const primaryButton: CSSProperties = {

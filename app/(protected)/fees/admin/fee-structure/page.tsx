@@ -635,7 +635,7 @@ export default function FeesStructurePage() {
         <aside
           className="fee-sidebar"
           style={{
-            width: "270px",
+            width: "clamp(220px, 22vw, 270px)",
             background: `linear-gradient(180deg, ${COLORS.sidebar} 0%, ${COLORS.sidebarSoft} 100%)`,
             color: "#fff",
             padding: "24px 18px",
@@ -1233,7 +1233,7 @@ const inputStyle: CSSProperties = {
   padding: "12px 13px",
   borderRadius: "14px",
   border: `1px solid ${COLORS.border}`,
-  fontSize: "14px",
+  fontSize: "16px",
   outline: "none",
   background: "#fff",
   boxSizing: "border-box",

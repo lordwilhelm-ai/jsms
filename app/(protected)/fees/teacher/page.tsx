@@ -843,6 +843,8 @@ const styles: Record<string, CSSProperties> = {
     padding: "18px 14px 90px",
     color: COLORS.text,
     fontFamily: "Inter, Arial, sans-serif",
+    maxWidth: 900,
+    margin: "0 auto",
   },
   header: {
     display: "flex",
@@ -917,6 +919,7 @@ const styles: Record<string, CSSProperties> = {
     color: COLORS.deep,
     background: "#fff",
     outline: "none",
+    fontSize: "16px",
   },
   search: {
     width: "100%",
@@ -927,10 +930,11 @@ const styles: Record<string, CSSProperties> = {
     background: "#fff",
     outline: "none",
     fontWeight: 700,
+    fontSize: "16px",
   },
   summaryGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
     gap: 10,
     marginBottom: 12,
   },
@@ -1022,7 +1026,7 @@ const styles: Record<string, CSSProperties> = {
   },
   moneyGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
     gap: 7,
     marginTop: 10,
   },
@@ -1120,7 +1124,7 @@ const styles: Record<string, CSSProperties> = {
   },
   sheetMoneyGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
     gap: 8,
     marginBottom: 14,
   },
