@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     }
 
     const { error: deleteClassesError } = await supabaseAdmin
-      .from("teacher_classes")
+      .from("teacher_class_assignments")
       .delete()
       .eq("teacher_id", teacherId);
 
@@ -39,10 +39,11 @@ export async function POST(request: Request) {
       const classRows = classIds.map((classId: string) => ({
         teacher_id: teacherId,
         class_id: classId,
+        assignment_type: "assigned",
       }));
 
       const { error: insertClassesError } = await supabaseAdmin
-        .from("teacher_classes")
+        .from("teacher_class_assignments")
         .insert(classRows);
 
       if (insertClassesError) throw insertClassesError;

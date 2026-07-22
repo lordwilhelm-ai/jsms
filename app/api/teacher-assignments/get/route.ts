@@ -16,7 +16,7 @@ export async function GET(request: Request) {
 
     const [classRes, subjectRes] = await Promise.all([
       supabaseAdmin
-        .from("teacher_classes")
+        .from("teacher_class_assignments")
         .select("class_id")
         .eq("teacher_id", teacherId),
       supabaseAdmin
