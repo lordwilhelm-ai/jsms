@@ -203,7 +203,7 @@ export default function ReportCardAdminDashboardPage() {
 
   const reportsReady = useMemo(() => classOverview.reduce((sum, item) => sum + item.readyCount, 0), [classOverview]);
   const teacherCount = useMemo(() => teachers.filter((t) => cleanLower(t.role) === "teacher").length, [teachers]);
-  const amountDue = students.length * 2;
+  const amountDue = access.amountDue;
 
   function navigate(path: string, gated?: boolean) {
     if (gated && !access.canAccess && !access.checking) {
@@ -297,13 +297,13 @@ export default function ReportCardAdminDashboardPage() {
               { label: "Total Students", value: loading ? "..." : students.length, sub: "Active students only" },
               { label: "Total Teachers", value: loading ? "..." : teacherCount, sub: "Teachers added" },
               { label: "Reports Ready", value: loading ? "..." : reportsReady, sub: "Fully ready report cards" },
-              { label: "Amount Due", value: loading ? "..." : formatMoney(amountDue), sub: "Active students × ₵2", payNow: true },
+              { label: "Amount Due", value: (loading || access.checking) ? "..." : formatMoney(amountDue), sub: "Active students × ₵2", payNow: true },
             ].map((stat) => (
               <div key={stat.label} className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-sm">
                 <p className="text-sm font-bold text-slate-500">{stat.label}</p>
                 <h3 className="mt-4 text-4xl font-black tracking-[0.2em] text-slate-900">{stat.value}</h3>
                 <p className="mt-3 text-sm text-slate-400">{stat.sub}</p>
-                {stat.payNow && !loading && amountDue > 0 && (
+                {stat.payNow && !loading && !access.checking && amountDue > 0 && (
                   <button
                     type="button"
                     onClick={() => router.push("/report-card/admin/checkout")}
