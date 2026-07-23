@@ -960,14 +960,24 @@ function ReportCardSheet({ data }: { data: ReportData }) {
                 </tr>
               </thead>
               <tbody>
-                {playroomRows.map((row) => (
-                  <tr key={row.subject}>
-                    <td>{row.subject}</td>
-                    {["A", "B", "C", "D"].map((letter) => (
-                      <td key={letter}>{row.mark === letter ? "✔" : ""}</td>
-                    ))}
+                {playroomRows.length === 0 ? (
+                  <tr className="no-print">
+                    <td colSpan={5} style={{ textAlign: "center", color: "#9ca3af", padding: "12px" }}>
+                      No scores recorded yet for {student.studentId} /{" "}
+                      {settings.current_academic_year || settings.academic_year || "—"} /{" "}
+                      {settings.current_term || "—"}.
+                    </td>
                   </tr>
-                ))}
+                ) : (
+                  playroomRows.map((row) => (
+                    <tr key={row.subject}>
+                      <td>{row.subject}</td>
+                      {["A", "B", "C", "D"].map((letter) => (
+                        <td key={letter}>{row.mark === letter ? "✔" : ""}</td>
+                      ))}
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           ) : (
@@ -986,7 +996,19 @@ function ReportCardSheet({ data }: { data: ReportData }) {
                 </tr>
               </thead>
               <tbody>
-                {academicRows.map((row) => (
+                {academicRows.length === 0 ? (
+                  <tr className="no-print">
+                    <td
+                      colSpan={usesGradeColumn(className) ? 7 : 6}
+                      style={{ textAlign: "center", color: "#9ca3af", padding: "12px" }}
+                    >
+                      No scores recorded yet for {student.studentId} /{" "}
+                      {settings.current_academic_year || settings.academic_year || "—"} /{" "}
+                      {settings.current_term || "—"}.
+                    </td>
+                  </tr>
+                ) : (
+                  academicRows.map((row) => (
                   <tr key={row.subject}>
                     <td>{row.subject}</td>
                     <td>{row.classScore}</td>
@@ -996,7 +1018,8 @@ function ReportCardSheet({ data }: { data: ReportData }) {
                     <td>{row.position}</td>
                     <td style={{ textAlign: "left", paddingLeft: "7px" }}>{row.remark}</td>
                   </tr>
-                ))}
+                  ))
+                )}
               </tbody>
               <tfoot>
                 <tr>
@@ -2113,7 +2136,14 @@ export default function ReportCardsPage() {
           <div className="print-root space-y-8">
             {reports.length === 0 ? (
               <div className="no-print rounded-3xl bg-white p-6 text-sm text-gray-500 shadow-sm">
-                No report cards found.
+                <p className="font-semibold text-gray-700">No report cards found.</p>
+                <p className="mt-2 text-xs text-gray-400">
+                  Diagnostic: preview mode "{previewMode}", student filter "{previewStudentId || "—"}",
+                  class filter "{selectedClass}", {students.length} student(s) loaded,{" "}
+                  {scores.length} score row(s) loaded, {attendance.length} attendance row(s) loaded,{" "}
+                  {remarks.length} remark row(s) loaded, term "{currentTerm || "—"}", academic year "
+                  {academicYear || "—"}".
+                </p>
               </div>
             ) : (
               reports.map((report, index) => (

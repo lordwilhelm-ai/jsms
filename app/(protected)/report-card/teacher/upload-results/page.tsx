@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FiRefreshCw, FiX } from "react-icons/fi";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
@@ -281,6 +281,7 @@ export default function UploadResultsPage() {
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"info" | "success" | "error">("info");
   const [assignmentError, setAssignmentError] = useState("");
+  const bottomMessageRef = useRef<HTMLDivElement | null>(null);
 
   const availableSubjects = useMemo(() => {
     return uniqueList(subjectOptions);
@@ -598,6 +599,14 @@ export default function UploadResultsPage() {
     store[scopeKey] = scopeDraft;
     saveDraftStore(store);
   }, [rows, selectedClass, selectedSubject, settings.academic_year, settings.current_term]);
+
+  // The Save Results button sits below the (possibly long) student list —
+  // scroll the result banner next to it into view so success/error is
+  // never missed just because the teacher was scrolled down to click it.
+  useEffect(() => {
+    if (!message) return;
+    bottomMessageRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [message]);
 
   function updateRow(index: number, field: keyof ScoreRow, value: string) {
     const maxMap: Partial<Record<keyof ScoreRow, number>> = {
@@ -1010,6 +1019,25 @@ export default function UploadResultsPage() {
             >
               {saving ? "Saving Results..." : "Save Results"}
             </button>
+
+            {/* Duplicate of the banner at the top of this card — the Save
+                button sits below a potentially long student list, so the
+                result needs to show right here too or it's easy to miss
+                without scrolling back up. */}
+            {message && (
+              <div
+                ref={bottomMessageRef}
+                className={`mt-4 rounded-2xl px-4 py-3 text-sm font-semibold ${
+                  messageTone === "error"
+                    ? "bg-red-50 text-red-700"
+                    : messageTone === "success"
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-sky-50 text-sky-700"
+                }`}
+              >
+                {message}
+              </div>
+            )}
           </>
         )}
       </div>
