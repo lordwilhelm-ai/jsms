@@ -125,6 +125,35 @@ function uniqueList(list: string[]) {
   return Array.from(new Set(list.map((item) => item.trim()).filter(Boolean)));
 }
 
+// Local draft autosave: whatever a teacher types is kept in the browser
+// (keyed by class+subject+year+term, then by student) so it survives a
+// closed tab/app even if they never click Save Results. Cleared once a
+// scope is actually saved to the server.
+const DRAFT_STORAGE_KEY = "jsms_upload_results_drafts_v1";
+
+function getDraftScopeKey(className: string, subjectName: string, academicYear: string, term: string) {
+  return [className, subjectName, academicYear, term].join("|");
+}
+
+function loadDraftStore(): Record<string, Record<string, ScoreRow>> {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveDraftStore(store: Record<string, Record<string, ScoreRow>>) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(store));
+  } catch {}
+}
+
 function getClassWork100(row: ScoreRow) {
   return (
     Number(row.cat1 || 0) +
@@ -250,6 +279,7 @@ export default function UploadResultsPage() {
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"info" | "success" | "error">("info");
   const [assignmentError, setAssignmentError] = useState("");
 
   const availableSubjects = useMemo(() => {
@@ -330,6 +360,7 @@ export default function UploadResultsPage() {
   async function loadPage() {
     setLoading(true);
     setMessage("");
+    setMessageTone("info");
     setAssignmentError("");
 
     const {
@@ -460,6 +491,7 @@ export default function UploadResultsPage() {
 
     if (studentError) {
       setMessage(studentError.message);
+      setMessageTone("error");
       setRows([]);
       setLoadingStudents(false);
       return;
@@ -507,7 +539,18 @@ export default function UploadResultsPage() {
       })
       .filter((row) => row.student_id);
 
-    setRows(applyPositions(newRows));
+    // A local draft (unsaved edits from an earlier session) always wins
+    // over server data for a student it covers — it represents the
+    // teacher's most recent intent until they actually hit Save Results.
+    const scopeKey = getDraftScopeKey(className, subjectName, settings.academic_year, settings.current_term);
+    const scopeDraft = loadDraftStore()[scopeKey] || {};
+
+    const mergedRows = newRows.map((row) => {
+      const draftRow = scopeDraft[row.student_id];
+      return draftRow ? recalcRow({ ...row, ...draftRow }) : row;
+    });
+
+    setRows(applyPositions(mergedRows));
     setLoadingStudents(false);
   }
 
@@ -536,6 +579,24 @@ export default function UploadResultsPage() {
     settings.current_term,
   ]);
 
+  // Autosave every edit locally so it survives closing the app before the
+  // teacher hits Save Results.
+  useEffect(() => {
+    if (!selectedClass || !selectedSubject || rows.length === 0) return;
+    if (!settings.academic_year || !settings.current_term) return;
+
+    const scopeKey = getDraftScopeKey(selectedClass, selectedSubject, settings.academic_year, settings.current_term);
+    const store = loadDraftStore();
+    const scopeDraft: Record<string, ScoreRow> = {};
+
+    rows.forEach((row) => {
+      scopeDraft[row.student_id] = row;
+    });
+
+    store[scopeKey] = scopeDraft;
+    saveDraftStore(store);
+  }, [rows, selectedClass, selectedSubject, settings.academic_year, settings.current_term]);
+
   function updateRow(index: number, field: keyof ScoreRow, value: string) {
     const maxMap: Partial<Record<keyof ScoreRow, number>> = {
       cat1: 20,
@@ -563,16 +624,19 @@ export default function UploadResultsPage() {
   async function saveResults() {
     if (!selectedClass || !selectedSubject) {
       setMessage("Please select class and subject.");
+      setMessageTone("error");
       return;
     }
 
     if (!settings.academic_year || !settings.current_term) {
       setMessage("Academic year or current term is missing in JSMS settings.");
+      setMessageTone("error");
       return;
     }
 
     setSaving(true);
     setMessage("");
+    setMessageTone("info");
 
     const positionedRows = applyPositions(rows);
 
@@ -633,12 +697,21 @@ export default function UploadResultsPage() {
         throw new Error(data.error || "Failed to save results.");
       }
 
+      // Now safely on the server — drop the local draft for this scope so
+      // it doesn't shadow future server data.
+      const scopeKey = getDraftScopeKey(selectedClass, selectedSubject, settings.academic_year, settings.current_term);
+      const store = loadDraftStore();
+      delete store[scopeKey];
+      saveDraftStore(store);
+
       setRows(positionedRows);
       setMessage("Results saved successfully.");
+      setMessageTone("success");
       setPickerOpen(false);
       await loadStudentsAndScores(selectedClass, selectedSubject);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to save results.");
+      setMessageTone("error");
     }
 
     setSaving(false);
@@ -777,7 +850,15 @@ export default function UploadResultsPage() {
 
       <div className="rounded-[28px] bg-white p-5 shadow-sm">
         {message && (
-          <div className="mb-4 rounded-2xl bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-700">
+          <div
+            className={`mb-4 rounded-2xl px-4 py-3 text-sm font-semibold ${
+              messageTone === "error"
+                ? "bg-red-50 text-red-700"
+                : messageTone === "success"
+                  ? "bg-emerald-50 text-emerald-700"
+                  : "bg-sky-50 text-sky-700"
+            }`}
+          >
             {message}
           </div>
         )}
