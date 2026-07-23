@@ -640,54 +640,60 @@ export default function UploadResultsPage() {
     setMessage("");
     setMessageTone("info");
 
-    const positionedRows = applyPositions(rows);
-
-    const payload = positionedRows.map((row) => {
-      const classWork100 = getClassWork100(row);
-      const classWork50 = classWork100 / 2;
-      const examRaw = Number(row.exam_raw || 0);
-      const exam50 = examRaw / 2;
-      const finalTotal = classWork50 + exam50;
-
-      return {
-        student_id: row.student_id,
-        student_name: row.student_name,
-        class_name: row.class_name,
-        academic_year: settings.academic_year,
-        term: settings.current_term,
-        subject_name: selectedSubject,
-
-        playroom_mark: isPlayroomClass(row.class_name) ? row.playroom_mark || null : null,
-
-        cat1: isPlayroomClass(row.class_name) || row.cat1 === "" ? null : Number(row.cat1),
-        cat2: isPlayroomClass(row.class_name) || row.cat2 === "" ? null : Number(row.cat2),
-        cat3: isPlayroomClass(row.class_name) || row.cat3 === "" ? null : Number(row.cat3),
-        homework: isPlayroomClass(row.class_name) || row.homework === "" ? null : Number(row.homework),
-        exercise: isPlayroomClass(row.class_name) || row.exercise === "" ? null : Number(row.exercise),
-        project_work: isPlayroomClass(row.class_name) || row.project_work === "" ? null : Number(row.project_work),
-
-        class_work_100: isPlayroomClass(row.class_name) ? null : classWork100,
-        class_score: isPlayroomClass(row.class_name) ? null : classWork50,
-
-        exam_raw: isPlayroomClass(row.class_name) || row.exam_raw === "" ? null : examRaw,
-        exam_50: isPlayroomClass(row.class_name) ? null : exam50,
-        exam_score: isPlayroomClass(row.class_name) ? null : examRaw,
-
-        total_score: isPlayroomClass(row.class_name) ? null : finalTotal,
-        position: isPlayroomClass(row.class_name) || row.position === "" ? null : Number(row.position),
-        grade: isPlayroomClass(row.class_name) ? row.playroom_mark || "" : finalTotal > 0 ? getGrade(finalTotal) : "",
-        remark: isPlayroomClass(row.class_name) ? getPlayroomRemark(row.playroom_mark) : finalTotal > 0 ? getRemark(finalTotal) : "",
-
-        teacher_id: getTeacherCode(teacher),
-        teacher_name: getTeacherName(teacher),
-
-        source_system: "jsms_live",
-        is_locked: false,
-        migrated_at: new Date().toISOString(),
-      };
-    });
-
+    // Everything from here down is inside one try/catch/finally so that
+    // ANY failure — building the payload, the network call, the reload
+    // after saving — always ends with either a success or error message,
+    // and "saving" never gets stuck true with no feedback at all.
     try {
+      const positionedRows = applyPositions(rows);
+
+      const payload = positionedRows.map((row) => {
+        const classWork100 = getClassWork100(row);
+        const classWork50 = classWork100 / 2;
+        const examRaw = Number(row.exam_raw || 0);
+        const exam50 = examRaw / 2;
+        const finalTotal = classWork50 + exam50;
+
+        return {
+          student_id: row.student_id,
+          student_name: row.student_name,
+          class_name: row.class_name,
+          academic_year: settings.academic_year,
+          term: settings.current_term,
+          subject_name: selectedSubject,
+
+          playroom_mark: isPlayroomClass(row.class_name) ? row.playroom_mark || null : null,
+
+          cat1: isPlayroomClass(row.class_name) || row.cat1 === "" ? null : Number(row.cat1),
+          cat2: isPlayroomClass(row.class_name) || row.cat2 === "" ? null : Number(row.cat2),
+          cat3: isPlayroomClass(row.class_name) || row.cat3 === "" ? null : Number(row.cat3),
+          homework: isPlayroomClass(row.class_name) || row.homework === "" ? null : Number(row.homework),
+          exercise: isPlayroomClass(row.class_name) || row.exercise === "" ? null : Number(row.exercise),
+          project_work: isPlayroomClass(row.class_name) || row.project_work === "" ? null : Number(row.project_work),
+
+          class_work_100: isPlayroomClass(row.class_name) ? null : classWork100,
+          class_score: isPlayroomClass(row.class_name) ? null : classWork50,
+
+          exam_raw: isPlayroomClass(row.class_name) || row.exam_raw === "" ? null : examRaw,
+          exam_50: isPlayroomClass(row.class_name) ? null : exam50,
+          exam_score: isPlayroomClass(row.class_name) ? null : examRaw,
+
+          total_score: isPlayroomClass(row.class_name) ? null : finalTotal,
+          position: isPlayroomClass(row.class_name) || row.position === "" ? null : Number(row.position),
+          grade: isPlayroomClass(row.class_name) ? row.playroom_mark || "" : finalTotal > 0 ? getGrade(finalTotal) : "",
+          remark: isPlayroomClass(row.class_name) ? getPlayroomRemark(row.playroom_mark) : finalTotal > 0 ? getRemark(finalTotal) : "",
+
+          teacher_id: getTeacherCode(teacher),
+          teacher_name: getTeacherName(teacher),
+
+          source_system: "jsms_live",
+          is_locked: false,
+          migrated_at: new Date().toISOString(),
+        };
+      });
+
+      console.log("[upload-results] saving", payload.length, "rows for", selectedClass, selectedSubject);
+
       const response = await authedFetch("/api/report-card/save-scores", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -695,8 +701,10 @@ export default function UploadResultsPage() {
       });
       const data = await response.json();
 
+      console.log("[upload-results] save response", response.status, data);
+
       if (!response.ok || data.error) {
-        throw new Error(data.error || "Failed to save results.");
+        throw new Error(data.error || `Save failed (HTTP ${response.status}).`);
       }
 
       // Now safely on the server — drop the local draft for this scope so
@@ -707,16 +715,17 @@ export default function UploadResultsPage() {
       saveDraftStore(store);
 
       setRows(positionedRows);
-      setMessage("Results saved successfully.");
+      setMessage(`Results saved successfully for ${payload.length} student(s).`);
       setMessageTone("success");
       setPickerOpen(false);
       await loadStudentsAndScores(selectedClass, selectedSubject);
     } catch (error) {
+      console.error("[upload-results] save error", error);
       setMessage(error instanceof Error ? error.message : "Failed to save results.");
       setMessageTone("error");
+    } finally {
+      setSaving(false);
     }
-
-    setSaving(false);
   }
 
   if (loading) {
