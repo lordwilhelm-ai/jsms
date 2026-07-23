@@ -621,19 +621,24 @@ export default function UploadResultsPage() {
       };
     });
 
-    const { error } = await supabase
-      .from("jsms_report_scores")
-      .upsert(payload, {
-        onConflict: "student_id,academic_year,term,subject_name",
+    try {
+      const response = await authedFetch("/api/report-card/save-scores", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: payload }),
       });
+      const data = await response.json();
 
-    if (error) {
-      setMessage(error.message);
-    } else {
+      if (!response.ok || data.error) {
+        throw new Error(data.error || "Failed to save results.");
+      }
+
       setRows(positionedRows);
       setMessage("Results saved successfully.");
       setPickerOpen(false);
       await loadStudentsAndScores(selectedClass, selectedSubject);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to save results.");
     }
 
     setSaving(false);

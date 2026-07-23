@@ -689,17 +689,22 @@ export default function ReportCardTeacherRemarksPage() {
       })
       .filter(Boolean);
 
-    const { error } = await supabase
-      .from("jsms_report_cards")
-      .upsert(payload as any[], {
-        onConflict: "student_id,academic_year,term",
+    try {
+      const response = await authedFetch("/api/report-card/save-remarks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: payload }),
       });
+      const data = await response.json();
 
-    if (error) {
-      setMessage(error.message);
-    } else {
+      if (!response.ok || data.error) {
+        throw new Error(data.error || "Failed to save remarks.");
+      }
+
       setMessage("Remarks saved successfully.");
       await loadClassRemarks(selectedClass);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to save remarks.");
     }
 
     setSaving(false);
