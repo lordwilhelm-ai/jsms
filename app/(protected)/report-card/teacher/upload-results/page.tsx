@@ -497,13 +497,15 @@ export default function UploadResultsPage() {
       return;
     }
 
-    const { data: existingScores } = await supabase
-      .from("jsms_report_scores")
-      .select("*")
-      .eq("class_name", className)
-      .eq("subject_name", subjectName)
-      .eq("academic_year", settings.academic_year)
-      .eq("term", settings.current_term);
+    const scoresParams = new URLSearchParams({
+      class_name: className,
+      subject_name: subjectName,
+      academic_year: settings.academic_year,
+      term: settings.current_term,
+    });
+    const scoresRes = await authedFetch(`/api/report-card/scores?${scoresParams.toString()}`);
+    const scoresData = await scoresRes.json();
+    const existingScores = scoresRes.ok ? scoresData.rows || [] : [];
 
     const existingMap = new Map(
       (existingScores || []).map((score: any) => [score.student_id, score])

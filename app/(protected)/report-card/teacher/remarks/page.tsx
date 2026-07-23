@@ -504,7 +504,13 @@ export default function ReportCardTeacherRemarksPage() {
     setLoadingPage(true);
     setMessage("");
 
-    const [studentsRes, reportRes, scoresRes] = await Promise.all([
+    const reportCardParams = new URLSearchParams({
+      academic_year: settings.academicYear,
+      term: settings.currentTerm,
+      class_name: className,
+    });
+
+    const [studentsRes, reportResRaw, scoresResRaw] = await Promise.all([
       supabase
         .from("students")
         .select("id,student_id,jvs_id,full_name,first_name,last_name,class_name")
@@ -512,18 +518,8 @@ export default function ReportCardTeacherRemarksPage() {
         .or("is_active.eq.true,active.eq.true")
         .or("left_school.is.null,left_school.eq.false")
         .order("full_name", { ascending: true }),
-      supabase
-        .from("jsms_report_cards")
-        .select("*")
-        .eq("academic_year", settings.academicYear)
-        .eq("term", settings.currentTerm)
-        .eq("class_name", className),
-      supabase
-        .from("jsms_report_scores")
-        .select("student_id,student_name,class_name,subject_name,academic_year,term,total_score,grade,playroom_mark")
-        .eq("academic_year", settings.academicYear)
-        .eq("term", settings.currentTerm)
-        .eq("class_name", className),
+      authedFetch(`/api/report-card/cards?${reportCardParams.toString()}`),
+      authedFetch(`/api/report-card/scores?${reportCardParams.toString()}`),
     ]);
 
     if (studentsRes.error) {
@@ -534,16 +530,18 @@ export default function ReportCardTeacherRemarksPage() {
       return;
     }
 
-    if (reportRes.error) {
-      setMessage(reportRes.error.message);
+    const reportResData = await reportResRaw.json();
+    if (!reportResRaw.ok) {
+      setMessage(reportResData.error || "Failed to load remarks.");
       setStudents([]);
       setEntryData({});
       setLoadingPage(false);
       return;
     }
 
-    if (scoresRes.error) {
-      setMessage(scoresRes.error.message);
+    const scoresResData = await scoresResRaw.json();
+    if (!scoresResRaw.ok) {
+      setMessage(scoresResData.error || "Failed to load scores.");
       setStudents([]);
       setEntryData({});
       setLoadingPage(false);
@@ -551,8 +549,8 @@ export default function ReportCardTeacherRemarksPage() {
     }
 
     const studentList = studentsRes.data || [];
-    const reportRows = reportRes.data || [];
-    const scores = scoresRes.data || [];
+    const reportRows = reportResData.rows || [];
+    const scores = scoresResData.rows || [];
 
     const initialData: Record<string, EntryRow> = {};
 

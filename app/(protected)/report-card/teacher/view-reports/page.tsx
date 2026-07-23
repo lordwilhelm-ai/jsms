@@ -1342,9 +1342,9 @@ export default function ReportCardsPage() {
       studentsRes,
       settingsRes,
       classesRes,
-      scoresRes,
-      attendanceRes,
-      remarksRes,
+      scoresRaw,
+      attendanceRaw,
+      remarksRaw,
       feeLiveRes,
       balancesRes,
       teachersRes,
@@ -1368,15 +1368,9 @@ export default function ReportCardsPage() {
         .from("classes")
         .select("*")
         .order("class_order", { ascending: true }),
-      supabase
-        .from("jsms_report_scores")
-        .select("*"),
-      supabase
-        .from("jsms_report_attendance")
-        .select("*"),
-      supabase
-        .from("jsms_report_cards")
-        .select("*"),
+      authedFetch("/api/report-card/scores"),
+      authedFetch("/api/report-card/attendance"),
+      authedFetch("/api/report-card/cards"),
       supabase
         .from("jsms_report_fee_live_view")
         .select("*"),
@@ -1400,13 +1394,19 @@ export default function ReportCardsPage() {
         .select("*"),
     ]);
 
+    const [scoresData, attendanceData, remarksData] = await Promise.all([
+      scoresRaw.json(),
+      attendanceRaw.json(),
+      remarksRaw.json(),
+    ]);
+
     if (studentsRes.error) setMessage(studentsRes.error.message);
     if (!studentsRes.error) setStudents(getAllowedStudents(studentsRes.data || [], allowedClassNames));
     if (!settingsRes.error) setSettings(settingsRes.data || null);
     if (!classesRes.error) setClasses(classesRes.data || []);
-    if (!scoresRes.error) setScores(scoresRes.data || []);
-    if (!attendanceRes.error) setAttendance(attendanceRes.data || []);
-    if (!remarksRes.error) setRemarks(remarksRes.data || []);
+    if (scoresRaw.ok) setScores(scoresData.rows || []);
+    if (attendanceRaw.ok) setAttendance(attendanceData.rows || []);
+    if (remarksRaw.ok) setRemarks(remarksData.rows || []);
     if (!feeLiveRes.error) setFeeLiveRows(feeLiveRes.data || []);
     if (!balancesRes.error) setBalanceRows(balancesRes.data || []);
     if (!teachersRes.error) setTeachers(teachersRes.data || []);

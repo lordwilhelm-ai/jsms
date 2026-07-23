@@ -16,6 +16,7 @@ import {
   FiX,
 } from "react-icons/fi";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 import { useReportCardAccess } from "@/hooks/useReportCardAccess";
 
 function AdminPaymentGate({
@@ -139,25 +140,31 @@ export default function ReportCardAdminDashboardPage() {
     setLoading(true);
     const [
       settingsRes, studentsRes, teachersRes, classesRes,
-      scoresRes, attendanceRes, remarksRes, assignmentsRes,
+      scoresRaw, attendanceRaw, remarksRaw, assignmentsRes,
     ] = await Promise.all([
       supabase.from("school_settings").select("school_name,current_academic_year,academic_year,current_term").order("updated_at", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("students").select("id,student_id,jvs_id,class_name,is_active,active,left_school,status"),
       supabase.from("teachers").select("id,full_name,role"),
       supabase.from("classes").select("id,name,class_name,class_order").order("class_order", { ascending: true }),
-      supabase.from("jsms_report_scores").select("student_id,class_name,subject_name,academic_year,term"),
-      supabase.from("jsms_report_attendance").select("student_id,class_name,academic_year,term"),
-      supabase.from("jsms_report_cards").select("student_id,class_name,academic_year,term"),
+      authedFetch("/api/report-card/scores"),
+      authedFetch("/api/report-card/attendance"),
+      authedFetch("/api/report-card/cards"),
       supabase.from("teacher_class_assignments").select("teacher_id,class_id"),
+    ]);
+
+    const [scoresData, attendanceData, remarksData] = await Promise.all([
+      scoresRaw.json(),
+      attendanceRaw.json(),
+      remarksRaw.json(),
     ]);
 
     if (!settingsRes.error) setSettings(settingsRes.data || null);
     if (!studentsRes.error) setStudents((studentsRes.data || []).filter(isActiveStudent));
     if (!teachersRes.error) setTeachers(teachersRes.data || []);
     if (!classesRes.error) setClasses(classesRes.data || []);
-    if (!scoresRes.error) setScores(scoresRes.data || []);
-    if (!attendanceRes.error) setAttendance(attendanceRes.data || []);
-    if (!remarksRes.error) setRemarks(remarksRes.data || []);
+    if (scoresRaw.ok) setScores(scoresData.rows || []);
+    if (attendanceRaw.ok) setAttendance(attendanceData.rows || []);
+    if (remarksRaw.ok) setRemarks(remarksData.rows || []);
     if (!assignmentsRes.error) setAssignments(assignmentsRes.data || []);
     setLoading(false);
   }

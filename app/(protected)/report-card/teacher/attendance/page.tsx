@@ -314,18 +314,15 @@ async function loadFeedingCounts(
 }
 
 async function loadSavedAttendance(academicYear: string, term: string, className: string) {
-  const { data, error } = await supabase
-    .from("jsms_report_attendance")
-    .select("*")
-    .eq("academic_year", academicYear)
-    .eq("term", term)
-    .eq("class_name", className);
+  const params = new URLSearchParams({ academic_year: academicYear, term, class_name: className });
+  const response = await authedFetch(`/api/report-card/attendance?${params.toString()}`);
+  const result = await response.json();
 
-  if (error || !data) return new Map<string, any>();
+  if (!response.ok || !result.rows) return new Map<string, any>();
 
   const map = new Map<string, any>();
 
-  (data || []).forEach((row: any) => {
+  (result.rows || []).forEach((row: any) => {
     const key = cleanText(row.student_id);
     if (key) map.set(key, row);
   });

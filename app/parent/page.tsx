@@ -584,9 +584,6 @@ function ParentPortalContent() {
           studentsRes,
           settingsRows,
           classes,
-          scores,
-          attendanceRows,
-          remarksRows,
           feeLiveRows,
           balanceRows,
           feePayments,
@@ -595,9 +592,6 @@ function ParentPortalContent() {
           supabase.from("students").select("*"),
           safeSelect("school_settings"),
           safeSelect("classes"),
-          safeSelect("jsms_report_scores"),
-          safeSelect("jsms_report_attendance"),
-          safeSelect("jsms_report_cards"),
           safeSelect("jsms_report_fee_live_view"),
           safeSelect("student_balances"),
           safeSelect("fee_payments"),
@@ -631,6 +625,19 @@ function ParentPortalContent() {
           });
           return;
         }
+
+        // Report-card tables have no login-based access control (this whole
+        // portal works by knowing the student's ID), so this is a separate,
+        // narrowly-scoped fetch once the student is actually resolved above.
+        const reportParams = new URLSearchParams({ student_ids: getStudentKeys(student).join(",") });
+        const reportRes = await fetch(`/api/report-card/parent-data?${reportParams.toString()}`);
+        const reportData = await reportRes.json();
+
+        if (!active) return;
+
+        const scores: AnyRow[] = reportRes.ok ? reportData.scores || [] : [];
+        const attendanceRows: AnyRow[] = reportRes.ok ? reportData.attendance || [] : [];
+        const remarksRows: AnyRow[] = reportRes.ok ? reportData.cards || [] : [];
 
         const settings =
           [...settingsRows].sort((a, b) => {
