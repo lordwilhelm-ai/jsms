@@ -15,7 +15,6 @@ type StudentRow = Record<string, any>;
 type SettingsRow = Record<string, any>;
 type ClassRow = Record<string, any>;
 type FeeViewRow = Record<string, any>;
-type BalanceRow = Record<string, any>;
 
 function cleanText(value: unknown) {
   return String(value || "").trim();
@@ -179,13 +178,11 @@ function computeFees(
   student: StudentRow,
   settings: SettingsRow | null,
   feeLiveRows: FeeViewRow[],
-  balanceRows: BalanceRow[],
   feePaymentRows: Record<string, any>[],
   feeStructureRows: Record<string, any>[],
   classRows: ClassRow[]
 ) {
   const feeLive = feeLiveRows.find((row) => rowBelongsToStudent(row, student));
-  const balanceRow = balanceRows.find((row) => rowBelongsToStudent(row, student));
 
   const currentTermBaseFee = getFeeFromFeeStructure(student, settings, feeStructureRows, classRows);
   const currentTermScholarship = applyScholarship(student, currentTermBaseFee);
@@ -193,11 +190,13 @@ function computeFees(
 
   const totalPaid = getTotalPaidFromFeePayments(student, settings, feePaymentRows);
 
+  // student.arrears / previous_balance are the same school-fees-only fields
+  // the Fees module (record-payment, debtors, etc.) reads — student_balances
+  // is the FEEDING ledger (upserted by the feeding module, keyed only by
+  // student_id) and must never be folded into fee arrears here.
   const manualArrears =
     safeNumber(student.arrears) ||
-    safeNumber(student.previous_balance) ||
-    safeNumber(balanceRow?.previous_balance) ||
-    safeNumber(balanceRow?.arrears);
+    safeNumber(student.previous_balance);
 
   const computedArrears = Math.max(0, expectedCurrentTermFee + manualArrears - totalPaid);
 
@@ -211,14 +210,7 @@ function computeFees(
     safeNumber(feeLive?.school_fees_arrears) ||
     safeNumber(feeLive?.amount_due);
 
-  const balanceArrears =
-    safeNumber(balanceRow?.balance) ||
-    safeNumber(balanceRow?.fee_balance) ||
-    safeNumber(balanceRow?.outstanding_balance) ||
-    safeNumber(balanceRow?.outstanding_fees) ||
-    safeNumber(balanceRow?.amount_due);
-
-  const arrears = liveArrears || balanceArrears || computedArrears;
+  const arrears = liveArrears || computedArrears;
 
   const nextTermBaseFee = getFeeFromFeeStructure(student, settings, feeStructureRows, classRows);
   const nextTermScholarship = applyScholarship(student, nextTermBaseFee);
@@ -241,7 +233,6 @@ export default function ReportCardBillingPage() {
   const [settings, setSettings] = useState<SettingsRow | null>(null);
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [feeLiveRows, setFeeLiveRows] = useState<FeeViewRow[]>([]);
-  const [balanceRows, setBalanceRows] = useState<BalanceRow[]>([]);
   const [feePayments, setFeePayments] = useState<Record<string, any>[]>([]);
   const [feeStructures, setFeeStructures] = useState<Record<string, any>[]>([]);
   const [selectedClass, setSelectedClass] = useState("All");
@@ -253,12 +244,11 @@ export default function ReportCardBillingPage() {
 
   async function loadData() {
     setLoading(true);
-    const [studentsRes, settingsRes, classesRes, feeLiveRes, balancesRes, feePaymentsRes, feeStructureRes] = await Promise.all([
+    const [studentsRes, settingsRes, classesRes, feeLiveRes, feePaymentsRes, feeStructureRes] = await Promise.all([
       supabase.from("students").select("*"),
       supabase.from("school_settings").select("*").order("updated_at", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("classes").select("*").order("class_order", { ascending: true }),
       supabase.from("jsms_report_fee_live_view").select("*"),
-      supabase.from("student_balances").select("*"),
       supabase.from("fee_payments").select("*"),
       supabase.from("fee_structure").select("*"),
     ]);
@@ -267,7 +257,6 @@ export default function ReportCardBillingPage() {
     if (!settingsRes.error) setSettings(settingsRes.data || null);
     if (!classesRes.error) setClasses(classesRes.data || []);
     if (!feeLiveRes.error) setFeeLiveRows(feeLiveRes.data || []);
-    if (!balancesRes.error) setBalanceRows(balancesRes.data || []);
     if (!feePaymentsRes.error) setFeePayments(feePaymentsRes.data || []);
     if (!feeStructureRes.error) setFeeStructures(feeStructureRes.data || []);
     setLoading(false);
@@ -285,7 +274,7 @@ export default function ReportCardBillingPage() {
     return students
       .map((student) => ({
         student,
-        fees: computeFees(student, settings, feeLiveRows, balanceRows, feePayments, feeStructures, classes),
+        fees: computeFees(student, settings, feeLiveRows, feePayments, feeStructures, classes),
       }))
       .filter((row) => selectedClass === "All" || cleanText(row.student.class_name) === selectedClass)
       .filter((row) => {
@@ -298,7 +287,7 @@ export default function ReportCardBillingPage() {
         if (classDiff !== 0) return classDiff;
         return getStudentName(a.student).localeCompare(getStudentName(b.student));
       });
-  }, [students, settings, feeLiveRows, balanceRows, feePayments, feeStructures, classes, selectedClass, search]);
+  }, [students, settings, feeLiveRows, feePayments, feeStructures, classes, selectedClass, search]);
 
   const totals = useMemo(() => billingRows.reduce((acc, row) => ({
     arrears: acc.arrears + row.fees.arrears,

@@ -10,7 +10,6 @@ type StudentRow = Record<string, any>;
 type SettingsRow = Record<string, any>;
 type ClassRow = Record<string, any>;
 type FeeViewRow = Record<string, any>;
-type BalanceRow = Record<string, any>;
 
 const PLAYROOM_CLASSES = ["Playroom 1", "Playroom 2"];
 const KG_CLASSES = ["KG 1", "KG 2"];
@@ -28,7 +27,6 @@ type PortalState = {
   attendance: AnyRow | null;
   remarks: AnyRow | null;
   feeLiveRows: FeeViewRow[];
-  balanceRows: BalanceRow[];
   feePayments: AnyRow[];
   feeStructures: AnyRow[];
   classTotal: number;
@@ -44,7 +42,6 @@ const initialState: PortalState = {
   attendance: null,
   remarks: null,
   feeLiveRows: [],
-  balanceRows: [],
   feePayments: [],
   feeStructures: [],
   classTotal: 0,
@@ -448,7 +445,6 @@ function computeFees(
   student: StudentRow,
   settings: SettingsRow | null,
   feeLiveRows: FeeViewRow[],
-  balanceRows: BalanceRow[],
   feePaymentRows: Record<string, any>[],
   feeStructureRows: Record<string, any>[],
   classRows: ClassRow[]
@@ -457,7 +453,6 @@ function computeFees(
   const nextTermLabel = getNextTermLabel(currentTerm);
 
   const feeLive = feeLiveRows.find((row) => rowBelongsToStudent(row, student));
-  const balanceRow = balanceRows.find((row) => rowBelongsToStudent(row, student));
 
   // fee_structure only ever holds rows for the upcoming term (see
   // getFeeFromFeeStructure, used below for nextTermFee) — the fee actually
@@ -469,11 +464,13 @@ function computeFees(
 
   const totalPaid = getTotalPaidFromFeePayments(student, settings, feePaymentRows);
 
+  // student.arrears / previous_balance are the same school-fees-only fields
+  // the Fees module (record-payment, debtors, etc.) reads — student_balances
+  // is the FEEDING ledger (upserted by the feeding module, keyed only by
+  // student_id) and must never be folded into fee arrears here.
   const manualArrears =
     safeNumber(student.arrears) ||
-    safeNumber(student.previous_balance) ||
-    safeNumber(balanceRow?.previous_balance) ||
-    safeNumber(balanceRow?.arrears);
+    safeNumber(student.previous_balance);
 
   const computedArrears = Math.max(0, expectedCurrentTermFee + manualArrears - totalPaid);
 
@@ -487,14 +484,7 @@ function computeFees(
     safeNumber(feeLive?.school_fees_arrears) ||
     safeNumber(feeLive?.amount_due);
 
-  const balanceArrears =
-    safeNumber(balanceRow?.balance) ||
-    safeNumber(balanceRow?.fee_balance) ||
-    safeNumber(balanceRow?.outstanding_balance) ||
-    safeNumber(balanceRow?.outstanding_fees) ||
-    safeNumber(balanceRow?.amount_due);
-
-  const arrears = liveArrears || balanceArrears || computedArrears;
+  const arrears = liveArrears || computedArrears;
 
   const nextTermBaseFee = getFeeFromFeeStructure(student, settings, feeStructureRows, classRows);
   const nextTermScholarship = applyScholarship(student, nextTermBaseFee);
@@ -585,7 +575,6 @@ function ParentPortalContent() {
           settingsRows,
           classes,
           feeLiveRows,
-          balanceRows,
           feePayments,
           feeStructures,
         ] = await Promise.all([
@@ -593,7 +582,6 @@ function ParentPortalContent() {
           safeSelect("school_settings"),
           safeSelect("classes"),
           safeSelect("jsms_report_fee_live_view"),
-          safeSelect("student_balances"),
           safeSelect("fee_payments"),
           safeSelect("fee_structure"),
         ]);
@@ -685,7 +673,6 @@ function ParentPortalContent() {
           attendance: studentAttendance,
           remarks: studentRemarks,
           feeLiveRows,
-          balanceRows,
           feePayments,
           feeStructures,
           classTotal,
@@ -725,7 +712,6 @@ function ParentPortalContent() {
       state.student,
       state.settings,
       state.feeLiveRows,
-      state.balanceRows,
       state.feePayments,
       state.feeStructures,
       state.classes
@@ -734,7 +720,6 @@ function ParentPortalContent() {
     state.student,
     state.settings,
     state.feeLiveRows,
-    state.balanceRows,
     state.feePayments,
     state.feeStructures,
     state.classes,

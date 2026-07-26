@@ -35,7 +35,6 @@ type AttendanceRow = Record<string, any>;
 type RemarkRow = Record<string, any>;
 type ClassRow = Record<string, any>;
 type FeeViewRow = Record<string, any>;
-type BalanceRow = Record<string, any>;
 
 type ReportData = {
   student: {
@@ -722,7 +721,6 @@ function computeFees(
   student: StudentRow,
   settings: SettingsRow | null,
   feeLiveRows: FeeViewRow[],
-  balanceRows: BalanceRow[],
   feePaymentRows: Record<string, any>[],
   feeStructureRows: Record<string, any>[],
   classRows: ClassRow[]
@@ -731,7 +729,6 @@ function computeFees(
   const nextTermLabel = getNextTermLabel(currentTerm);
 
   const feeLive = feeLiveRows.find((row) => rowBelongsToStudent(row, student));
-  const balanceRow = balanceRows.find((row) => rowBelongsToStudent(row, student));
 
   // This is the SAME idea as Fees > Record Payment:
   // Returning/continuing fee is what matters after admission/new-student billing.
@@ -747,11 +744,13 @@ function computeFees(
 
   const totalPaid = getTotalPaidFromFeePayments(student, settings, feePaymentRows);
 
+  // student.arrears / previous_balance are the same school-fees-only fields
+  // the Fees module (record-payment, debtors, etc.) reads — student_balances
+  // is the FEEDING ledger (upserted by the feeding module, keyed only by
+  // student_id) and must never be folded into fee arrears here.
   const manualArrears =
     safeNumber(student.arrears) ||
-    safeNumber(student.previous_balance) ||
-    safeNumber(balanceRow?.previous_balance) ||
-    safeNumber(balanceRow?.arrears);
+    safeNumber(student.previous_balance);
 
   const computedArrears = Math.max(0, expectedCurrentTermFee + manualArrears - totalPaid);
 
@@ -765,14 +764,7 @@ function computeFees(
     safeNumber(feeLive?.school_fees_arrears) ||
     safeNumber(feeLive?.amount_due);
 
-  const balanceArrears =
-    safeNumber(balanceRow?.balance) ||
-    safeNumber(balanceRow?.fee_balance) ||
-    safeNumber(balanceRow?.outstanding_balance) ||
-    safeNumber(balanceRow?.outstanding_fees) ||
-    safeNumber(balanceRow?.amount_due);
-
-  const arrears = liveArrears || balanceArrears || computedArrears;
+  const arrears = liveArrears || computedArrears;
 
   // Next term must ALWAYS be continuing/returning student fee,
   // never the admission/new-student bill.
@@ -1193,7 +1185,6 @@ export default function ReportCardsPage() {
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
   const [remarks, setRemarks] = useState<RemarkRow[]>([]);
   const [feeLiveRows, setFeeLiveRows] = useState<FeeViewRow[]>([]);
-  const [balanceRows, setBalanceRows] = useState<BalanceRow[]>([]);
   const [teachers, setTeachers] = useState<any[]>([]);
   const [feePayments, setFeePayments] = useState<any[]>([]);
   const [feeStructures, setFeeStructures] = useState<any[]>([]);
@@ -1243,7 +1234,6 @@ export default function ReportCardsPage() {
       attendanceRaw,
       remarksRaw,
       feeLiveRes,
-      balancesRes,
       teachersRes,
       feePaymentsRes,
       feeStructureRes,
@@ -1270,9 +1260,6 @@ export default function ReportCardsPage() {
       authedFetch("/api/report-card/cards"),
       supabase
         .from("jsms_report_fee_live_view")
-        .select("*"),
-      supabase
-        .from("student_balances")
         .select("*"),
       supabase
         .from("teachers")
@@ -1305,7 +1292,6 @@ export default function ReportCardsPage() {
     if (attendanceRaw.ok) setAttendance(attendanceData.rows || []);
     if (remarksRaw.ok) setRemarks(remarksData.rows || []);
     if (!feeLiveRes.error) setFeeLiveRows(feeLiveRes.data || []);
-    if (!balancesRes.error) setBalanceRows(balancesRes.data || []);
     if (!teachersRes.error) setTeachers(teachersRes.data || []);
     if (!feePaymentsRes.error) setFeePayments(feePaymentsRes.data || []);
     if (!feeStructureRes.error) setFeeStructures(feeStructureRes.data || []);
@@ -1382,7 +1368,6 @@ export default function ReportCardsPage() {
         student,
         settings,
         feeLiveRows,
-        balanceRows,
         feePayments,
         feeStructures,
         classes
@@ -1426,7 +1411,6 @@ export default function ReportCardsPage() {
     remarks,
     settings,
     feeLiveRows,
-    balanceRows,
     feePayments,
     feeStructures,
     classes,
