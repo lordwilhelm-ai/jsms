@@ -132,19 +132,6 @@ function getStudentPhoto(student: StudentRow | null) {
   );
 }
 
-function isActiveStudent(student: StudentRow | null) {
-  if (!student) return false;
-
-  const status = cleanLower(student.status);
-
-  if (student.left_school === true) return false;
-  if (student.is_active === false) return false;
-  if (student.active === false) return false;
-  if (status === "inactive" || status === "left" || status === "withdrawn") return false;
-
-  return true;
-}
-
 function getAcademicYear(settings: SettingsRow | null) {
   return cleanText(settings?.current_academic_year || settings?.academic_year);
 }
@@ -536,17 +523,6 @@ function simpleDate(value: unknown) {
   });
 }
 
-async function safeSelect(table: string) {
-  const res = await supabase.from(table).select("*");
-
-  if (res.error) {
-    console.warn(`Parent portal could not load ${table}:`, res.error.message);
-    return [] as AnyRow[];
-  }
-
-  return (res.data || []) as AnyRow[];
-}
-
 function ParentPortalContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -570,69 +546,38 @@ function ParentPortalContent() {
       setState((prev) => ({ ...prev, loading: true, error: "" }));
 
       try {
-        const [
-          studentsRes,
-          settingsRows,
-          classes,
-          feeLiveRows,
-          feePayments,
-          feeStructures,
-        ] = await Promise.all([
-          supabase.from("students").select("*"),
-          safeSelect("school_settings"),
-          safeSelect("classes"),
-          safeSelect("jsms_report_fee_live_view"),
-          safeSelect("fee_payments"),
-          safeSelect("fee_structure"),
-        ]);
-
-        if (!active) return;
-        if (studentsRes.error) throw studentsRes.error;
-
-        const allStudents = ((studentsRes.data || []) as StudentRow[]).filter(isActiveStudent);
-
-        const student =
-          allStudents.find((row) => cleanLower(getStudentReportId(row)) === cleanLower(studentQuery)) ||
-          allStudents.find((row) => cleanLower(row.student_id) === cleanLower(studentQuery)) ||
-          null;
-
-        if (!student) {
-          setState({
-            ...initialState,
-            loading: false,
-            error: "Student record not found or inactive.",
-          });
-          return;
-        }
-
-        if (classQuery && cleanLower(getClassName(student)) !== cleanLower(classQuery)) {
-          setState({
-            ...initialState,
-            loading: false,
-            error: "Student ID and class do not match.",
-          });
-          return;
-        }
-
-        // Report-card tables have no login-based access control (this whole
-        // portal works by knowing the student's ID), so this is a separate,
-        // narrowly-scoped fetch once the student is actually resolved above.
-        const reportParams = new URLSearchParams({ student_ids: getStudentKeys(student).join(",") });
+        // Report-card tables (and, as of this fix, the fee/fee-structure
+        // lookup too) have no login-based access control — this whole
+        // portal works by knowing the student's ID + class. The server
+        // resolves and scopes EVERYTHING to that one student; the browser
+        // never bulk-fetches the students/fee_payments/fee_structure/classes
+        // tables directly (that used to leak every other family's fee and
+        // student data into this public page's network response).
+        const reportParams = new URLSearchParams({ student: studentQuery, class: classQuery });
         const reportRes = await fetch(`/api/report-card/parent-data?${reportParams.toString()}`);
         const reportData = await reportRes.json();
 
         if (!active) return;
 
-        const scores: AnyRow[] = reportRes.ok ? reportData.scores || [] : [];
-        const attendanceRows: AnyRow[] = reportRes.ok ? reportData.attendance || [] : [];
-        const remarksRows: AnyRow[] = reportRes.ok ? reportData.cards || [] : [];
+        if (!reportRes.ok || !reportData.student) {
+          setState({
+            ...initialState,
+            loading: false,
+            error: reportData.error || "Could not load parent portal.",
+          });
+          return;
+        }
 
-        const settings =
-          [...settingsRows].sort((a, b) => {
-            const aTime = new Date(a.updated_at || a.created_at || "").getTime();
-            const bTime = new Date(b.updated_at || b.created_at || "").getTime();
-            return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
-          })[0] || null;
+        const student: StudentRow = reportData.student;
+        const scores: AnyRow[] = reportData.scores || [];
+        const attendanceRows: AnyRow[] = reportData.attendance || [];
+        const remarksRows: AnyRow[] = reportData.cards || [];
+        const feeLiveRows: FeeViewRow[] = reportData.feeLiveRows || [];
+        const feePayments: AnyRow[] = reportData.feePayments || [];
+        const feeStructures: AnyRow[] = reportData.feeStructures || [];
+        const classes: ClassRow[] = reportData.classes || [];
+        const classTotal: number = reportData.classTotal || 0;
+        const settings: SettingsRow | null = reportData.settings || null;
 
         const currentYear = getAcademicYear(settings);
         const currentTerm = getCurrentTerm(settings);
@@ -661,7 +606,6 @@ function ParentPortalContent() {
           null;
 
         const className = getClassName(student);
-        const classTotal = allStudents.filter((row) => getClassName(row) === className).length;
 
         setState({
           loading: false,

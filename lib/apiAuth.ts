@@ -9,6 +9,17 @@ type AuthResult =
   | { ok: true; teacher: TeacherRow; role: StaffRole }
   | { ok: false; status: 401 | 403; error: string };
 
+// Any `teachers.role` value other than owner/admin/headmaster (including
+// blank/null/garbage) resolves to "teacher" — the least-privileged role in
+// this app, and the one every report-card route currently allows. This
+// mirrors the identical fallback used client-side in every teacher/admin
+// page's own `getRole()` (upload-results, attendance, remarks, etc.), so a
+// `teachers` row with no role set still works as a plain teacher instead of
+// silently losing access. IMPORTANT: if a future route restricts access to
+// only owner/admin/headmaster (i.e. omits "teacher" from allowedRoles),
+// this fallback means an unset/garbage role is NOT automatically excluded
+// from it — such a route must reject based on the resolved role, not assume
+// unknown roles are filtered out here.
 function getRole(row: TeacherRow | null): StaffRole {
   const raw = String(row?.role || "").trim().toLowerCase();
   if (raw === "owner" || raw === "admin" || raw === "headmaster") return raw as StaffRole;

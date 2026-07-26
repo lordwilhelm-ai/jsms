@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { verifyTeacherScope } from "@/lib/teacherAssignments";
+import { checkReportCardLicense } from "@/lib/reportCardLicense";
 
 // Teachers write scores with the anon client today via RLS, but
 // jsms_report_scores has no INSERT/UPDATE policy permitting that — every
@@ -17,6 +19,24 @@ export async function POST(request: Request) {
 
     if (rows.length === 0) {
       return NextResponse.json({ error: "No rows to save." }, { status: 400 });
+    }
+
+    // A teacher can only ever pick their own assigned class/subject in the
+    // UI, but nothing stopped a direct API call from writing another
+    // teacher's class — enforce the same scope server-side. Owner/admin/
+    // headmaster are trusted broadly, same as everywhere else in this app.
+    if (auth.role === "teacher") {
+      const scopeCheck = await verifyTeacherScope(auth.teacher.id, rows, { requireSubject: true });
+      if (!scopeCheck.ok) {
+        return NextResponse.json({ error: scopeCheck.error }, { status: 403 });
+      }
+    }
+
+    // Mirrors the client-side "Payment Required" gate (hooks/useReportCardAccess)
+    // so a school that hasn't paid can't bypass it by calling this route directly.
+    const license = await checkReportCardLicense();
+    if (!license.ok) {
+      return NextResponse.json({ error: license.reason }, { status: 402 });
     }
 
     const { error } = await supabaseAdmin
