@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { computeReportCardLicenseAmount } from "@/lib/reportCardLicense";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
-import { initiateHubtelCheckout } from "@/lib/hubtelCheckout";
+import { appendWebhookSignature, initiateHubtelCheckout } from "@/lib/hubtelCheckout";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL!; // use this one everywhere
 
@@ -17,13 +17,15 @@ export async function POST(req: Request) {
     // the same way the webhook later verifies it (active student count x rate).
     const { totalAmount } = await computeReportCardLicenseAmount();
 
+    const clientReference = invoiceId.slice(0, 32); // Hubtel max 32 chars
+
     const checkoutUrl = await initiateHubtelCheckout({
       amount: totalAmount,
       description: "Jefsem Vision School - Report Card Access",
-      callbackUrl: `${origin}/api/hubtel-webhook`,
+      callbackUrl: appendWebhookSignature(`${origin}/api/hubtel-webhook`, clientReference),
       returnUrl: `${origin}/report-card/admin/checkout?paid=1`,
       cancellationUrl: `${origin}/report-card/admin/checkout?cancelled=1`,
-      clientReference: invoiceId.slice(0, 32), // Hubtel max 32 chars
+      clientReference,
     });
 
     return NextResponse.json({ checkoutUrl });

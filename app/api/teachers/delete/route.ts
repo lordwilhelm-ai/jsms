@@ -38,6 +38,15 @@ export async function POST(request: Request) {
       );
     }
 
+    // Same rank rule as create/update: a headmaster may manage teacher/
+    // headmaster accounts, but only owner/admin can touch an admin-tier one.
+    if (auth.role === "headmaster" && (teacher.role === "admin" || teacher.role === "owner")) {
+      return NextResponse.json(
+        { error: "You don't have permission to delete this account." },
+        { status: 403 }
+      );
+    }
+
     if (teacher.auth_user_id) {
       const { error: deleteAuthError } =
         await supabaseAdmin.auth.admin.deleteUser(teacher.auth_user_id);

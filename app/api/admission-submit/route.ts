@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { supabaseAdmin } from "@/lib/supabase-admin";
-import { initiateHubtelCheckout } from "@/lib/hubtelCheckout";
+import { appendWebhookSignature, initiateHubtelCheckout } from "@/lib/hubtelCheckout";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL!;
 
@@ -125,7 +125,7 @@ export async function POST(req: Request) {
     const checkoutUrl = await initiateHubtelCheckout({
       amount: formPrice,
       description: `Jefsem Vision School - Admission Form (${studentName})`,
-      callbackUrl: `${origin}/api/admission-hubtel-webhook`,
+      callbackUrl: appendWebhookSignature(`${origin}/api/admission-hubtel-webhook`, invoiceId),
       returnUrl: `${origin}/website/admission?paid=1&app=${applicationId}`,
       cancellationUrl: `${origin}/website/admission?cancelled=1&app=${applicationId}`,
       clientReference: invoiceId,

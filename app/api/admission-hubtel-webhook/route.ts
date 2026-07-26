@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { verifyHubtelWebhookSignature } from "@/lib/hubtelCheckout";
 
 async function triggerPushNotifications() {
   try {
@@ -22,13 +23,23 @@ export async function POST(req: Request) {
     const status = data?.Status || data?.status;
     const invoiceId = data?.ClientReference || data?.clientReference;
 
+    if (!invoiceId) {
+      throw new Error("Missing ClientReference in webhook");
+    }
+
+    // Hubtel doesn't sign its callbacks, so anyone who learns/guesses a
+    // ClientReference could otherwise POST a fake "Success" here for free.
+    // We embedded our own HMAC of the reference in the callback URL at
+    // checkout time (see lib/hubtelCheckout.ts) — require it to match.
+    const sig = new URL(req.url).searchParams.get("sig");
+    if (!verifyHubtelWebhookSignature(invoiceId, sig)) {
+      console.warn("Admission webhook rejected: bad/missing signature for", invoiceId);
+      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+    }
+
     if (status !== "Success") {
       console.log("Admission webhook ignored. Status:", status);
       return NextResponse.json({ received: true, ignored: true });
-    }
-
-    if (!invoiceId) {
-      throw new Error("Missing ClientReference in webhook");
     }
 
     const { data: application, error: findError } = await supabaseAdmin

@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 
 import {
   bulkPutTodayEntries,
@@ -15,7 +16,6 @@ import {
 
 import { toIsoDate } from "@/lib/kiosk/format";
 
-const TEACHERS_TABLE = "teachers";
 const ATTENDANCE_TABLE = "teacher_attendance";
 
 
@@ -39,32 +39,19 @@ export async function refreshTeacherCache(): Promise<void> {
 
   try {
 
-    const { data, error } = await supabase
-      .from(TEACHERS_TABLE)
-      .select(`
-        teacher_id,
-        full_name,
-        username,
-        pin_hash,
-        photo_url,
-        assigned_classes,
-        is_active,
-        is_visible
-      `)
-      .eq("is_active", true)
-      .eq("is_visible", true)
-      .order("full_name");
+    // Goes through /api/kiosk/teachers (service-role, requires a logged-in
+    // staff session) rather than querying the `teachers` table directly with
+    // the anon key — pin_hash must never be reachable by an unauthenticated
+    // request. See app/api/kiosk/teachers/route.ts for why.
+    const response = await authedFetch("/api/kiosk/teachers");
+    const body = await response.json();
 
-
-    if (error) {
-      console.error(
-        "Teacher cache error:",
-        error.message,
-        error.details,
-        error.hint
-      );
+    if (!response.ok) {
+      console.error("Teacher cache error:", body?.error);
       return;
     }
+
+    const data: any[] = body?.teachers || [];
 
 
     const teachers: CachedTeacher[] =

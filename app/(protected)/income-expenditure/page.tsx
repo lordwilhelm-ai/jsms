@@ -379,20 +379,16 @@ export default function IncomeExpenditurePage() {
           ) ||
           null;
 
-        const fallbackAdminUser = {
-          id: session.user.id,
-          auth_user_id: session.user.id,
-          email: session.user.email || "",
-          full_name: "Admin",
-          role: "admin",
-        };
-
-        const finalUser = matchedUser || fallbackAdminUser;
-
-        if (!isAdminRole(getRole(finalUser))) {
+        // Fail CLOSED: an authenticated account with no matching `teachers`
+        // row must never be treated as admin (this previously defaulted to
+        // a fabricated "admin" user, granting full finance-module access to
+        // any Supabase-authenticated account not present in `teachers`).
+        if (!matchedUser || !isAdminRole(getRole(matchedUser))) {
           router.replace("/dashboard");
           return;
         }
+
+        const finalUser = matchedUser;
 
         const settings = schoolSettingsRes.data || null;
         const financeSetting = financeSettingsRes.data || {

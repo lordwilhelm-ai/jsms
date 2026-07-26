@@ -591,7 +591,7 @@ export default function ReportCardAttendancePage() {
     }));
   }
 
-  function useFeedingValue(studentId: string) {
+  function applyFeedingValue(studentId: string) {
     setEntryData((prev) => {
       const old = prev[studentId] || {
         feedingPresent: 0,
@@ -896,7 +896,7 @@ export default function ReportCardAttendancePage() {
                       <div className="flex w-44 items-end">
                         <button
                           type="button"
-                          onClick={() => useFeedingValue(reportStudentId)}
+                          onClick={() => applyFeedingValue(reportStudentId)}
                           className="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-200"
                         >
                           Use Feeding
