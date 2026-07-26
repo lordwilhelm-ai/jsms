@@ -5,6 +5,12 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
+import { queueOfflineAction, cancelPendingAction } from "@/lib/offline/sync";
+import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
+import OfflineStatusPill from "@/app/components/OfflineStatusPill";
+
+const OFFLINE_MODULE = "income-expenditure";
 
 type AnyRow = Record<string, any>;
 type ActiveTab = "dashboard" | "income" | "expense" | "salary" | "transfer" | "reports" | "settings";
@@ -302,6 +308,16 @@ export default function IncomeExpenditurePage() {
 
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error" | "info">("info");
+
+  const { online, pendingCount, syncing } = useOfflineStatus(OFFLINE_MODULE, async () => {
+    if (!navigator.onLine) return;
+
+    try {
+      await reloadData();
+    } catch (error) {
+      console.warn("Income & Expenditure: post-sync reload failed:", error);
+    }
+  });
 
   useEffect(() => {
     let active = true;
@@ -789,28 +805,67 @@ export default function IncomeExpenditurePage() {
     setReportEnd(range.end);
   }
 
-  async function ensureFinanceItem(type: "income" | "expense", category: string, itemName: string) {
-    const cleanName = itemName.trim();
-    if (!cleanName) return;
+  // Records a transaction via /api/income-expenditure/record-transaction.
+  // If that can't reach the server (offline, or the fetch itself throws a
+  // network error), it's queued in the shared offline outbox instead — an
+  // optimistic copy is appended to `transactions` immediately (tagged
+  // pending_sync) so it shows up in the dashboard/report totals right away,
+  // and reloadData() (which would overwrite it with the real DB rows) is
+  // skipped until the queue actually syncs.
+  async function recordTransaction(payload: Record<string, any>, successMessage: string) {
+    if (navigator.onLine) {
+      try {
+        const response = await authedFetch("/api/income-expenditure/record-transaction", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
 
-    const exists = financeItems.some(
-      (item) =>
-        String(item.type || "") === type &&
-        String(item.category || "") === category &&
-        String(item.item_name || "").trim().toLowerCase() === cleanName.toLowerCase()
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body?.error || "Failed to save transaction.");
+
+        setMessage(successMessage);
+        setMessageType("success");
+        await reloadData();
+        return;
+      } catch (error: any) {
+        if (error instanceof TypeError) {
+          // fetch() itself threw — a genuine connectivity failure, fall
+          // through to the offline queue below instead of surfacing an error.
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    const offlineId = await queueOfflineAction(
+      OFFLINE_MODULE,
+      "record-transaction",
+      "/api/income-expenditure/record-transaction",
+      payload
     );
 
-    if (exists) return;
+    setTransactions((prev) => [
+      {
+        id: `pending-${offlineId}`,
+        offline_id: offlineId,
+        pending_sync: true,
+        type: payload.type === "salary" ? "expense" : payload.type,
+        category: payload.category || (payload.type === "salary" ? "Salary" : ""),
+        item_name: payload.itemName || (payload.type === "salary" ? `Salary - ${payload.teacherName}` : ""),
+        amount: payload.amount,
+        money_location: payload.location || null,
+        from_location: payload.fromLocation || null,
+        to_location: payload.toLocation || null,
+        transaction_date: payload.transactionDate,
+        description: payload.description || null,
+        recorded_by: adminName,
+      },
+      ...prev,
+    ]);
 
-    const { error } = await supabase.from("finance_items").insert({
-      type,
-      category,
-      item_name: cleanName,
-    });
-
-    if (error && !String(error.message || "").toLowerCase().includes("duplicate")) {
-      throw error;
-    }
+    setMessage(`${successMessage} (saved offline — will sync automatically).`);
+    setMessageType("success");
   }
 
   async function handleSaveIncome() {
@@ -836,29 +891,22 @@ export default function IncomeExpenditurePage() {
         return;
       }
 
-      await ensureFinanceItem("income", incomeCategory, finalIncomeItem);
-
-      const { error } = await supabase.from("finance_transactions").insert({
-        type: "income",
-        category: incomeCategory,
-        item_name: finalIncomeItem,
-        amount,
-        money_location: incomeLocation,
-        from_location: null,
-        to_location: null,
-        transaction_date: incomeDate,
-        description: incomeDescription.trim() || null,
-        recorded_by: adminName,
-      });
-
-      if (error) throw error;
+      await recordTransaction(
+        {
+          type: "income",
+          category: incomeCategory,
+          itemName: finalIncomeItem,
+          amount,
+          location: incomeLocation,
+          transactionDate: incomeDate,
+          description: incomeDescription.trim() || null,
+        },
+        "Income saved successfully."
+      );
 
       setIncomeAmount("");
       setIncomeDescription("");
       setOtherIncomeItemName("");
-      setMessage("Income saved successfully.");
-      setMessageType("success");
-      await reloadData();
     } catch (error: any) {
       console.error(error);
       setMessage(error?.message || "Failed to save income.");
@@ -891,29 +939,22 @@ export default function IncomeExpenditurePage() {
         return;
       }
 
-      await ensureFinanceItem("expense", expenseCategory, finalExpenseItem);
-
-      const { error } = await supabase.from("finance_transactions").insert({
-        type: "expense",
-        category: expenseCategory,
-        item_name: finalExpenseItem,
-        amount,
-        money_location: expenseLocation,
-        from_location: null,
-        to_location: null,
-        transaction_date: expenseDate,
-        description: expenseDescription.trim() || null,
-        recorded_by: adminName,
-      });
-
-      if (error) throw error;
+      await recordTransaction(
+        {
+          type: "expense",
+          category: expenseCategory,
+          itemName: finalExpenseItem,
+          amount,
+          location: expenseLocation,
+          transactionDate: expenseDate,
+          description: expenseDescription.trim() || null,
+        },
+        "Expenditure saved successfully."
+      );
 
       setExpenseAmount("");
       setExpenseDescription("");
       setOtherExpenseItemName("");
-      setMessage("Expenditure saved successfully.");
-      setMessageType("success");
-      await reloadData();
     } catch (error: any) {
       console.error(error);
       setMessage(error?.message || "Failed to save expenditure.");
@@ -949,35 +990,21 @@ export default function IncomeExpenditurePage() {
         return;
       }
 
-      await ensureFinanceItem("expense", "Salary", "Teacher Salary");
-
-      const monthLabel = new Date(`${salaryMonth}-01T00:00:00`).toLocaleDateString(undefined, {
-        month: "long",
-        year: "numeric",
-      });
-
-      const { error } = await supabase.from("finance_transactions").insert({
-        type: "expense",
-        category: "Salary",
-        item_name: `Salary - ${teacherName}`,
-        amount,
-        money_location: salaryLocation,
-        from_location: null,
-        to_location: null,
-        transaction_date: salaryDate,
-        description:
-          `Salary payment for ${teacherName} - ${monthLabel}` +
-          (salaryDescription.trim() ? ` | ${salaryDescription.trim()}` : ""),
-        recorded_by: adminName,
-      });
-
-      if (error) throw error;
+      await recordTransaction(
+        {
+          type: "salary",
+          teacherName,
+          amount,
+          location: salaryLocation,
+          transactionDate: salaryDate,
+          salaryMonth,
+          description: salaryDescription.trim() || null,
+        },
+        "Teacher salary payment saved successfully."
+      );
 
       setSalaryAmount("");
       setSalaryDescription("");
-      setMessage("Teacher salary payment saved successfully.");
-      setMessageType("success");
-      await reloadData();
     } catch (error: any) {
       console.error(error);
       setMessage(error?.message || "Failed to save teacher salary payment.");
@@ -1006,26 +1033,20 @@ export default function IncomeExpenditurePage() {
         return;
       }
 
-      const { error } = await supabase.from("finance_transactions").insert({
-        type: "transfer",
-        category: transferFrom === "cash" ? "Cash to Bank Deposit" : "Bank to Cash Withdrawal",
-        item_name: transferFrom === "cash" ? "Cash to Bank" : "Bank to Cash",
-        amount,
-        money_location: null,
-        from_location: transferFrom,
-        to_location: transferTo,
-        transaction_date: transferDate,
-        description: transferDescription.trim() || null,
-        recorded_by: adminName,
-      });
-
-      if (error) throw error;
+      await recordTransaction(
+        {
+          type: "transfer",
+          fromLocation: transferFrom,
+          toLocation: transferTo,
+          amount,
+          transactionDate: transferDate,
+          description: transferDescription.trim() || null,
+        },
+        "Transfer saved successfully. This is not counted as income."
+      );
 
       setTransferAmount("");
       setTransferDescription("");
-      setMessage("Transfer saved successfully. This is not counted as income.");
-      setMessageType("success");
-      await reloadData();
     } catch (error: any) {
       console.error(error);
       setMessage(error?.message || "Failed to save transfer.");
@@ -1077,14 +1098,47 @@ export default function IncomeExpenditurePage() {
     const confirmed = window.confirm("Delete this finance transaction?");
     if (!confirmed) return;
 
+    // Still sitting in the offline outbox, never reached the server — just
+    // drop the queued insert instead of queuing a delete for a row that was
+    // never created.
+    if (row.pending_sync && row.offline_id) {
+      await cancelPendingAction(row.offline_id);
+      setTransactions((prev) => prev.filter((item) => item.id !== row.id));
+      setMessage("Transaction removed.");
+      setMessageType("success");
+      return;
+    }
+
     try {
       setSaving(true);
-      const { error } = await supabase.from("finance_transactions").delete().eq("id", row.id);
-      if (error) throw error;
 
-      setMessage("Transaction deleted.");
+      if (navigator.onLine) {
+        try {
+          const response = await authedFetch("/api/income-expenditure/delete-transaction", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: row.id }),
+          });
+
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body?.error || "Failed to delete transaction.");
+
+          setMessage("Transaction deleted.");
+          setMessageType("success");
+          await reloadData();
+          return;
+        } catch (error: any) {
+          if (!(error instanceof TypeError)) throw error;
+          // fall through to offline queue on a genuine network failure
+        }
+      }
+
+      await queueOfflineAction(OFFLINE_MODULE, "delete-transaction", "/api/income-expenditure/delete-transaction", {
+        id: row.id,
+      });
+      setTransactions((prev) => prev.filter((item) => item.id !== row.id));
+      setMessage("Transaction deleted (saved offline — will sync automatically).");
       setMessageType("success");
-      await reloadData();
     } catch (error: any) {
       console.error(error);
       setMessage(error?.message || "Failed to delete transaction.");
@@ -1133,6 +1187,9 @@ export default function IncomeExpenditurePage() {
               <p style={headerNameStyle}>
                 {schoolName} • {academicYear || "-"} • {currentTerm || "-"}
               </p>
+              <div style={{ marginTop: "8px" }}>
+                <OfflineStatusPill online={online} pendingCount={pendingCount} syncing={syncing} />
+              </div>
             </div>
 
             <div style={headerRightStyle}>
