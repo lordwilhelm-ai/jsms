@@ -287,11 +287,49 @@ function unique(values: string[]) {
   return Array.from(new Set(values.map(cleanText).filter(Boolean)));
 }
 
-function hashAnswer(answer: string) {
-  return crypto
-    .createHash("sha256")
-    .update(cleanLower(answer))
-    .digest("hex");
+// The "questions" step used to send the client a token containing a SHA-256
+// hash of each correct answer alongside the (small, multiple-choice) list of
+// visible options. Hashing is a "checkable" primitive — anyone holding the
+// token could hash each visible option locally and instantly find the one
+// matching the embedded hash, recovering every correct answer without ever
+// calling the server. Encryption (AES-256-GCM, server-only key) replaces that:
+// the ciphertext can only be turned back into the answer by this server, so
+// having the token and the visible options gives an attacker nothing.
+const ANSWER_ENC_ALGO = "aes-256-gcm";
+
+function getAnswerEncryptionKey() {
+  // Derive a fixed 32-byte key from the service role key (a server-only
+  // secret already required for this route to function at all).
+  return crypto.createHash("sha256").update(serviceRoleKey).update("jsms-reset-answer-enc").digest();
+}
+
+function encryptAnswer(answer: string) {
+  const key = getAnswerEncryptionKey();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv(ANSWER_ENC_ALGO, key, iv);
+  const ciphertext = Buffer.concat([cipher.update(cleanLower(answer), "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+
+  return Buffer.concat([iv, tag, ciphertext]).toString("base64url");
+}
+
+function decryptAnswer(payload: string): string {
+  const key = getAnswerEncryptionKey();
+  const buf = Buffer.from(String(payload || ""), "base64url");
+
+  if (buf.length < 12 + 16) {
+    throw new Error("Invalid answer payload.");
+  }
+
+  const iv = buf.subarray(0, 12);
+  const tag = buf.subarray(12, 28);
+  const ciphertext = buf.subarray(28);
+
+  const decipher = crypto.createDecipheriv(ANSWER_ENC_ALGO, key, iv);
+  decipher.setAuthTag(tag);
+
+  const plain = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  return plain.toString("utf8");
 }
 
 function signPayload(payload: Record<string, any>) {
@@ -345,7 +383,7 @@ function publicQuestion(
     },
     private: {
       id,
-      answerHash: hashAnswer(source.answer),
+      answerEnc: encryptAnswer(source.answer),
     },
   };
 }
@@ -594,7 +632,16 @@ export async function POST(request: Request) {
 
       const submittedAnswers = body.answers || {};
       const correct = (payload.answers || []).every((item: any) => {
-        return hashAnswer(submittedAnswers[item.id] || "") === item.answerHash;
+        let expected: string;
+
+        try {
+          expected = decryptAnswer(item.answerEnc);
+        } catch {
+          // Tampered/invalid ciphertext — never treat as a match.
+          return false;
+        }
+
+        return cleanLower(submittedAnswers[item.id] || "") === expected;
       });
 
       if (!correct) {

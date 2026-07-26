@@ -13,17 +13,21 @@ export async function POST(request: Request) {
       );
     }
 
-    const { data: teachers, error } = await supabaseAdmin
-      .from("teachers")
-      .select("login_email")
-      .or(`username.eq.${identifier},phone.eq.${identifier}`)
-      .limit(1);
+    // Two separate .eq() lookups instead of a single .or() built from a raw
+    // string — identifier is untrusted input, and PostgREST's .or() syntax
+    // parses commas/parens as filter separators, so interpolating it directly
+    // let a crafted identifier inject extra filter conditions.
+    const [byUsername, byPhone] = await Promise.all([
+      supabaseAdmin.from("teachers").select("login_email").eq("username", identifier).limit(1),
+      supabaseAdmin.from("teachers").select("login_email").eq("phone", identifier).limit(1),
+    ]);
 
-    if (error) {
-      throw new Error(error.message);
-    }
+    if (byUsername.error) throw new Error(byUsername.error.message);
+    if (byPhone.error) throw new Error(byPhone.error.message);
 
-    if (!teachers || teachers.length === 0 || !teachers[0].login_email) {
+    const match = byUsername.data?.[0] || byPhone.data?.[0] || null;
+
+    if (!match || !match.login_email) {
       return NextResponse.json(
         { error: "Account not found." },
         { status: 404 }
@@ -31,7 +35,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({
-      loginEmail: teachers[0].login_email,
+      loginEmail: match.login_email,
     });
   } catch (error) {
     return NextResponse.json(

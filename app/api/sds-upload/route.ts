@@ -10,6 +10,26 @@ function getEnv(name: string) {
   return value;
 }
 
+const DEFAULT_FOLDER = "jsms/sds";
+
+// The Cloudinary folder must not be taken verbatim from the client — any
+// staff caller (including the "teacher" role, which this route accepts)
+// could otherwise point uploads at an arbitrary path in the account. Only
+// the folders actually used by SDS upload callers (app/(protected)/sds/...)
+// are allowed; anything else falls back to the default.
+const ALLOWED_FOLDERS = new Set([
+  DEFAULT_FOLDER,
+  "jsms/sds/student-photos",
+  "jsms/sds/nhis",
+  "jsms/sds/weighing-card",
+  "jsms/sds/other-documents",
+]);
+
+function resolveFolder(requested: unknown) {
+  const value = String(requested || "").trim();
+  return ALLOWED_FOLDERS.has(value) ? value : DEFAULT_FOLDER;
+}
+
 export async function POST(req: Request) {
   try {
     const auth = await requireStaffRole(req, ["owner", "admin", "headmaster", "teacher"]);
@@ -26,7 +46,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No file uploaded." }, { status: 400 });
     }
 
-    const folder = String(formData.get("folder") || "jsms/sds");
+    const folder = resolveFolder(formData.get("folder"));
     const timestamp = Math.floor(Date.now() / 1000).toString();
 
     const paramsToSign = `folder=${folder}&timestamp=${timestamp}${apiSecret}`;
