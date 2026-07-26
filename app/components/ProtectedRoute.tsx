@@ -64,41 +64,11 @@ function isAdminOnlyPath(pathname: string) {
   );
 }
 
-// The admin-role lookup below is a live Supabase query on every navigation
-// into an admin-only path, with no offline fallback — meaning a genuinely
-// offline admin would otherwise get bounced to the teacher dashboard (or
-// signed out) the moment connectivity drops, even on a page they were
-// already verified for minutes earlier. Cache the last-verified role per
-// user (a plain role string, not sensitive like the kiosk's PIN hashes) so
-// a network failure here falls back to "last known good" instead of
-// treating "couldn't check" the same as "not an admin".
-const ADMIN_ROLE_CACHE_KEY = "jsms_admin_role_cache_v1";
-
-function getCachedRole(userId: string): StaffRole | null {
-  if (typeof window === "undefined") return null;
-
-  try {
-    const raw = window.localStorage.getItem(ADMIN_ROLE_CACHE_KEY);
-    if (!raw) return null;
-    const map = JSON.parse(raw) as Record<string, StaffRole>;
-    return map[userId] || null;
-  } catch {
-    return null;
-  }
-}
-
-function setCachedRole(userId: string, role: StaffRole) {
-  if (typeof window === "undefined") return;
-
-  try {
-    const raw = window.localStorage.getItem(ADMIN_ROLE_CACHE_KEY);
-    const map = raw ? (JSON.parse(raw) as Record<string, StaffRole>) : {};
-    map[userId] = role;
-    window.localStorage.setItem(ADMIN_ROLE_CACHE_KEY, JSON.stringify(map));
-  } catch {
-    // best-effort only
-  }
-}
+// The admin-role lookup below is a live Supabase query, checked fresh on
+// every navigation into an admin-only path — deliberately NOT cached
+// anywhere (no localStorage, no fallback-to-last-known-value). If it can't
+// be verified right now, access is denied right now; nothing about who can
+// reach an admin page is ever decided from stale/local data.
 
 export default function ProtectedRoute({
   children,
@@ -137,45 +107,31 @@ export default function ProtectedRoute({
         }
 
         if (requiresAdmin) {
-          let role: StaffRole | null = null;
+          const { data: teachers, error: teachersError } = await supabase
+            .from("teachers")
+            .select("role,auth_user_id,email");
 
-          try {
-            const { data: teachers, error: teachersError } = await supabase
-              .from("teachers")
-              .select("role,auth_user_id,email");
+          if (!active) return;
 
-            if (teachersError) throw teachersError;
-
-            if (!active) return;
-
-            // Fail CLOSED on no match — an authenticated account with no
-            // corresponding teachers row is never treated as admin.
-            const teacherRow =
-              (teachers || []).find((row: any) => row.auth_user_id === session.user.id) ||
-              (teachers || []).find(
-                (row: any) =>
-                  String(row.email || "").trim().toLowerCase() ===
-                  String(session.user.email || "").trim().toLowerCase()
-              ) ||
-              null;
-
-            role = getRole(teacherRow);
-            setCachedRole(session.user.id, role);
-          } catch (roleCheckError) {
-            if (!active) return;
-
-            // Couldn't reach the server to verify (offline, most likely) —
-            // fall back to whatever role we last verified for this exact
-            // user, rather than treating "couldn't check" as "not admin".
-            // A user who's never been verified before still fails closed.
-            console.warn("Role check failed, using cached role if available:", roleCheckError);
-            role = getCachedRole(session.user.id);
-
-            if (!role) {
-              router.replace("/dashboard/teacher");
-              return;
-            }
+          // Couldn't verify (network error, etc.) — deny access outright,
+          // no fallback. Same as any other unverifiable case: fail closed.
+          if (teachersError) {
+            router.replace("/dashboard/teacher");
+            return;
           }
+
+          // Fail CLOSED on no match — an authenticated account with no
+          // corresponding teachers row is never treated as admin.
+          const teacherRow =
+            (teachers || []).find((row: any) => row.auth_user_id === session.user.id) ||
+            (teachers || []).find(
+              (row: any) =>
+                String(row.email || "").trim().toLowerCase() ===
+                String(session.user.email || "").trim().toLowerCase()
+            ) ||
+            null;
+
+          const role = getRole(teacherRow);
 
           if (role === "teacher") {
             router.replace("/dashboard/teacher");
