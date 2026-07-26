@@ -202,10 +202,14 @@ function formatMoney(value: number) {
   return Number(value || 0).toFixed(2).replace(/\.00$/, "");
 }
 
-async function rebuildStudentBalancesFromLedger() {
+async function rebuildStudentBalancesFromLedger(academicYear: string) {
+  // Scope the rebuild to the current academic year so a new year starts every
+  // student at zero instead of an old year's ledger history silently
+  // continuing to drive "today"'s balance forever.
   const { data, error } = await supabase
     .from("balance_ledger")
     .select("*")
+    .eq("academic_year", academicYear)
     .order("date", { ascending: true });
 
   if (error) throw error;
@@ -352,14 +356,23 @@ export default function AdminFillClassPage() {
       }
 
       // Step 2: build form state.
-      // daily_entries stores student_id as the row UUID (not the school code like JVS97163),
-      // so we match primarily by student_name as a reliable cross-table key.
+      // daily_entries stores student_id using whichever convention the
+      // submitting page used (teacher submissions favor the student's UUID;
+      // this page's own getStudentIdValue favors the school code), so an
+      // id-only match can miss a real row and we fall back to matching by
+      // student_name. That fallback is only safe when the name is unique
+      // within the class — otherwise two same-named students would have
+      // each other's amount/attendance/credit flag cross-attributed.
       const nextAmounts: Record<string, string> = {};
       const nextAttendance: Record<string, Attendance> = {};
       const nextAteWithoutPay: OverrideMap = {};
 
-      // Index entries by normalised student name (primary) and by whatever
-      // student_id value is stored (secondary, in case it ever aligns).
+      const nameCounts = new Map<string, number>();
+      activeStudents.forEach((student) => {
+        const sname = getStudentName(student).trim().toLowerCase();
+        if (sname) nameCounts.set(sname, (nameCounts.get(sname) || 0) + 1);
+      });
+
       const entryByName = new Map<string, DailyEntry>();
       const entryById = new Map<string, DailyEntry>();
       entries.forEach((row) => {
@@ -372,7 +385,8 @@ export default function AdminFillClassPage() {
       activeStudents.forEach((student) => {
         const sid = getStudentIdValue(student);
         const sname = getStudentName(student).trim().toLowerCase();
-        const entry = entryByName.get(sname) ?? entryById.get(sid);
+        const nameIsUnique = Boolean(sname) && (nameCounts.get(sname) || 0) === 1;
+        const entry = entryById.get(sid) || (nameIsUnique ? entryByName.get(sname) : undefined);
 
         if (entry) {
           const rawAmount = entry.amount_paid_today ?? entry.amountPaidToday ?? null;
@@ -398,7 +412,16 @@ export default function AdminFillClassPage() {
       setLoadingExisting(false);
       setLoadingTeacherCredits(false);
 
-      // Step 3: fetch balances for active students
+      // Step 3: fetch each student's balance as of the day BEFORE selectedDate
+      // (not the global "latest" student_balances row). student_balances is
+      // not date-aware — if selectedDate already has an entry (admin is
+      // re-saving/overriding an already-processed day), that row already
+      // reflects THIS date's deduction, so using it as "previousBalance" here
+      // would double-deduct the feeding fee every time the date is re-saved.
+      // Reading the ledger's most recent entry strictly before selectedDate
+      // (scoped to the current academic year) makes re-saving the same date
+      // idempotent: the recomputed newBalance always starts from the same
+      // pre-date balance no matter how many times it's saved.
       const ids = activeStudents.map((s) => getStudentIdValue(s)).filter(Boolean);
       if (!ids.length) {
         setBalances({});
@@ -406,16 +429,23 @@ export default function AdminFillClassPage() {
         return;
       }
 
-      const { data: balanceData, error: balanceError } = await supabase
-        .from("student_balances")
-        .select("*")
-        .in("student_id", ids);
+      const { data: priorLedgerRows, error: ledgerBalanceError } = await supabase
+        .from("balance_ledger")
+        .select("student_id, date, new_balance, academic_year")
+        .in("student_id", ids)
+        .eq("academic_year", academicYear)
+        .lt("date", selectedDate)
+        .order("date", { ascending: true });
 
-      if (balanceError) throw balanceError;
+      if (ledgerBalanceError) throw ledgerBalanceError;
 
       const nextBalances: BalanceMap = {};
-      (balanceData || []).forEach((row) => {
-        nextBalances[String(row.student_id || "")] = Number(row.balance || 0);
+      (priorLedgerRows || []).forEach((row) => {
+        const sid = String(row.student_id || "").trim();
+        if (!sid) return;
+        // Rows arrive oldest -> newest, so the last write per student is the
+        // balance as of the most recent date strictly before selectedDate.
+        nextBalances[sid] = Number(row.new_balance ?? 0);
       });
       setBalances(nextBalances);
     } catch (error) {
@@ -747,7 +777,7 @@ export default function AdminFillClassPage() {
       ]);
       if (logError) console.error(logError);
 
-      await rebuildStudentBalancesFromLedger();
+      await rebuildStudentBalancesFromLedger(academicYear);
       await loadClassData();
 
       try {

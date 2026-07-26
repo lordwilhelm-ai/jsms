@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { notifyFeedingSubmitted } from "@/lib/jsmsNotify";
 import { authedFetch } from "@/lib/apiClient";
+import { getGhanaDateString } from "@/lib/ghanaTime";
 
 type Attendance = "present" | "absent";
 type BalanceMap = Record<string, number>;
@@ -116,10 +117,6 @@ function isActiveStudent(row: StudentRow) {
   }
 
   return true;
-}
-
-function getGhanaToday() {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Accra" });
 }
 
 function isWeekend(dateString: string) {
@@ -341,6 +338,39 @@ function calculateFeeding(args: {
   };
 }
 
+const MISSING_UNIQUE_CONSTRAINT_CODE = "42P10";
+
+function isMissingUniqueConstraintError(error: { code?: string; message?: string } | null) {
+  if (!error) return false;
+  if (error.code === MISSING_UNIQUE_CONSTRAINT_CODE) return true;
+  return /no unique or exclusion constraint/i.test(error.message || "");
+}
+
+// Prefer an upsert on the natural (date, student_id[, entered_by_role]) key so
+// a race between two near-simultaneous submissions for the same class+date
+// merges into one row per student instead of creating duplicate history. If
+// the database doesn't have that unique constraint yet, PostgREST rejects the
+// upsert's ON CONFLICT target — fall back to a plain insert so submissions
+// keep working exactly as before until the constraint is added.
+async function upsertOrInsert(
+  table: "daily_entries" | "balance_ledger",
+  rows: Record<string, any>[],
+  onConflict: string
+) {
+  const { error } = await supabase.from(table).upsert(rows, { onConflict });
+
+  if (error && isMissingUniqueConstraintError(error)) {
+    console.warn(
+      `${table} has no unique constraint on (${onConflict}); falling back to a plain insert. ` +
+        "Add that constraint in the database to fully close the duplicate-submission race."
+    );
+    const { error: insertError } = await supabase.from(table).insert(rows);
+    return insertError;
+  }
+
+  return error;
+}
+
 export default function FeedingTeacherPage() {
   const router = useRouter();
 
@@ -376,7 +406,7 @@ export default function FeedingTeacherPage() {
 
   const [settingsRow, setSettingsRow] = useState<SettingsRow | null>(null);
 
-  const today = getGhanaToday();
+  const today = getGhanaDateString();
   const now = new Date();
   const dayName = now.toLocaleDateString(undefined, {
     weekday: "long",
@@ -767,6 +797,7 @@ export default function FeedingTeacherPage() {
             .from("daily_entries")
             .select("*")
             .in("student_id", ids)
+            .eq("academic_year", academicYear)
             .lt("date", today)
             .order("date", { ascending: true }),
         ]);
@@ -776,6 +807,12 @@ export default function FeedingTeacherPage() {
 
         const rawBalanceMap: BalanceMap = {};
         (balancesRes.data || []).forEach((row) => {
+          // student_balances holds one row per student with no history, so a
+          // stored balance from a previous academic year is stale debt/credit
+          // that should not carry into the new year — only trust it when it
+          // already belongs to the current academic year.
+          const rowYear = String(row.academic_year || "").trim();
+          if (rowYear && academicYear && rowYear !== academicYear) return;
           rawBalanceMap[String(row.student_id || "")] = Number(row.balance || 0);
         });
 
@@ -824,7 +861,7 @@ export default function FeedingTeacherPage() {
     }
 
     void loadBalances();
-  }, [students, entryBlocked, today, closures, feedingFee, minimumToEat]);
+  }, [students, entryBlocked, today, closures, feedingFee, minimumToEat, academicYear]);
 
   const todayEntriesMap = useMemo(() => {
     const map: Record<string, DailyEntryRow> = {};
@@ -985,7 +1022,11 @@ export default function FeedingTeacherPage() {
         entered_by_role: "teacher",
       }));
 
-      const { error: dailyError } = await supabase.from("daily_entries").insert(dailyPayload);
+      const dailyError = await upsertOrInsert(
+        "daily_entries",
+        dailyPayload,
+        "date,student_id,entered_by_role"
+      );
       if (dailyError) throw dailyError;
 
       const balancesPayload = previewRows.map((row) => ({
@@ -1021,7 +1062,7 @@ export default function FeedingTeacherPage() {
         minimum_to_eat: minimumToEat,
       }));
 
-      const { error: ledgerError } = await supabase.from("balance_ledger").insert(ledgerPayload);
+      const ledgerError = await upsertOrInsert("balance_ledger", ledgerPayload, "date,student_id");
       if (ledgerError) throw ledgerError;
 
       await notifyFeedingSubmitted({

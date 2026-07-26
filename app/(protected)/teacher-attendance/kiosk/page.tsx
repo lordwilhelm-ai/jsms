@@ -20,6 +20,7 @@ import {
 } from "@/lib/kiosk/sync";
 import { comparePin } from "@/lib/kiosk/pin";
 import { formatDateLong, formatTime12, toIsoDate } from "@/lib/kiosk/format";
+import { getGhanaCheckInStatus } from "@/lib/ghanaTime";
 // NOTE: adjust this import to match your actual Supabase client path/export.
 import { supabase } from "@/lib/supabase";
 
@@ -88,8 +89,11 @@ function generateId(): string {
 }
 
 function computeCheckInStatus(now: Date): "Present" | "Late" {
-  const totalMinutes = now.getHours() * 60 + now.getMinutes();
-  return totalMinutes <= 7 * 60 + 30 ? "Present" : "Late";
+  // Ghana-anchored (not the device's local clock) so a kiosk with a
+  // misconfigured system timezone can't mark everyone "Late"/"Present"
+  // incorrectly. The kiosk doesn't track duty-roster status, so this
+  // always uses the "not on duty" (<=) cutoff, matching prior behavior.
+  return getGhanaCheckInStatus(now, false);
 }
 
 // ---------------------------------------------------------------------

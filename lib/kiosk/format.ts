@@ -51,19 +51,16 @@ export function formatTime12(
 }
 
 /**
- * Convert Date into local attendance date key.
+ * Convert Date into the Ghana attendance date key.
  * Example:
  * Date → "2026-07-07"
  *
- * Uses local timezone instead of UTC to prevent
- * attendance records shifting to the wrong day.
+ * Anchored to Africa/Accra (rather than the device's local timezone) so a
+ * kiosk terminal with a misconfigured system timezone/clock can't shift
+ * attendance records to the wrong calendar day.
  */
 export function toIsoDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
+  return date.toLocaleDateString("en-CA", { timeZone: "Africa/Accra" });
 }
 
 /**

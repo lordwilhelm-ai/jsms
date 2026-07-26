@@ -5,6 +5,15 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
+import { haversineMeters } from "@/lib/geo";
+import {
+  getGhanaDateString,
+  getGhanaEndOfWeekSunday,
+  getGhanaNextWeekEnd,
+  getGhanaNextWeekStart,
+  getGhanaStartOfWeekMonday,
+} from "@/lib/ghanaTime";
 
 type AnyRow = Record<string, any>;
 
@@ -86,58 +95,6 @@ function isTeacherRole(role: string) {
   return role === "teacher";
 }
 
-function toIsoDate(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function startOfWeekMonday(date: Date) {
-  const copy = new Date(date);
-  const day = copy.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  copy.setDate(copy.getDate() + diff);
-  copy.setHours(0, 0, 0, 0);
-  return copy;
-}
-
-function endOfWeekSunday(date: Date) {
-  const start = startOfWeekMonday(date);
-  const end = new Date(start);
-  end.setDate(start.getDate() + 6);
-  end.setHours(23, 59, 59, 999);
-  return end;
-}
-
-function nextWeekStart(date: Date) {
-  const start = startOfWeekMonday(date);
-  start.setDate(start.getDate() + 7);
-  return start;
-}
-
-function nextWeekEnd(date: Date) {
-  const start = nextWeekStart(date);
-  const end = new Date(start);
-  end.setDate(start.getDate() + 6);
-  end.setHours(23, 59, 59, 999);
-  return end;
-}
-
-function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const toRad = (n: number) => (n * Math.PI) / 180;
-  const R = 6371000;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
-
 function getCurrentPosition(): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
@@ -151,17 +108,6 @@ function getCurrentPosition(): Promise<GeolocationPosition> {
       maximumAge: 0,
     });
   });
-}
-
-function getCheckInStatus(now: Date, isOnDuty: boolean) {
-  const totalMinutes = now.getHours() * 60 + now.getMinutes();
-  const deadline = 7 * 60 + 30;
-
-  if (isOnDuty) {
-    return totalMinutes < deadline ? "Present" : "Late";
-  }
-
-  return totalMinutes <= deadline ? "Present" : "Late";
 }
 
 function statusStyles(status?: string | null) {
@@ -299,12 +245,11 @@ export default function TeacherAttendancePage() {
       const finalUser = matchedUser || fallbackAdminUser;
       const role = getRole(finalUser);
 
-      const now = new Date();
-      const today = toIsoDate(now);
-      const weekStart = toIsoDate(startOfWeekMonday(now));
-      const weekEnd = toIsoDate(endOfWeekSunday(now));
-      const nextStart = toIsoDate(nextWeekStart(now));
-      const nextEnd = toIsoDate(nextWeekEnd(now));
+      const today = getGhanaDateString();
+      const weekStart = getGhanaStartOfWeekMonday(today);
+      const weekEnd = getGhanaEndOfWeekSunday(today);
+      const nextStart = getGhanaNextWeekStart(today);
+      const nextEnd = getGhanaNextWeekEnd(today);
 
       const realTeachers = teachers.filter((item) => isTeacherRole(getRole(item)));
 
@@ -502,8 +447,7 @@ export default function TeacherAttendancePage() {
   async function reloadAttendanceData() {
     if (!teacherId) return;
 
-    const now = new Date();
-    const today = toIsoDate(now);
+    const today = getGhanaDateString();
 
     const [todayRes, historyRes] = await Promise.all([
       supabase
@@ -564,6 +508,7 @@ export default function TeacherAttendancePage() {
         ok: true as const,
         lat,
         lng,
+        accuracy,
       };
     } catch (error: any) {
       return {
@@ -573,6 +518,13 @@ export default function TeacherAttendancePage() {
     }
   }
 
+  // Check-in/out now go through server API routes (see
+  // app/api/teacher-attendance/check-in and /check-out) instead of writing
+  // straight to Supabase from the browser. The server resolves the teacher
+  // identity from the authenticated session and re-validates the geofence,
+  // rather than trusting a client-supplied teacher_id/pass-fail judgment.
+  // readLocationAndValidate above still runs first purely so the UI can show
+  // an immediate "you're too far away" message without a network round trip.
   async function handleCheckIn() {
     if (!teacherId) return;
 
@@ -588,39 +540,25 @@ export default function TeacherAttendancePage() {
         return;
       }
 
-      const { lat, lng } = locationResult;
+      const { lat, lng, accuracy } = locationResult;
 
-      const now = new Date();
-      const attendanceDate = toIsoDate(now);
-      const checkInTime = now.toISOString();
-      const checkInStatus = getCheckInStatus(now, isOnDutyThisWeek);
+      const response = await authedFetch("/api/teacher-attendance/check-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ latitude: lat, longitude: lng, accuracy }),
+      });
 
-      const payload = {
-        teacher_id: teacherId,
-        teacher_name: teacherName,
-        attendance_date: attendanceDate,
-        check_in_time: checkInTime,
-        check_in_status: checkInStatus,
-        is_on_duty: isOnDutyThisWeek,
-        latitude: lat,
-        longitude: lng,
-        marked_by: teacherName,
-      };
+      const result = await response.json().catch(() => ({}));
 
-      const { error } = await supabase
-        .from("teacher_attendance")
-        .upsert(payload, { onConflict: "teacher_id,attendance_date" });
-
-      if (error) throw error;
+      if (!response.ok) {
+        throw new Error(result?.error || "Check-in failed.");
+      }
 
       await reloadAttendanceData();
 
-      setMessage(
-        checkInStatus === "Late"
-          ? "Check-in recorded. You are marked late."
-          : "Check-in recorded successfully."
-      );
-      setMessageType(checkInStatus === "Late" ? "info" : "success");
+      const resultMessage = String(result?.message || "Check-in recorded successfully.");
+      setMessage(resultMessage);
+      setMessageType(resultMessage.toLowerCase().includes("late") ? "info" : "success");
     } catch (error: any) {
       console.error(error);
       setMessage(error?.message || "Check-in failed.");
@@ -645,25 +583,23 @@ export default function TeacherAttendancePage() {
         return;
       }
 
-      const { lat, lng } = locationResult;
+      const { lat, lng, accuracy } = locationResult;
 
-      const now = new Date();
-      const checkOutTime = now.toISOString();
+      const response = await authedFetch("/api/teacher-attendance/check-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ latitude: lat, longitude: lng, accuracy }),
+      });
 
-      const { error } = await supabase
-        .from("teacher_attendance")
-        .update({
-          check_out_time: checkOutTime,
-          latitude: lat,
-          longitude: lng,
-        })
-        .eq("id", todayAttendance.id);
+      const result = await response.json().catch(() => ({}));
 
-      if (error) throw error;
+      if (!response.ok) {
+        throw new Error(result?.error || "Check-out failed.");
+      }
 
       await reloadAttendanceData();
 
-      setMessage("Check-out recorded successfully.");
+      setMessage(String(result?.message || "Check-out recorded successfully."));
       setMessageType("success");
     } catch (error: any) {
       console.error(error);
