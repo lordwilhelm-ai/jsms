@@ -680,24 +680,7 @@ function EditableSubjectCard({
     setMessage("");
 
     try {
-      const response = await authedFetch("/api/subjects/delete", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: item.id,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to delete subject.");
-      }
-
-      setMessage("Subject deleted successfully.");
-      await onUpdated();
+      await deleteSubject(false);
     } catch (error) {
       setMessage(
         error instanceof Error ? `Error: ${error.message}` : "Error deleting subject."
@@ -705,6 +688,44 @@ function EditableSubjectCard({
     } finally {
       setDeleting(false);
     }
+  }
+
+  async function deleteSubject(force: boolean) {
+    const response = await authedFetch("/api/subjects/delete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        id: item.id,
+        force,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      // Historical scores reference this subject by name — offer to proceed
+      // (they're kept either way) instead of a hard block.
+      if (response.status === 409 && data.requiresConfirmation && !force) {
+        const proceed = window.confirm(
+          `${data.error}\n\nDelete "${item.subject_name}" anyway?`
+        );
+
+        if (proceed) {
+          await deleteSubject(true);
+          return;
+        }
+
+        setMessage("Subject deletion cancelled.");
+        return;
+      }
+
+      throw new Error(data.error || "Failed to delete subject.");
+    }
+
+    setMessage("Subject deleted successfully.");
+    await onUpdated();
   }
 
   return (

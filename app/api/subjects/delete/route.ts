@@ -9,9 +9,64 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const id = String(body.id || "").trim();
+    const force = body.force === true;
 
     if (!id) {
       return NextResponse.json({ error: "Subject ID is required." }, { status: 400 });
+    }
+
+    const { data: subjectRow, error: subjectError } = await supabaseAdmin
+      .from("subjects")
+      .select("id, subject_name, name")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (subjectError) throw new Error(subjectError.message);
+    if (!subjectRow) {
+      return NextResponse.json({ error: "Subject not found." }, { status: 404 });
+    }
+
+    const subjectName = String(subjectRow.subject_name || subjectRow.name || "").trim();
+
+    // jsms_report_scores stores subject_name as text (no subject_id FK), so
+    // deleting the subject row can't orphan a foreign key there — but it can
+    // still leave real, already-recorded grades pointing at a subject that no
+    // longer exists in the picker. Treat that like real academic data: block
+    // by default and only proceed once the caller explicitly confirms.
+    let scoreCount = 0;
+    if (subjectName) {
+      const { count, error: scoreError } = await supabaseAdmin
+        .from("jsms_report_scores")
+        .select("id", { count: "exact", head: true })
+        .eq("subject_name", subjectName);
+
+      if (scoreError) throw new Error(scoreError.message);
+      scoreCount = count || 0;
+    }
+
+    if (scoreCount > 0 && !force) {
+      return NextResponse.json(
+        {
+          error: `This subject has ${scoreCount} recorded score${
+            scoreCount === 1 ? "" : "s"
+          } on report cards. Those historical scores will be kept, but the subject will disappear from future selection. Confirm to proceed.`,
+          requiresConfirmation: true,
+          scoreCount,
+        },
+        { status: 409 }
+      );
+    }
+
+    // Link/assignment rows are cascaded — teacher_subjects and class_subjects
+    // are just associations, not academic records, so it's safe to clean
+    // them up automatically.
+    const { error: deleteTeacherSubjectsError } = await supabaseAdmin
+      .from("teacher_subjects")
+      .delete()
+      .eq("subject_id", id);
+
+    if (deleteTeacherSubjectsError) {
+      throw new Error(deleteTeacherSubjectsError.message);
     }
 
     const { error: deleteLinksError } = await supabaseAdmin

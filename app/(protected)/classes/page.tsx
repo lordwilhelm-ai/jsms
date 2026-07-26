@@ -317,24 +317,7 @@ function EditableClassCard({
     setMessage("");
 
     try {
-      const response = await authedFetch("/api/classes/delete", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: item.id,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to delete class.");
-      }
-
-      setMessage("Class deleted successfully.");
-      await onUpdated();
+      await deleteClass(false);
     } catch (error) {
       setMessage(
         error instanceof Error ? `Error: ${error.message}` : "Error deleting class."
@@ -342,6 +325,44 @@ function EditableClassCard({
     } finally {
       setDeleting(false);
     }
+  }
+
+  async function deleteClass(force: boolean) {
+    const response = await authedFetch("/api/classes/delete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        id: item.id,
+        force,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      // Link/assignment rows exist but no students — offer to proceed after
+      // showing exactly what will be removed, instead of a generic block.
+      if (response.status === 409 && data.requiresConfirmation && !force) {
+        const proceed = window.confirm(
+          `${data.error}\n\nDelete "${item.class_name}" and remove these links anyway?`
+        );
+
+        if (proceed) {
+          await deleteClass(true);
+          return;
+        }
+
+        setMessage("Class deletion cancelled.");
+        return;
+      }
+
+      throw new Error(data.error || "Failed to delete class.");
+    }
+
+    setMessage("Class deleted successfully.");
+    await onUpdated();
   }
 
   return (

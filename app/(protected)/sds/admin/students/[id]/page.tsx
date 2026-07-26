@@ -372,14 +372,20 @@ export default function SDSAdminStudentProfilePage() {
         status: form.status || "active",
       };
 
-      const { error } = await supabase
-        .from("students")
-        .update(payload)
-        .eq("id", form.id);
+      const response = await authedFetch("/api/sds/save-student", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: form.id,
+          payload,
+        }),
+      });
 
-      if (error) {
-        console.error("Supabase update error:", error);
-        setMessage(`Error: ${error.message}`);
+      const result = await response.json();
+
+      if (!response.ok) {
+        console.error("Save student error:", result.error);
+        setMessage(`Error: ${result.error || "Failed to save student profile."}`);
         return;
       }
 

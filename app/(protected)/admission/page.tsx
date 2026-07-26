@@ -3,6 +3,7 @@
 import EnableNotificationsButton from "@/components/EnableNotificationsButton";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 
 type AdmissionApp = {
   id: string;
@@ -216,16 +217,23 @@ export default function AdmissionAdminPage() {
   async function updateSettings() {
     setBusy(true);
 
-    const { error } = await supabase.rpc("update_admission_form_price", {
-      p_form_price: Number(settingsPrice || 0),
-    });
+    try {
+      const response = await authedFetch("/api/admission-update-price", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ form_price: Number(settingsPrice || 0) }),
+      });
 
-    setBusy(false);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to save admission form price.");
 
-    if (error) return showError(error.message);
-
-    showSuccess("Admission form price saved.");
-    loadAll();
+      showSuccess("Admission form price saved.");
+      await loadAll();
+    } catch (error: any) {
+      showError(error?.message || "Failed to save admission form price.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleSellForm(e: React.FormEvent) {
@@ -236,34 +244,39 @@ export default function AdmissionAdminPage() {
 
     setBusy(true);
 
-    const { data, error } = await supabase.rpc("create_admission_form_purchase", {
-      p_student_name: sellForm.student_name.trim(),
-      p_class_applying: sellForm.class_applying,
-      p_amount: sellForm.amount ? Number(sellForm.amount) : null,
-      p_payment_method: sellForm.payment_method,
-      p_payer_name: sellForm.payer_name || null,
-      p_payer_phone: sellForm.payer_phone || null,
-      p_created_by_user_id: null,
-      p_created_by_name: "Admin",
-    });
+    try {
+      const response = await authedFetch("/api/admission-sell-form", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          student_name: sellForm.student_name.trim(),
+          class_applying: sellForm.class_applying,
+          amount: sellForm.amount ? Number(sellForm.amount) : null,
+          payment_method: sellForm.payment_method,
+          payer_name: sellForm.payer_name || null,
+          payer_phone: sellForm.payer_phone || null,
+        }),
+      });
 
-    setBusy(false);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to save admission form purchase.");
 
-    if (error) return showError(error.message);
+      setSellForm({
+        student_name: "",
+        class_applying: "",
+        amount: "",
+        payment_method: "cash",
+        payer_name: "",
+        payer_phone: "",
+      });
 
-    const row = Array.isArray(data) ? data[0] : data;
-
-    setSellForm({
-      student_name: "",
-      class_applying: "",
-      amount: "",
-      payment_method: "cash",
-      payer_name: "",
-      payer_phone: "",
-    });
-
-    showSuccess(`Form saved. Receipt: ${row?.receipt_number || "Generated"}`);
-    await loadAll();
+      showSuccess(`Form saved. Receipt: ${data.receiptNumber || "Generated"}`);
+      await loadAll();
+    } catch (error: any) {
+      showError(error?.message || "Failed to save admission form purchase.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function openDetails(app: AdmissionApp) {
@@ -302,51 +315,60 @@ export default function AdmissionAdminPage() {
 
     setBusy(true);
 
-    const { error } = await supabase.rpc("update_admission_application_details", {
-      p_application_id: selected.id,
-      p_student_name: details.student_name || null,
-      p_class_applying: details.class_applying || null,
-      p_gender: details.gender || null,
-      p_date_of_birth: details.date_of_birth || null,
-      p_place_of_birth: details.place_of_birth || null,
-      p_hometown: details.hometown || null,
-      p_nationality: details.nationality || null,
-      p_religion: details.religion || null,
-      p_address: details.address || null,
-      p_previous_school: details.previous_school || null,
-      p_reason_for_leaving: details.reason_for_leaving || null,
-      p_nhis_number: details.nhis_number || null,
-      p_medical_condition: details.medical_condition || null,
-      p_allergies: details.allergies || null,
-      p_blood_group: details.blood_group || null,
-      p_father_name: details.father_name || null,
-      p_father_address: details.father_address || null,
-      p_father_phone: details.father_phone || null,
-      p_father_occupation: details.father_occupation || null,
-      p_mother_name: details.mother_name || null,
-      p_mother_address: details.mother_address || null,
-      p_mother_phone: details.mother_phone || null,
-      p_mother_occupation: details.mother_occupation || null,
-      p_stays_with: details.stays_with || null,
-      p_guardian_name: details.guardian_name || null,
-      p_guardian_address: details.guardian_address || null,
-      p_guardian_phone: details.guardian_phone || null,
-      p_guardian_relationship: details.guardian_relationship || null,
-      p_photo_url: details.photo_url || null,
-      p_nhis_card_url: details.nhis_card_url || null,
-      p_weighing_card_url: details.weighing_card_url || null,
-      p_birth_certificate_url: details.birth_certificate_url || null,
-      p_document_1_url: details.document_1_url || null,
-      p_document_2_url: details.document_2_url || null,
-      p_document_3_url: details.document_3_url || null,
-    });
+    try {
+      const response = await authedFetch("/api/admission-save-details", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          application_id: selected.id,
+          student_name: details.student_name || null,
+          class_applying: details.class_applying || null,
+          gender: details.gender || null,
+          date_of_birth: details.date_of_birth || null,
+          place_of_birth: details.place_of_birth || null,
+          hometown: details.hometown || null,
+          nationality: details.nationality || null,
+          religion: details.religion || null,
+          address: details.address || null,
+          previous_school: details.previous_school || null,
+          reason_for_leaving: details.reason_for_leaving || null,
+          nhis_number: details.nhis_number || null,
+          medical_condition: details.medical_condition || null,
+          allergies: details.allergies || null,
+          blood_group: details.blood_group || null,
+          father_name: details.father_name || null,
+          father_address: details.father_address || null,
+          father_phone: details.father_phone || null,
+          father_occupation: details.father_occupation || null,
+          mother_name: details.mother_name || null,
+          mother_address: details.mother_address || null,
+          mother_phone: details.mother_phone || null,
+          mother_occupation: details.mother_occupation || null,
+          stays_with: details.stays_with || null,
+          guardian_name: details.guardian_name || null,
+          guardian_address: details.guardian_address || null,
+          guardian_phone: details.guardian_phone || null,
+          guardian_relationship: details.guardian_relationship || null,
+          photo_url: details.photo_url || null,
+          nhis_card_url: details.nhis_card_url || null,
+          weighing_card_url: details.weighing_card_url || null,
+          birth_certificate_url: details.birth_certificate_url || null,
+          document_1_url: details.document_1_url || null,
+          document_2_url: details.document_2_url || null,
+          document_3_url: details.document_3_url || null,
+        }),
+      });
 
-    setBusy(false);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to save admission details.");
 
-    if (error) return showError(error.message);
-
-    showSuccess("Admission details saved.");
-    await loadAll();
+      showSuccess("Admission details saved.");
+      await loadAll();
+    } catch (error: any) {
+      showError(error?.message || "Failed to save admission details.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function admitStudent() {
@@ -360,20 +382,25 @@ export default function AdmissionAdminPage() {
 
     setBusy(true);
 
-    const { error } = await supabase.rpc("admit_admission_student", {
-      p_application_id: selected.id,
-      p_admitted_by_user_id: null,
-      p_admitted_by_name: "Admin",
-    });
+    try {
+      const response = await authedFetch("/api/admission-admit-student", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ application_id: selected.id }),
+      });
 
-    setBusy(false);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to admit student.");
 
-    if (error) return showError(error.message);
-
-    showSuccess("Student admitted successfully.");
-    setSelected(null);
-    setDetails(emptyDetails);
-    await loadAll();
+      showSuccess("Student admitted successfully.");
+      setSelected(null);
+      setDetails(emptyDetails);
+      await loadAll();
+    } catch (error: any) {
+      showError(error?.message || "Failed to admit student.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function uploadFile(field: keyof AdmissionApp, file: File | null) {

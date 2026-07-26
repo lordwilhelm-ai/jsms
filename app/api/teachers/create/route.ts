@@ -67,6 +67,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid role." }, { status: 400 });
     }
 
+    // A headmaster is trusted to run day-to-day staff management, but only an
+    // owner/admin caller can grant admin-tier access — otherwise a headmaster
+    // could mint themselves (or anyone) an admin account.
+    if (role === "admin" && auth.role !== "owner" && auth.role !== "admin") {
+      return NextResponse.json(
+        { error: "Only an owner or admin can create an admin account." },
+        { status: 403 }
+      );
+    }
+
     if (!password || password.length < 6) {
       return NextResponse.json(
         { error: "Password must be at least 6 characters." },

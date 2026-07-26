@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 
 type TeacherRow = Record<string, any>;
 type StudentRow = Record<string, any>;
@@ -335,16 +336,24 @@ export default function SDSAdminPage() {
         status: form.status || "active",
       };
 
+      const response = await authedFetch("/api/sds/save-student", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editingStudentId || null,
+          payload,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to save student.");
+      }
+
+      const data = result.student;
+
       if (editingStudentId) {
-        const { data, error } = await supabase
-          .from("students")
-          .update(payload)
-          .eq("id", editingStudentId)
-          .select()
-          .single();
-
-        if (error) throw error;
-
         setStudents((prev) =>
           prev
             .map((row) => (row.id === editingStudentId ? data : row))
@@ -354,14 +363,6 @@ export default function SDSAdminPage() {
         setShowStudentModal(false);
         alert("Student details updated successfully.");
       } else {
-        const { data, error } = await supabase
-          .from("students")
-          .insert([payload])
-          .select()
-          .single();
-
-        if (error) throw error;
-
         setStudents((prev) =>
           [...prev, data].sort((a, b) => getStudentName(a).localeCompare(getStudentName(b)))
         );

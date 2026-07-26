@@ -39,13 +39,36 @@ export async function POST(request: Request) {
 
     const { data: currentTeacher, error: currentTeacherError } = await supabaseAdmin
       .from("teachers")
-      .select("id")
+      .select("id, role")
       .eq("id", id)
       .limit(1)
       .single();
 
     if (currentTeacherError || !currentTeacher) {
       return NextResponse.json({ error: "Teacher not found." }, { status: 404 });
+    }
+
+    // A headmaster is trusted to run day-to-day staff management, but only an
+    // owner/admin caller can grant or touch admin-tier access — otherwise a
+    // headmaster could promote themselves/someone else to admin, or edit an
+    // existing admin account out from under an owner.
+    const isCallerAdminTier = auth.role === "owner" || auth.role === "admin";
+    const currentTeacherRole = String(currentTeacher.role || "").trim().toLowerCase();
+
+    if (!isCallerAdminTier) {
+      if (role === "admin" || role === "owner") {
+        return NextResponse.json(
+          { error: "Only an owner or admin can grant an admin account." },
+          { status: 403 }
+        );
+      }
+
+      if (currentTeacherRole === "admin" || currentTeacherRole === "owner") {
+        return NextResponse.json(
+          { error: "Only an owner or admin can edit an admin account." },
+          { status: 403 }
+        );
+      }
     }
 
     const { data: existingUsername, error: usernameError } = await supabaseAdmin
