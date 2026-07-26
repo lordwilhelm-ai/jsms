@@ -9,6 +9,7 @@ import { authedFetch } from "@/lib/apiClient";
 import { queueOfflineAction, cancelPendingAction } from "@/lib/offline/sync";
 import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
 import OfflineStatusPill from "@/app/components/OfflineStatusPill";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
 
 const OFFLINE_MODULE = "income-expenditure";
 
@@ -253,6 +254,7 @@ export default function IncomeExpenditurePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>("dashboard");
+  const [showingCachedData, setShowingCachedData] = useState(false);
 
   const [adminRow, setAdminRow] = useState<AnyRow | null>(null);
   const [settingsRow, setSettingsRow] = useState<AnyRow | null>(null);
@@ -349,41 +351,36 @@ export default function IncomeExpenditurePage() {
           booksRes,
           uniformsRes,
         ] = await Promise.all([
-          supabase.from("teachers").select("*"),
-          supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-          supabase.from("finance_settings").select("*").limit(1).maybeSingle(),
-          supabase
-            .from("finance_transactions")
-            .select("*")
-            .order("transaction_date", { ascending: false }),
-          supabase
-            .from("finance_items")
-            .select("*")
-            .order("category", { ascending: true })
-            .order("item_name", { ascending: true }),
-          supabase.from("fee_payments").select("*").order("payment_date", { ascending: false }),
-          supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }),
-          supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }),
-          supabase.from("admission_payments").select("*").order("created_at", { ascending: false }),
-          supabase.from("jsms_admission_payments").select("*").order("created_at", { ascending: false }),
-          supabase.from("book_profit_summary").select("*").limit(1).maybeSingle(),
-          supabase.from("uniform_profit_summary").select("*").limit(1).maybeSingle(),
+          fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as AnyRow[]),
+          fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null as AnyRow | null),
+          fetchWithCache(OFFLINE_MODULE, "finance_settings", () => supabase.from("finance_settings").select("*").limit(1).maybeSingle(), null as AnyRow | null),
+          fetchWithCache(
+            OFFLINE_MODULE,
+            "finance_transactions",
+            () => supabase.from("finance_transactions").select("*").order("transaction_date", { ascending: false }),
+            [] as AnyRow[]
+          ),
+          fetchWithCache(
+            OFFLINE_MODULE,
+            "finance_items",
+            () =>
+              supabase
+                .from("finance_items")
+                .select("*")
+                .order("category", { ascending: true })
+                .order("item_name", { ascending: true }),
+            [] as AnyRow[]
+          ),
+          fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*").order("payment_date", { ascending: false }), [] as AnyRow[]),
+          fetchWithCache(OFFLINE_MODULE, "jsms_book_payments", () => supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+          fetchWithCache(OFFLINE_MODULE, "jsms_uniform_payments", () => supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+          fetchWithCache(OFFLINE_MODULE, "admission_payments", () => supabase.from("admission_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+          fetchWithCache(OFFLINE_MODULE, "jsms_admission_payments", () => supabase.from("jsms_admission_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+          fetchWithCache(OFFLINE_MODULE, "book_profit_summary", () => supabase.from("book_profit_summary").select("*").limit(1).maybeSingle(), null as AnyRow | null),
+          fetchWithCache(OFFLINE_MODULE, "uniform_profit_summary", () => supabase.from("uniform_profit_summary").select("*").limit(1).maybeSingle(), null as AnyRow | null),
         ]);
 
         if (!active) return;
-
-        if (teachersRes.error) throw teachersRes.error;
-        if (schoolSettingsRes.error) throw schoolSettingsRes.error;
-        if (financeSettingsRes.error) throw financeSettingsRes.error;
-        if (transactionsRes.error) throw transactionsRes.error;
-        if (itemsRes.error) throw itemsRes.error;
-        if (feesRes.error) throw feesRes.error;
-        if (bookPaymentsRes.error) throw bookPaymentsRes.error;
-        if (uniformPaymentsRes.error) throw uniformPaymentsRes.error;
-        if (admissionPaymentsRes.error) throw admissionPaymentsRes.error;
-        if (jsmsAdmissionPaymentsRes.error) throw jsmsAdmissionPaymentsRes.error;
-        if (booksRes.error) throw booksRes.error;
-        if (uniformsRes.error) throw uniformsRes.error;
 
         const allUsers = teachersRes.data || [];
         const matchedUser =
@@ -430,6 +427,22 @@ export default function IncomeExpenditurePage() {
         setUniformSummary(uniformsRes.data || null);
         setReportStart(range.start);
         setReportEnd(range.end);
+        setShowingCachedData(
+          [
+            teachersRes,
+            schoolSettingsRes,
+            financeSettingsRes,
+            transactionsRes,
+            itemsRes,
+            feesRes,
+            bookPaymentsRes,
+            uniformPaymentsRes,
+            admissionPaymentsRes,
+            jsmsAdmissionPaymentsRes,
+            booksRes,
+            uniformsRes,
+          ].some((result) => result.fromCache)
+        );
       } catch (error: any) {
         console.error(error);
         setMessage(error?.message || "Failed to load finance module.");
@@ -459,35 +472,32 @@ export default function IncomeExpenditurePage() {
       booksRes,
       uniformsRes,
     ] = await Promise.all([
-        supabase.from("finance_settings").select("*").limit(1).maybeSingle(),
-        supabase
-          .from("finance_transactions")
-          .select("*")
-          .order("transaction_date", { ascending: false }),
-        supabase
-          .from("finance_items")
-          .select("*")
-          .order("category", { ascending: true })
-          .order("item_name", { ascending: true }),
-        supabase.from("fee_payments").select("*").order("payment_date", { ascending: false }),
-        supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }),
-        supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }),
-        supabase.from("admission_payments").select("*").order("created_at", { ascending: false }),
-        supabase.from("jsms_admission_payments").select("*").order("created_at", { ascending: false }),
-        supabase.from("book_profit_summary").select("*").limit(1).maybeSingle(),
-        supabase.from("uniform_profit_summary").select("*").limit(1).maybeSingle(),
-      ]);
-
-    if (financeSettingsRes.error) throw financeSettingsRes.error;
-    if (transactionsRes.error) throw transactionsRes.error;
-    if (itemsRes.error) throw itemsRes.error;
-    if (feesRes.error) throw feesRes.error;
-    if (bookPaymentsRes.error) throw bookPaymentsRes.error;
-    if (uniformPaymentsRes.error) throw uniformPaymentsRes.error;
-    if (admissionPaymentsRes.error) throw admissionPaymentsRes.error;
-    if (jsmsAdmissionPaymentsRes.error) throw jsmsAdmissionPaymentsRes.error;
-    if (booksRes.error) throw booksRes.error;
-    if (uniformsRes.error) throw uniformsRes.error;
+      fetchWithCache(OFFLINE_MODULE, "finance_settings", () => supabase.from("finance_settings").select("*").limit(1).maybeSingle(), null as AnyRow | null),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "finance_transactions",
+        () => supabase.from("finance_transactions").select("*").order("transaction_date", { ascending: false }),
+        [] as AnyRow[]
+      ),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "finance_items",
+        () =>
+          supabase
+            .from("finance_items")
+            .select("*")
+            .order("category", { ascending: true })
+            .order("item_name", { ascending: true }),
+        [] as AnyRow[]
+      ),
+      fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*").order("payment_date", { ascending: false }), [] as AnyRow[]),
+      fetchWithCache(OFFLINE_MODULE, "jsms_book_payments", () => supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+      fetchWithCache(OFFLINE_MODULE, "jsms_uniform_payments", () => supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+      fetchWithCache(OFFLINE_MODULE, "admission_payments", () => supabase.from("admission_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+      fetchWithCache(OFFLINE_MODULE, "jsms_admission_payments", () => supabase.from("jsms_admission_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+      fetchWithCache(OFFLINE_MODULE, "book_profit_summary", () => supabase.from("book_profit_summary").select("*").limit(1).maybeSingle(), null as AnyRow | null),
+      fetchWithCache(OFFLINE_MODULE, "uniform_profit_summary", () => supabase.from("uniform_profit_summary").select("*").limit(1).maybeSingle(), null as AnyRow | null),
+    ]);
 
     setFinanceSettings(financeSettingsRes.data || null);
     setTransactions(transactionsRes.data || []);
@@ -499,6 +509,20 @@ export default function IncomeExpenditurePage() {
     setJsmsAdmissionPayments(jsmsAdmissionPaymentsRes.data || []);
     setBookSummary(booksRes.data || null);
     setUniformSummary(uniformsRes.data || null);
+    setShowingCachedData(
+      [
+        financeSettingsRes,
+        transactionsRes,
+        itemsRes,
+        feesRes,
+        bookPaymentsRes,
+        uniformPaymentsRes,
+        admissionPaymentsRes,
+        jsmsAdmissionPaymentsRes,
+        booksRes,
+        uniformsRes,
+      ].some((result) => result.fromCache)
+    );
   }
 
   const schoolName = String(settingsRow?.school_name || "JSMS");
@@ -1187,8 +1211,11 @@ export default function IncomeExpenditurePage() {
               <p style={headerNameStyle}>
                 {schoolName} • {academicYear || "-"} • {currentTerm || "-"}
               </p>
-              <div style={{ marginTop: "8px" }}>
+              <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                 <OfflineStatusPill online={online} pendingCount={pendingCount} syncing={syncing} />
+                {showingCachedData && (
+                  <span style={{ fontSize: "12px", opacity: 0.85, color: COLORS.muted }}>Showing last synced data</span>
+                )}
               </div>
             </div>
 

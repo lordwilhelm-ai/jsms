@@ -7,6 +7,7 @@ import { authedFetch } from "@/lib/apiClient";
 import { queueOfflineAction } from "@/lib/offline/sync";
 import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
 import OfflineStatusPill from "@/app/components/OfflineStatusPill";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
 import { notifyBookIssued } from "@/lib/jsmsNotify";
 
 const OFFLINE_MODULE = "books";
@@ -288,6 +289,7 @@ export default function BooksDashboardPage() {
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [showingCachedData, setShowingCachedData] = useState(false);
 
   const [currentUserName, setCurrentUserName] = useState("Admin");
   const [currentTerm, setCurrentTerm] = useState("Current Term");
@@ -444,12 +446,17 @@ export default function BooksDashboardPage() {
     setLoading(true);
     setLoadError("");
 
-    await Promise.all([
-      loadUser(),
-      loadSettings(),
-      loadCoreTables(),
-      loadStudents(),
-    ]);
+    const [userFromCache, settingsFromCache, coreFromCache, studentsFromCache] =
+      await Promise.all([
+        loadUser(),
+        loadSettings(),
+        loadCoreTables(),
+        loadStudents(),
+      ]);
+
+    setShowingCachedData(
+      [userFromCache, settingsFromCache, coreFromCache, studentsFromCache].some(Boolean)
+    );
 
     setLoading(false);
   }
@@ -462,13 +469,18 @@ export default function BooksDashboardPage() {
     const email = String(session?.user?.email || "");
     const userId = String(session?.user?.id || "");
 
-    if (!email && !userId) return;
+    if (!email && !userId) return false;
 
-    const { data } = await supabase.from("teachers").select("*");
+    const teachersRes = await fetchWithCache(
+      OFFLINE_MODULE,
+      "teachers",
+      () => supabase.from("teachers").select("*"),
+      [] as any[]
+    );
 
     const userRow =
-      data?.find((item) => item.auth_user_id === userId) ||
-      data?.find(
+      teachersRes.data.find((item) => item.auth_user_id === userId) ||
+      teachersRes.data.find(
         (item) =>
           String(item.email || "").toLowerCase() === email.toLowerCase()
       ) ||
@@ -482,19 +494,21 @@ export default function BooksDashboardPage() {
       "Admin";
 
     setCurrentUserName(String(name));
+    return teachersRes.fromCache;
   }
 
   async function loadSettings() {
     const possibleTables = ["school_settings", "jsms_settings", "settings"];
 
     for (const table of possibleTables) {
-      const result = await supabase
-        .from(table)
-        .select("*")
-        .limit(1)
-        .maybeSingle();
+      const result = await fetchWithCache(
+        OFFLINE_MODULE,
+        table,
+        () => supabase.from(table).select("*").limit(1).maybeSingle(),
+        null as any
+      );
 
-      if (!result.error && result.data) {
+      if (result.data) {
         const row = result.data as any;
 
         const term =
@@ -512,9 +526,11 @@ export default function BooksDashboardPage() {
 
         if (term) setCurrentTerm(String(term));
         if (year) setAcademicYear(String(year));
-        return;
+        return result.fromCache;
       }
     }
+
+    return false;
   }
 
   async function loadCoreTables() {
@@ -528,82 +544,82 @@ export default function BooksDashboardPage() {
       supplierPurchasesRes,
       supplierItemsRes,
     ] = await Promise.all([
-      supabase
-        .from("jsms_books")
-        .select("*")
-        .order("created_at", { ascending: false }),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_books",
+        () => supabase.from("jsms_books").select("*").order("created_at", { ascending: false }),
+        [] as Book[]
+      ),
 
-      supabase
-        .from("jsms_book_structures")
-        .select("*")
-        .order("created_at", { ascending: false }),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_book_structures",
+        () => supabase.from("jsms_book_structures").select("*").order("created_at", { ascending: false }),
+        [] as BookStructure[]
+      ),
 
-      supabase
-        .from("jsms_book_structure_items")
-        .select("*")
-        .order("created_at", { ascending: false }),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_book_structure_items",
+        () => supabase.from("jsms_book_structure_items").select("*").order("created_at", { ascending: false }),
+        [] as BookStructureItem[]
+      ),
 
-      supabase
-        .from("jsms_book_payments")
-        .select("*")
-        .order("created_at", { ascending: false }),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_book_payments",
+        () => supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }),
+        [] as BookPayment[]
+      ),
 
-      supabase
-        .from("jsms_book_payment_items")
-        .select("*")
-        .order("created_at", { ascending: false }),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_book_payment_items",
+        () => supabase.from("jsms_book_payment_items").select("*").order("created_at", { ascending: false }),
+        [] as BookPaymentItem[]
+      ),
 
-      supabase
-        .from("jsms_books_given")
-        .select("*")
-        .order("created_at", { ascending: false }),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_books_given",
+        () => supabase.from("jsms_books_given").select("*").order("created_at", { ascending: false }),
+        [] as BookGiven[]
+      ),
 
-      supabase
-        .from("jsms_book_supplier_purchases")
-        .select("*")
-        .order("created_at", { ascending: false }),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_book_supplier_purchases",
+        () => supabase.from("jsms_book_supplier_purchases").select("*").order("created_at", { ascending: false }),
+        [] as SupplierPurchase[]
+      ),
 
-      supabase
-        .from("jsms_book_supplier_purchase_items")
-        .select("*")
-        .order("created_at", { ascending: false }),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_book_supplier_purchase_items",
+        () => supabase.from("jsms_book_supplier_purchase_items").select("*").order("created_at", { ascending: false }),
+        [] as SupplierPurchaseItem[]
+      ),
     ]);
 
-    if (booksRes.error) {
-      setLoadError(`Books table issue: ${booksRes.error.message}`);
-    } else {
-      setBooks((booksRes.data || []) as Book[]);
-    }
+    setBooks(booksRes.data);
+    setStructures(structuresRes.data);
+    setStructureItems(structureItemsRes.data);
+    setPayments(paymentsRes.data);
+    setPaymentItems(paymentItemsRes.data);
+    setBooksGiven(givenRes.data);
+    setSupplierPurchases(supplierPurchasesRes.data);
+    setSupplierItems(supplierItemsRes.data);
 
-    if (!structuresRes.error) {
-      setStructures((structuresRes.data || []) as BookStructure[]);
-    }
-
-    if (!structureItemsRes.error) {
-      setStructureItems((structureItemsRes.data || []) as BookStructureItem[]);
-    }
-
-    if (!paymentsRes.error) {
-      setPayments((paymentsRes.data || []) as BookPayment[]);
-    }
-
-    if (!paymentItemsRes.error) {
-      setPaymentItems((paymentItemsRes.data || []) as BookPaymentItem[]);
-    }
-
-    if (!givenRes.error) {
-      setBooksGiven((givenRes.data || []) as BookGiven[]);
-    }
-
-    if (!supplierPurchasesRes.error) {
-      setSupplierPurchases(
-        (supplierPurchasesRes.data || []) as SupplierPurchase[]
-      );
-    }
-
-    if (!supplierItemsRes.error) {
-      setSupplierItems((supplierItemsRes.data || []) as SupplierPurchaseItem[]);
-    }
+    return [
+      booksRes,
+      structuresRes,
+      structureItemsRes,
+      paymentsRes,
+      paymentItemsRes,
+      givenRes,
+      supplierPurchasesRes,
+      supplierItemsRes,
+    ].some((result) => result.fromCache);
   }
 
   async function loadStudents() {
@@ -616,19 +632,25 @@ export default function BooksDashboardPage() {
     ];
 
     for (const table of possibleTables) {
-      const result = await supabase.from(table).select("*");
+      const result = await fetchWithCache(
+        OFFLINE_MODULE,
+        table,
+        () => supabase.from(table).select("*"),
+        [] as any[]
+      );
 
-      if (!result.error && result.data && result.data.length > 0) {
+      if (result.data && result.data.length > 0) {
         const normalized = normalizeStudents(result.data);
 
         if (normalized.length > 0) {
           setStudents(normalized);
-          return;
+          return result.fromCache;
         }
       }
     }
 
     setStudents([]);
+    return false;
   }
 
   function normalizeStudents(rows: any[]): StudentOption[] {
@@ -1761,8 +1783,11 @@ export default function BooksDashboardPage() {
               • Receipt issued by:{" "}
               <span className="font-black">{currentUserName}</span>
             </p>
-            <div className="mt-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               <OfflineStatusPill online={online} pendingCount={pendingCount} syncing={syncing} />
+              {showingCachedData && (
+                <span className="text-xs font-semibold text-gray-500">Showing last synced data</span>
+              )}
             </div>
           </div>
 

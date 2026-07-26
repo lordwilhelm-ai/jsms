@@ -7,6 +7,7 @@ import { authedFetch } from "@/lib/apiClient";
 import { queueOfflineAction } from "@/lib/offline/sync";
 import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
 import OfflineStatusPill from "@/app/components/OfflineStatusPill";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
 
 const OFFLINE_MODULE = "uniforms";
 
@@ -299,6 +300,7 @@ export default function UniformsPage() {
   const [activeSection, setActiveSection] = useState<Section>("dashboard");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [showingCachedData, setShowingCachedData] = useState(false);
 
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [students, setStudents] = useState<StudentOption[]>([]);
@@ -363,13 +365,29 @@ export default function UniformsPage() {
     setLoadError("");
     setMessage("");
 
-    await Promise.all([
+    const [
+      userFromCache,
+      settingsFromCache,
+      classesFromCache,
+      studentsFromCache,
+      uniformDataFromCache,
+    ] = await Promise.all([
       loadUser(),
       loadSettings(),
       loadClasses(),
       loadStudents(),
       loadUniformData(),
     ]);
+
+    setShowingCachedData(
+      [
+        userFromCache,
+        settingsFromCache,
+        classesFromCache,
+        studentsFromCache,
+        uniformDataFromCache,
+      ].some(Boolean),
+    );
 
     setLoading(false);
   }
@@ -381,12 +399,18 @@ export default function UniformsPage() {
     const email = clean(session?.user?.email).toLowerCase();
     const userId = clean(session?.user?.id);
 
-    if (!email && !userId) return;
+    if (!email && !userId) return false;
 
-    const { data } = await supabase.from("teachers").select("*");
+    const teachersRes = await fetchWithCache(
+      OFFLINE_MODULE,
+      "teachers",
+      () => supabase.from("teachers").select("*"),
+      [] as any[],
+    );
+
     const userRow =
-      data?.find((item: any) => clean(item.auth_user_id) === userId) ||
-      data?.find((item: any) => clean(item.email).toLowerCase() === email) ||
+      teachersRes.data.find((item: any) => clean(item.auth_user_id) === userId) ||
+      teachersRes.data.find((item: any) => clean(item.email).toLowerCase() === email) ||
       null;
 
     setCurrentUserName(
@@ -398,18 +422,22 @@ export default function UniformsPage() {
           "Admin",
       ),
     );
+
+    return teachersRes.fromCache;
   }
 
   async function loadSettings() {
     const possibleTables = ["school_settings", "jsms_settings", "settings"];
 
     for (const table of possibleTables) {
-      const result = await supabase
-        .from(table)
-        .select("*")
-        .limit(1)
-        .maybeSingle();
-      if (!result.error && result.data) {
+      const result = await fetchWithCache(
+        OFFLINE_MODULE,
+        table,
+        () => supabase.from(table).select("*").limit(1).maybeSingle(),
+        null as any,
+      );
+
+      if (result.data) {
         const row = result.data as any;
         const term =
           row.current_term ||
@@ -424,17 +452,23 @@ export default function UniformsPage() {
           "";
         if (term) setCurrentTerm(String(term));
         if (year) setAcademicYear(String(year));
-        return;
+        return result.fromCache;
       }
     }
+
+    return false;
   }
 
   async function loadClasses() {
-    const result = await supabase
-      .from("classes")
-      .select("*")
-      .order("class_order", { ascending: true });
-    if (!result.error) setClasses((result.data || []) as ClassRow[]);
+    const result = await fetchWithCache(
+      OFFLINE_MODULE,
+      "classes",
+      () => supabase.from("classes").select("*").order("class_order", { ascending: true }),
+      [] as ClassRow[],
+    );
+
+    setClasses(result.data);
+    return result.fromCache;
   }
 
   async function loadStudents() {
@@ -447,19 +481,26 @@ export default function UniformsPage() {
     ];
 
     for (const table of possibleTables) {
-      const result = await supabase.from(table).select("*");
-      if (!result.error && result.data && result.data.length > 0) {
+      const result = await fetchWithCache(
+        OFFLINE_MODULE,
+        table,
+        () => supabase.from(table).select("*"),
+        [] as any[],
+      );
+
+      if (result.data && result.data.length > 0) {
         const normalized = normalizeStudents(result.data).filter(
           (item) => item.student_name && item.class_name,
         );
         if (normalized.length > 0) {
           setStudents(normalized);
-          return;
+          return result.fromCache;
         }
       }
     }
 
     setStudents([]);
+    return false;
   }
 
   function normalizeStudents(rows: any[]): StudentOption[] {
@@ -492,35 +533,38 @@ export default function UniformsPage() {
 
   async function loadUniformData() {
     const [paymentsRes, itemsRes, givenRes, expensesRes] = await Promise.all([
-      supabase
-        .from("jsms_uniform_payments")
-        .select("*")
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("jsms_uniform_payment_items")
-        .select("*")
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("jsms_uniforms_given")
-        .select("*")
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("jsms_uniform_expenses")
-        .select("*")
-        .order("created_at", { ascending: false }),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_uniform_payments",
+        () => supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }),
+        [] as UniformPayment[],
+      ),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_uniform_payment_items",
+        () => supabase.from("jsms_uniform_payment_items").select("*").order("created_at", { ascending: false }),
+        [] as UniformPaymentItem[],
+      ),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_uniforms_given",
+        () => supabase.from("jsms_uniforms_given").select("*").order("created_at", { ascending: false }),
+        [] as UniformGiven[],
+      ),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_uniform_expenses",
+        () => supabase.from("jsms_uniform_expenses").select("*").order("created_at", { ascending: false }),
+        [] as UniformExpense[],
+      ),
     ]);
 
-    if (paymentsRes.error)
-      setLoadError(
-        `Uniform payments issue: ${paymentsRes.error.message}. Run the uniform SQL setup first.`,
-      );
-    else setPayments((paymentsRes.data || []) as UniformPayment[]);
+    setPayments(paymentsRes.data);
+    setPaymentItems(itemsRes.data);
+    setGivenItems(givenRes.data);
+    setExpenses(expensesRes.data);
 
-    if (!itemsRes.error)
-      setPaymentItems((itemsRes.data || []) as UniformPaymentItem[]);
-    if (!givenRes.error) setGivenItems((givenRes.data || []) as UniformGiven[]);
-    if (!expensesRes.error)
-      setExpenses((expensesRes.data || []) as UniformExpense[]);
+    return [paymentsRes, itemsRes, givenRes, expensesRes].some((result) => result.fromCache);
   }
 
   const selectedClassRow = useMemo(() => {
@@ -1007,8 +1051,11 @@ export default function UniformsPage() {
             Lacoste, Mon to Wed Wear, and Fri Wear prices are pulled from Fee
             Structure.
           </p>
-          <div className="mt-3">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <OfflineStatusPill online={online} pendingCount={pendingCount} syncing={syncing} />
+            {showingCachedData && (
+              <span className="text-xs font-semibold text-gray-300">Showing last synced data</span>
+            )}
           </div>
 
           <nav className="mt-6 grid gap-2">

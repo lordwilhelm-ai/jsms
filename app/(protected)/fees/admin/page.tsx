@@ -10,6 +10,11 @@ import {
   type UniversalPayment,
   type UniversalReceiptResult,
 } from "@/lib/universalReceiptSearch";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
+import OfflineStatusPill from "@/app/components/OfflineStatusPill";
+
+const OFFLINE_MODULE = "fees";
 
 type AnyRow = Record<string, any>;
 
@@ -260,6 +265,7 @@ export default function FeesAdminPage() {
   const [checkingUser, setCheckingUser] = useState(true);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [showingCachedData, setShowingCachedData] = useState(false);
 
   const [settingsRow, setSettingsRow] = useState<AnyRow | null>(null);
   const [classes, setClasses] = useState<AnyRow[]>([]);
@@ -272,84 +278,84 @@ export default function FeesAdminPage() {
   const [searchingReceipt, setSearchingReceipt] = useState(false);
   const [universalResult, setUniversalResult] = useState<UniversalReceiptResult | null>(null);
 
-  useEffect(() => {
-    let active = true;
+  async function loadDashboardData() {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-    async function checkAndLoad() {
-      try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        if (!active) return;
-
-        if (!session?.user) {
-          router.replace("/");
-          return;
-        }
-
-        const [teachersRes, settingsRes, classesRes, studentsRes, paymentsRes] = await Promise.all([
-          supabase.from("teachers").select("*"),
-          supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-          supabase.from("classes").select("*"),
-          supabase.from("active_students").select("*"),
-          supabase.from("fee_payments").select("*").order("created_at", { ascending: false }),
-        ]);
-
-        if (!active) return;
-
-        if (teachersRes.error || !teachersRes.data || teachersRes.data.length === 0) {
-          router.replace("/");
-          return;
-        }
-
-        const userRow =
-          teachersRes.data.find((item) => item.auth_user_id === session.user.id) ||
-          teachersRes.data.find(
-            (item) =>
-              normalizeText(item.email) === normalizeText(session.user.email)
-          ) ||
-          null;
-
-        if (!userRow) {
-          router.replace("/");
-          return;
-        }
-
-        const role = getRole(userRow);
-
-        if (role === "teacher") {
-          router.replace("/fees/teacher");
-          return;
-        }
-
-        if (settingsRes.error) throw settingsRes.error;
-        if (classesRes.error) throw classesRes.error;
-        if (studentsRes.error) throw studentsRes.error;
-        if (paymentsRes.error) throw paymentsRes.error;
-
-        setSettingsRow(settingsRes.data || null);
-        setClasses(classesRes.data || []);
-        setStudents(studentsRes.data || []);
-        setPayments(paymentsRes.data || []);
-        setLoadError("");
-      } catch (error: any) {
-        console.error(error);
-        setLoadError(error?.message || "Failed to load fees dashboard.");
-      } finally {
-        if (active) {
-          setCheckingUser(false);
-          setLoading(false);
-        }
+      if (!session?.user) {
+        router.replace("/");
+        return;
       }
+
+      // Each read falls back to the last-synced copy of that table if the
+      // live query fails (offline), instead of resetting the dashboard to
+      // empty or (for `teachers`, used for the role check below) bouncing
+      // the admin to "/" just because connectivity dropped.
+      const [teachersRes, settingsRes, classesRes, studentsRes, paymentsRes] = await Promise.all([
+        fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as AnyRow[]),
+        fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
+        fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*"), [] as AnyRow[]),
+        fetchWithCache(OFFLINE_MODULE, "active_students", () => supabase.from("active_students").select("*"), [] as AnyRow[]),
+        fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+      ]);
+
+      if (teachersRes.data.length === 0) {
+        router.replace("/");
+        return;
+      }
+
+      const userRow =
+        teachersRes.data.find((item) => item.auth_user_id === session.user.id) ||
+        teachersRes.data.find(
+          (item) =>
+            normalizeText(item.email) === normalizeText(session.user.email)
+        ) ||
+        null;
+
+      if (!userRow) {
+        router.replace("/");
+        return;
+      }
+
+      const role = getRole(userRow);
+
+      if (role === "teacher") {
+        router.replace("/fees/teacher");
+        return;
+      }
+
+      setSettingsRow(settingsRes.data);
+      setClasses(classesRes.data);
+      setStudents(studentsRes.data);
+      setPayments(paymentsRes.data);
+      setShowingCachedData(
+        [teachersRes, settingsRes, classesRes, studentsRes, paymentsRes].some((result) => result.fromCache)
+      );
+      setLoadError("");
+    } catch (error: any) {
+      console.error(error);
+      setLoadError(error?.message || "Failed to load fees dashboard.");
+    } finally {
+      setCheckingUser(false);
+      setLoading(false);
     }
+  }
 
-    void checkAndLoad();
+  const { online, pendingCount, syncing } = useOfflineStatus(OFFLINE_MODULE, async () => {
+    if (!navigator.onLine) return;
 
-    return () => {
-      active = false;
-    };
-  }, [router]);
+    try {
+      await loadDashboardData();
+    } catch (error) {
+      console.warn("Fees admin: post-sync reload failed:", error);
+    }
+  });
+
+  useEffect(() => {
+    void loadDashboardData();
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(async () => {
@@ -599,6 +605,12 @@ export default function FeesAdminPage() {
               <div>
                 <h2 style={{ margin: 0, fontSize: "30px" }}>Fees Dashboard</h2>
                 <p style={{ margin: "8px 0 0", color: "#d1d5db" }}>{motto}</p>
+                <div style={{ marginTop: "10px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <OfflineStatusPill online={online} pendingCount={pendingCount} syncing={syncing} />
+                  {showingCachedData && (
+                    <span style={{ fontSize: "12px", opacity: 0.85, color: "#d1d5db" }}>Showing last synced data</span>
+                  )}
+                </div>
               </div>
 
               <Link href="/dashboard/admin" style={topButtonStyle}>
