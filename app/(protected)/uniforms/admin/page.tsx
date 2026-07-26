@@ -3,6 +3,12 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
+import { queueOfflineAction } from "@/lib/offline/sync";
+import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
+import OfflineStatusPill from "@/app/components/OfflineStatusPill";
+
+const OFFLINE_MODULE = "uniforms";
 
 type Section = "dashboard" | "payment" | "given" | "expenses" | "records";
 type AnyRow = Record<string, any>;
@@ -120,30 +126,6 @@ function numberValue(value: unknown) {
 
 function money(value: number) {
   return `GHS ${numberValue(value).toFixed(2)}`;
-}
-
-function getTodayReceiptCode() {
-  const now = new Date();
-  const year = String(now.getFullYear()).slice(-2);
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}${day}`;
-}
-
-function getDayRange() {
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-
-  const end = new Date();
-  end.setHours(23, 59, 59, 999);
-
-  return { start: start.toISOString(), end: end.toISOString() };
-}
-
-function getLastFourStudentId(studentId: string) {
-  const digitsOnly = clean(studentId).replace(/\D/g, "");
-  if (digitsOnly.length < 4)
-    throw new Error("Student ID must contain at least 4 numbers.");
-  return digitsOnly.slice(-4);
 }
 
 function findRealJvsId(row: any) {
@@ -331,6 +313,16 @@ export default function UniformsPage() {
 
   const [classFilter, setClassFilter] = useState("");
   const [message, setMessage] = useState("");
+
+  const { online, pendingCount, syncing } = useOfflineStatus(OFFLINE_MODULE, async () => {
+    if (!navigator.onLine) return;
+
+    try {
+      await loadUniformData();
+    } catch (error) {
+      console.warn("Uniforms: post-sync reload failed:", error);
+    }
+  });
 
   const [paymentForm, setPaymentForm] = useState({
     student_search: "",
@@ -670,76 +662,6 @@ export default function UniformsPage() {
     givenSelections,
   ]);
 
-  async function generateReceiptNumber(studentId: string, attempt = 0) {
-    const lastFour = getLastFourStudentId(studentId);
-    const today = getTodayReceiptCode();
-    const { start, end } = getDayRange();
-    const prefix = `JVSU/${today}/${lastFour}`;
-
-    const { data } = await supabase
-      .from("jsms_uniform_payments")
-      .select("receipt_number, created_at")
-      .gte("created_at", start)
-      .lte("created_at", end);
-
-    // `attempt` is added on top of the counted rows so a retry after a
-    // duplicate-receipt conflict (two staff saving at the same moment) does
-    // not just recompute the same colliding number.
-    const count =
-      (data || []).filter((row: any) =>
-        clean(row.receipt_number).startsWith(prefix),
-      ).length +
-      1 +
-      attempt;
-    return `${prefix}/${String(count).padStart(2, "0")}`;
-  }
-
-  function isDuplicateReceiptError(error: any) {
-    if (!error) return false;
-    if (error.code === "23505") return true;
-
-    const message = String(error.message || error.details || "").toLowerCase();
-    return message.includes("duplicate") && message.includes("receipt");
-  }
-
-  // Counting today's rows and appending +1 is not safe under concurrent
-  // writes. Retry with a fresh receipt number when the insert reports a
-  // duplicate-key conflict.
-  //
-  // NOTE: this retry only helps if the `receipt_number` column has a unique
-  // constraint/index in the database so a real collision is rejected as an
-  // error instead of silently inserted twice. If no such constraint exists,
-  // add one at the DB level.
-  async function insertUniformPaymentWithReceipt(
-    studentId: string,
-    buildPayload: (receiptNumber: string) => AnyRow,
-  ) {
-    const MAX_ATTEMPTS = 4;
-    let lastError: any = null;
-
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const receipt = await generateReceiptNumber(studentId, attempt);
-
-      const { data, error } = await supabase
-        .from("jsms_uniform_payments")
-        .insert(buildPayload(receipt))
-        .select("*")
-        .single();
-
-      if (!error) {
-        return { data, receipt, error: null };
-      }
-
-      lastError = error;
-
-      if (!isDuplicateReceiptError(error)) {
-        return { data: null, receipt, error };
-      }
-    }
-
-    return { data: null, receipt: "", error: lastError };
-  }
-
   function handleStudentPick(student: StudentOption) {
     setPaymentForm((prev) => ({
       ...prev,
@@ -750,12 +672,6 @@ export default function UniformsPage() {
     }));
     setSelectedUniforms([]);
     setMessage("");
-  }
-
-  async function safeInsert(table: string, payload: AnyRow) {
-    const result = await supabase.from(table).insert(payload);
-    if (result.error) console.error(`safeInsert(${table}) failed:`, result.error);
-    return !result.error;
   }
 
   async function handleRecordPayment() {
@@ -784,88 +700,45 @@ export default function UniformsPage() {
       if (paymentPaid > paymentTotal)
         throw new Error("Amount paid cannot be more than total amount.");
 
-      const itemNames = selectedUniformOptions
-        .map((item) => item.label)
-        .join(", ");
-
-      const { data: paymentData, receipt, error } =
-        await insertUniformPaymentWithReceipt(
-          paymentForm.student_id,
-          (receiptNumber) => ({
-            student_id: paymentForm.student_id,
-            student_name: paymentForm.student_name,
-            class_name: paymentForm.class_name,
-            receipt_number: receiptNumber,
-            item_name: itemNames,
-            quantity: selectedUniformOptions.length || 1,
-            selected_items: selectedUniformOptions.map((item) => ({
-              key: item.key,
-              item_name: item.label,
-              price: item.price,
-              quantity: 1,
-            })),
-            total_amount: paymentTotal,
-            amount_paid: paymentPaid,
-            balance: paymentBalance,
-            payment_status: nextPaymentStatus,
-            receipt_issued_by: currentUserName,
-            received_by: currentUserName,
-            payment_note: paymentForm.note,
-            term: currentTerm,
-            academic_year: academicYear,
-          }),
-        );
-
-      if (error || !paymentData) throw error || new Error("Could not record uniform payment.");
-
-      const itemsPayload = selectedUniformOptions.map((item) => ({
-        payment_id: paymentData.id,
-        receipt_number: receipt,
-        student_id: paymentForm.student_id,
-        student_name: paymentForm.student_name,
-        class_name: paymentForm.class_name,
-        item_name: item.label,
-        quantity: 1,
-        unit_price: item.price,
-        total_price: item.price,
-      }));
-
-      const itemInsert = await supabase
-        .from("jsms_uniform_payment_items")
-        .insert(itemsPayload);
-      if (itemInsert.error) throw itemInsert.error;
-
-      await safeInsert("jsms_all_payment_logs", {
-        receipt_number: receipt,
-        student_id: paymentForm.student_id,
-        student_name: paymentForm.student_name,
-        class_name: paymentForm.class_name,
-        module: "uniforms",
-        item_name: itemNames,
-        amount_paid: paymentPaid,
-        total_amount: paymentTotal,
-        balance: paymentBalance,
-        source_id: paymentData.id,
-        source_table: "jsms_uniform_payments",
-        received_by: currentUserName,
+      const payload = {
+        studentId: paymentForm.student_id,
+        studentName: paymentForm.student_name,
+        className: paymentForm.class_name,
+        selectedItems: selectedUniformOptions.map((item) => ({
+          key: item.key,
+          label: item.label,
+          price: item.price,
+        })),
+        totalAmount: paymentTotal,
+        amountPaid: paymentPaid,
         term: currentTerm,
-        academic_year: academicYear,
-      });
+        academicYear,
+        note: paymentForm.note,
+      };
 
-      await safeInsert("universal_receipts", {
-        receipt_number: receipt,
-        student_id: paymentForm.student_id,
-        student_name: paymentForm.student_name,
-        class_name: paymentForm.class_name,
-        module: "uniforms",
-        item_name: itemNames,
-        amount_paid: paymentPaid,
-        total_amount: paymentTotal,
-        balance: paymentBalance,
-        received_by: currentUserName,
-        term: currentTerm,
-        academic_year: academicYear,
-      });
+      let receiptLabel = "";
+
+      if (navigator.onLine) {
+        try {
+          const response = await authedFetch("/api/uniforms/record-payment", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body?.error || "Could not record uniform payment.");
+
+          receiptLabel = String(body.payment?.receipt_number || "");
+          setMessage(`Uniform payment recorded. Receipt: ${receiptLabel}`);
+          await loadUniformData();
+        } catch (error: any) {
+          if (!(error instanceof TypeError)) throw error;
+          receiptLabel = await queueUniformPayment(payload);
+        }
+      } else {
+        receiptLabel = await queueUniformPayment(payload);
+      }
 
       setPaymentForm({
         student_search: "",
@@ -876,14 +749,49 @@ export default function UniformsPage() {
         note: "",
       });
       setSelectedUniforms([]);
-      setMessage(`Uniform payment recorded. Receipt: ${receipt}`);
       setActiveSection("records");
-      await loadUniformData();
     } catch (error: any) {
       setMessage(
         `Error: ${error?.message || "Could not record uniform payment."}`,
       );
     }
+  }
+
+  async function queueUniformPayment(payload: Record<string, any>) {
+    const offlineId = await queueOfflineAction(
+      OFFLINE_MODULE,
+      "record-payment",
+      "/api/uniforms/record-payment",
+      payload
+    );
+
+    setPayments((prev) => [
+      {
+        id: `pending-${offlineId}`,
+        offline_id: offlineId,
+        pending_sync: true,
+        student_id: payload.studentId,
+        student_name: payload.studentName,
+        class_name: payload.className,
+        receipt_number: "Pending sync",
+        item_name: payload.selectedItems.map((item: any) => item.label).join(", "),
+        quantity: payload.selectedItems.length || 1,
+        selected_items: payload.selectedItems,
+        total_amount: payload.totalAmount,
+        amount_paid: payload.amountPaid,
+        balance: payload.totalAmount - payload.amountPaid,
+        payment_status: payload.totalAmount - payload.amountPaid <= 0 ? "paid" : "partial",
+        receipt_issued_by: currentUserName,
+        payment_note: payload.note,
+        term: payload.term,
+        academic_year: payload.academicYear,
+        created_at: new Date().toISOString(),
+      } as UniformPayment,
+      ...prev,
+    ]);
+
+    setMessage("Uniform payment saved offline — will sync automatically.");
+    return "Pending sync";
   }
 
   async function handleRecordExpense() {
@@ -901,25 +809,38 @@ export default function UniformsPage() {
       if (totalCost <= 0) throw new Error("Total expense must be more than 0.");
 
       const payload = {
-        expense_type: expenseForm.expense_type,
-        item_name: itemName,
+        expenseType: expenseForm.expense_type,
+        itemName,
         quantity,
         unit: expenseForm.unit,
-        unit_cost: unitCost,
-        total_cost: totalCost,
-        supplier_name: expenseForm.supplier_name,
-        receipt_number: expenseForm.receipt_number,
-        paid_by: currentUserName,
-        expense_date: new Date().toISOString(),
+        unitCost,
+        supplierName: expenseForm.supplier_name,
+        receiptNumber: expenseForm.receipt_number,
         note: expenseForm.note,
         term: currentTerm,
-        academic_year: academicYear,
+        academicYear,
       };
 
-      const result = await supabase
-        .from("jsms_uniform_expenses")
-        .insert(payload);
-      if (result.error) throw result.error;
+      if (navigator.onLine) {
+        try {
+          const response = await authedFetch("/api/uniforms/record-expense", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body?.error || "Could not record uniform expense.");
+
+          setMessage("Uniform expense recorded. Profit has been recalculated.");
+          await loadUniformData();
+        } catch (error: any) {
+          if (!(error instanceof TypeError)) throw error;
+          await queueUniformExpense(payload, totalCost);
+        }
+      } else {
+        await queueUniformExpense(payload, totalCost);
+      }
 
       setExpenseForm({
         expense_type: "Fabric Purchase",
@@ -931,14 +852,43 @@ export default function UniformsPage() {
         receipt_number: "",
         note: "",
       });
-
-      setMessage("Uniform expense recorded. Profit has been recalculated.");
-      await loadUniformData();
     } catch (error: any) {
       setMessage(
         `Error: ${error?.message || "Could not record uniform expense."}`,
       );
     }
+  }
+
+  async function queueUniformExpense(payload: Record<string, any>, totalCost: number) {
+    const offlineId = await queueOfflineAction(
+      OFFLINE_MODULE,
+      "record-expense",
+      "/api/uniforms/record-expense",
+      payload
+    );
+
+    setExpenses((prev) => [
+      {
+        id: `pending-${offlineId}`,
+        expense_type: payload.expenseType,
+        item_name: payload.itemName,
+        quantity: payload.quantity,
+        unit: payload.unit,
+        unit_cost: payload.unitCost,
+        total_cost: totalCost,
+        supplier_name: payload.supplierName,
+        receipt_number: payload.receiptNumber,
+        paid_by: currentUserName,
+        expense_date: new Date().toISOString(),
+        note: payload.note,
+        term: payload.term,
+        academic_year: payload.academicYear,
+        created_at: new Date().toISOString(),
+      } as UniformExpense,
+      ...prev,
+    ]);
+
+    setMessage("Uniform expense saved offline — will sync automatically.");
   }
 
   async function handleMarkGiven() {
@@ -953,31 +903,72 @@ export default function UniformsPage() {
       if (selectedItems.length === 0)
         throw new Error("Select at least one uniform item to mark as given.");
 
-      const payload = selectedItems.map((item) => ({
-        payment_id: selectedPaymentForGiven.id,
-        receipt_number: selectedPaymentForGiven.receipt_number,
-        student_id: selectedPaymentForGiven.student_id,
-        student_name: selectedPaymentForGiven.student_name,
-        class_name: selectedPaymentForGiven.class_name,
-        item_name: item.item_name,
-        quantity_given: 1,
-        given_by: currentUserName,
-        given_at: new Date().toISOString(),
+      const payload = {
+        paymentId: selectedPaymentForGiven.id,
+        receiptNumber: selectedPaymentForGiven.receipt_number,
+        studentId: selectedPaymentForGiven.student_id,
+        studentName: selectedPaymentForGiven.student_name,
+        className: selectedPaymentForGiven.class_name,
+        itemNames: selectedItems.map((item) => item.item_name),
         note: givenForm.note,
-      }));
+      };
 
-      const result = await supabase.from("jsms_uniforms_given").insert(payload);
-      if (result.error) throw result.error;
+      if (navigator.onLine) {
+        try {
+          const response = await authedFetch("/api/uniforms/mark-given", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body?.error || "Could not mark uniform as given.");
+
+          setMessage("Uniform item(s) marked as given.");
+          await loadUniformData();
+        } catch (error: any) {
+          if (!(error instanceof TypeError)) throw error;
+          await queueUniformGiven(payload);
+        }
+      } else {
+        await queueUniformGiven(payload);
+      }
 
       setGivenForm({ payment_id: "", note: "" });
       setGivenSelections({});
-      setMessage("Uniform item(s) marked as given.");
-      await loadUniformData();
     } catch (error: any) {
       setMessage(
         `Error: ${error?.message || "Could not mark uniform as given."}`,
       );
     }
+  }
+
+  async function queueUniformGiven(payload: Record<string, any>) {
+    const offlineId = await queueOfflineAction(OFFLINE_MODULE, "mark-given", "/api/uniforms/mark-given", payload);
+    const now = new Date().toISOString();
+
+    setGivenItems((prev) => [
+      ...(payload.itemNames as string[]).map(
+        (itemName, index) =>
+          ({
+            id: `pending-${offlineId}-${index}`,
+            payment_id: payload.paymentId,
+            receipt_number: payload.receiptNumber,
+            student_id: payload.studentId,
+            student_name: payload.studentName,
+            class_name: payload.className,
+            item_name: itemName,
+            quantity_given: 1,
+            given_by: currentUserName,
+            given_at: now,
+            note: payload.note,
+            created_at: now,
+          }) as UniformGiven
+      ),
+      ...prev,
+    ]);
+
+    setMessage("Marked as given offline — will sync automatically.");
   }
 
   if (loading) {
@@ -1016,6 +1007,9 @@ export default function UniformsPage() {
             Lacoste, Mon to Wed Wear, and Fri Wear prices are pulled from Fee
             Structure.
           </p>
+          <div className="mt-3">
+            <OfflineStatusPill online={online} pendingCount={pendingCount} syncing={syncing} />
+          </div>
 
           <nav className="mt-6 grid gap-2">
             <SideButton
