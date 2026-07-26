@@ -991,6 +991,44 @@ export default function TeachersPage() {
     }
   }
 
+  async function handleSetKioskPin(id: string, teacherName: string) {
+    const pin = window.prompt(`Set a 4-digit kiosk check-in/out PIN for ${teacherName}:`);
+    if (pin === null) return; // cancelled
+
+    const cleanPin = pin.trim();
+
+    if (!/^\d{4}$/.test(cleanPin)) {
+      alert("PIN must be exactly 4 digits.");
+      return;
+    }
+
+    setBusy(true);
+    setMessage("");
+
+    try {
+      const response = await authedFetch("/api/teachers/set-pin", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ teacherId: id, pin: cleanPin }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to set kiosk PIN.");
+      }
+
+      setMessage(`Kiosk PIN set for ${teacherName}.`);
+    } catch (error: any) {
+      console.error("Set kiosk PIN error:", error);
+      setMessage(`Error: ${getErrorMessage(error, "Error setting kiosk PIN.")}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDeleteTeacher(id: string) {
     const confirmed = window.confirm(
       "Are you sure you want to delete this teacher permanently?"
@@ -1203,6 +1241,12 @@ export default function TeachersPage() {
                     </button>
                     <button type="button" onClick={() => openEditModal(teacher)}>
                       Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSetKioskPin(teacher.id, teacher.full_name || "this teacher")}
+                    >
+                      Set Kiosk PIN
                     </button>
                     <button
                       type="button"
