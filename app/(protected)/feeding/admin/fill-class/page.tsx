@@ -3,6 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
+import { queueOfflineAction } from "@/lib/offline/sync";
+import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
+import OfflineStatusPill from "@/app/components/OfflineStatusPill";
+
+const OFFLINE_MODULE = "feeding";
 
 type Attendance = "present" | "absent";
 type BalanceMap = Record<string, number>;
@@ -12,7 +18,6 @@ type Student = Record<string, any>;
 type Teacher = Record<string, any>;
 type Closure = Record<string, any>;
 type DailyEntry = Record<string, any>;
-type LedgerRow = Record<string, any>;
 type SettingsRow = Record<string, any>;
 type ClassRow = Record<string, any>;
 
@@ -202,43 +207,6 @@ function formatMoney(value: number) {
   return Number(value || 0).toFixed(2).replace(/\.00$/, "");
 }
 
-async function rebuildStudentBalancesFromLedger(academicYear: string) {
-  // Scope the rebuild to the current academic year so a new year starts every
-  // student at zero instead of an old year's ledger history silently
-  // continuing to drive "today"'s balance forever.
-  const { data, error } = await supabase
-    .from("balance_ledger")
-    .select("*")
-    .eq("academic_year", academicYear)
-    .order("date", { ascending: true });
-
-  if (error) throw error;
-
-  const latestByStudent = new Map<string, LedgerRow>();
-  (data || []).forEach((row) => {
-    const studentId = getStudentIdValue(row);
-    if (!studentId) return;
-    latestByStudent.set(studentId, row);
-  });
-
-  const payload = Array.from(latestByStudent.values()).map((row) => ({
-    student_id: getStudentIdValue(row),
-    student_name: String(row.student_name || row.studentName || ""),
-    class_name: getClassName(row),
-    academic_year: String(row.academic_year || row.academicYear || ""),
-    balance: Number(row.new_balance || row.newBalance || 0),
-    updated_at: new Date().toISOString(),
-  }));
-
-  if (!payload.length) return;
-
-  const { error: upsertError } = await supabase
-    .from("student_balances")
-    .upsert(payload, { onConflict: "student_id" });
-
-  if (upsertError) throw upsertError;
-}
-
 export default function AdminFillClassPage() {
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedDate, setSelectedDate] = useState(
@@ -274,6 +242,16 @@ export default function AdminFillClassPage() {
   const [loadingTeacherCredits, setLoadingTeacherCredits] = useState(false);
   const [loadingClosures, setLoadingClosures] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const { online, pendingCount, syncing } = useOfflineStatus(OFFLINE_MODULE, async () => {
+    if (!navigator.onLine) return;
+
+    try {
+      if (selectedClass) await loadClassData();
+    } catch (error) {
+      console.warn("Feeding fill-class: post-sync reload failed:", error);
+    }
+  });
 
   useEffect(() => {
     void loadPageData();
@@ -685,119 +663,76 @@ export default function AdminFillClassPage() {
       alert(`Cannot save entry. School is closed for: ${blockedReason}`);
       return;
     }
+
+    // Only the raw admin inputs are sent — NOT the previewRows' computed
+    // previousBalance/newBalance. Those are recomputed server-side from a
+    // fresh read at the moment this actually lands (see
+    // app/api/feeding/fill-class/route.ts), whether that's instantly online
+    // or replayed from the offline queue later, so a write that sat queued
+    // for a while can never overwrite a balance with stale math.
+    const payload = {
+      date: selectedDate,
+      className: selectedClass,
+      academicYear,
+      feedingFee,
+      minimumToEat,
+      assignedTeacherName,
+      entries: previewRows.map((row) => ({
+        studentId: row.studentId,
+        studentName: row.fullName,
+        className: row.className,
+        attendance: row.attendance,
+        amountPaidToday: row.amountPaidToday,
+        ateWithoutPay: row.ateWithoutPay,
+      })),
+    };
+
     try {
       setSaving(true);
 
-      const { data: existingDailyRows, error: existingDailyError } = await supabase
-        .from("daily_entries")
-        .select("id")
-        .eq("date", selectedDate)
-        .eq("class_name", selectedClass);
+      if (navigator.onLine) {
+        try {
+          const response = await authedFetch("/api/feeding/fill-class", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
 
-      if (existingDailyError) throw existingDailyError;
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body?.error || "Failed to save admin class entry.");
 
-      const { data: existingLedgerRows, error: existingLedgerError } = await supabase
-        .from("balance_ledger")
-        .select("id")
-        .eq("date", selectedDate)
-        .eq("class_name", selectedClass);
+          await loadClassData();
 
-      if (existingLedgerError) throw existingLedgerError;
+          try {
+            await sendFeedingSubmissionPush({
+              className: selectedClass,
+              date: selectedDate,
+              academicYear,
+              term: currentTerm,
+              totalCollected: body.summary?.totalCollected ?? summary.totalCollected,
+              presentCount: body.summary?.presentCount ?? summary.presentCount,
+              absentCount: body.summary?.absentCount ?? summary.absentCount,
+              eatingCount: body.summary?.eatingCount ?? summary.eatingCount,
+              ateWithoutPayCount: body.summary?.ateWithoutPayCount ?? summary.ateWithoutPayCount,
+              enteredByName: "Admin",
+            });
+          } catch (pushError) {
+            console.error("Feeding push notification failed:", pushError);
+          }
 
-      if ((existingDailyRows || []).length > 0) {
-        const { error: deleteDailyError } = await supabase
-          .from("daily_entries")
-          .delete()
-          .in("id", (existingDailyRows || []).map((row) => row.id));
-        if (deleteDailyError) throw deleteDailyError;
+          alert("Class entry saved and balances rebuilt successfully.");
+          return;
+        } catch (error: any) {
+          if (!(error instanceof TypeError)) {
+            alert(`Error: ${error?.message || "Failed to save admin class entry."}`);
+            return;
+          }
+          // fall through to offline queue on a genuine network failure
+        }
       }
 
-      if ((existingLedgerRows || []).length > 0) {
-        const { error: deleteLedgerError } = await supabase
-          .from("balance_ledger")
-          .delete()
-          .in("id", (existingLedgerRows || []).map((row) => row.id));
-        if (deleteLedgerError) throw deleteLedgerError;
-      }
-
-      const dailyPayload = previewRows.map((row) => ({
-        date: selectedDate,
-        academic_year: academicYear,
-        class_name: selectedClass,
-        student_id: row.studentId,
-        student_name: row.fullName,
-        attendance: row.attendance,
-        amount_paid_today: row.amountPaidToday,
-        previous_balance: row.previousBalance,
-        available_before_meal: row.availableBeforeMeal,
-        ate_today: row.ateToday,
-        admin_override_ate_without_pay: row.ateWithoutPay,
-        new_balance: row.newBalance,
-        assigned_teacher_name: assignedTeacherName,
-        entered_by_name: "Admin",
-        entered_by_role: "admin",
-        created_at: new Date().toISOString(),
-      }));
-
-      const { error: dailyInsertError } = await supabase.from("daily_entries").insert(dailyPayload);
-      if (dailyInsertError) throw dailyInsertError;
-
-      const ledgerPayload = previewRows.map((row) => ({
-        date: selectedDate,
-        academic_year: academicYear,
-        student_id: row.studentId,
-        student_name: row.fullName,
-        class_name: row.className,
-        amount_paid_today: row.amountPaidToday,
-        previous_balance: row.previousBalance,
-        attendance: row.attendance,
-        ate_today: row.ateToday,
-        admin_override_ate_without_pay: row.ateWithoutPay,
-        new_balance: row.newBalance,
-        assigned_teacher_name: assignedTeacherName,
-        edited_by: "Admin",
-        feeding_fee: feedingFee,
-        minimum_to_eat: minimumToEat,
-        created_at: new Date().toISOString(),
-      }));
-
-      const { error: ledgerInsertError } = await supabase.from("balance_ledger").insert(ledgerPayload);
-      if (ledgerInsertError) throw ledgerInsertError;
-
-      const { error: logError } = await supabase.from("activity_logs").insert([
-        {
-          user_name: "Admin",
-          role: "admin",
-          action: "ADMIN_EDITED_CLASS_ENTRY",
-          class_name: selectedClass,
-          date: selectedDate,
-          details: `Admin edited/resubmitted ${selectedClass} for ${selectedDate}. Ate-without-pay count: ${summary.ateWithoutPayCount}`,
-          created_at: new Date().toISOString(),
-        },
-      ]);
-      if (logError) console.error(logError);
-
-      await rebuildStudentBalancesFromLedger(academicYear);
-      await loadClassData();
-
-      try {
-        await sendFeedingSubmissionPush({
-          className: selectedClass,
-          date: selectedDate,
-          academicYear,
-          term: currentTerm,
-          totalCollected: summary.totalCollected,
-          presentCount: summary.presentCount,
-          absentCount: summary.absentCount,
-          eatingCount: summary.eatingCount,
-          ateWithoutPayCount: summary.ateWithoutPayCount,
-          enteredByName: "Admin",
-        });
-      } catch (pushError) {
-        console.error("Feeding push notification failed:", pushError);
-      }
-
-      alert("Class entry saved and balances rebuilt successfully.");
+      await queueOfflineAction(OFFLINE_MODULE, "fill-class", "/api/feeding/fill-class", payload);
+      alert("Saved offline. This class's feeding entry will sync automatically once you're back online.");
     } catch (error) {
       console.error(error);
       alert("Failed to save admin class entry.");
@@ -1036,6 +971,9 @@ export default function AdminFillClassPage() {
             <h1 style={{ margin: 0 }}>Fill for Class</h1>
             <p style={{ margin: "6px 0 0", fontWeight: "bold" }}>{schoolName}</p>
             <p style={{ margin: "4px 0 0", opacity: 0.9 }}>{motto}</p>
+            <div style={{ marginTop: "8px" }}>
+              <OfflineStatusPill online={online} pendingCount={pendingCount} syncing={syncing} />
+            </div>
             <p style={{ margin: "6px 0 0", fontSize: "13px", opacity: 0.9 }}>
               <strong>{academicYear}</strong> • <strong>{currentTerm}</strong>
             </p>

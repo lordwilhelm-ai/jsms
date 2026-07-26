@@ -6,6 +6,13 @@ import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { notifyFeedingMoneyReceived } from "@/lib/jsmsNotify";
+import { authedFetch } from "@/lib/apiClient";
+import { queueOfflineAction } from "@/lib/offline/sync";
+import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import OfflineStatusPill from "@/app/components/OfflineStatusPill";
+
+const OFFLINE_MODULE = "feeding";
 
 type TeacherRow = Record<string, any>;
 type StudentRow = Record<string, any>;
@@ -345,7 +352,6 @@ export default function FeedingAdminPage() {
   const router = useRouter();
 
   const [checkingUser, setCheckingUser] = useState(true);
-  const [currentUser, setCurrentUser] = useState<TeacherRow | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [classes, setClasses] = useState<ClassRow[]>([]);
@@ -359,6 +365,17 @@ export default function FeedingAdminPage() {
 
   const [receivingClass, setReceivingClass] = useState("");
   const [syncingAttendance, setSyncingAttendance] = useState(false);
+  const [showingCachedData, setShowingCachedData] = useState(false);
+
+  const { online, pendingCount, syncing } = useOfflineStatus(OFFLINE_MODULE, async () => {
+    if (!navigator.onLine) return;
+
+    try {
+      await loadDashboardData();
+    } catch (error) {
+      console.warn("Feeding admin: post-sync reload failed:", error);
+    }
+  });
 
   const now = new Date();
   const today = now.toISOString().split("T")[0];
@@ -414,7 +431,6 @@ export default function FeedingAdminPage() {
         return;
       }
 
-      setCurrentUser(row);
       setCheckingUser(false);
     }
 
@@ -435,6 +451,9 @@ export default function FeedingAdminPage() {
     try {
       setLoading(true);
 
+      // Each read falls back to the last-synced copy of that table if the
+      // live query fails (offline), instead of silently resetting the
+      // dashboard to empty — see lib/offline/cachedQuery.ts.
       const [
         classesRes,
         studentsRes,
@@ -446,15 +465,15 @@ export default function FeedingAdminPage() {
         ghanaHolidaysRes,
         assignmentsRes,
       ] = await Promise.all([
-        supabase.from("classes").select("*").order("class_order", { ascending: true }),
-        supabase.from("active_students").select("*"),
-        supabase.from("teachers").select("*"),
-        supabase.from("daily_entries").select("*").eq("date", today),
-        supabase.from("received_money").select("*").eq("date", today),
-        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-        supabase.from("school_closures").select("*").order("start_date", { ascending: true }),
-        supabase.from("ghana_public_holidays").select("*"),
-        supabase.from("teacher_class_assignments").select("*"),
+        fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*").order("class_order", { ascending: true }), []),
+        fetchWithCache(OFFLINE_MODULE, "active_students", () => supabase.from("active_students").select("*"), []),
+        fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), []),
+        fetchWithCache(OFFLINE_MODULE, `daily_entries:${today}`, () => supabase.from("daily_entries").select("*").eq("date", today), []),
+        fetchWithCache(OFFLINE_MODULE, `received_money:${today}`, () => supabase.from("received_money").select("*").eq("date", today), []),
+        fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
+        fetchWithCache(OFFLINE_MODULE, "school_closures", () => supabase.from("school_closures").select("*").order("start_date", { ascending: true }), []),
+        fetchWithCache(OFFLINE_MODULE, "ghana_public_holidays", () => supabase.from("ghana_public_holidays").select("*"), []),
+        fetchWithCache(OFFLINE_MODULE, "teacher_class_assignments", () => supabase.from("teacher_class_assignments").select("*"), []),
       ]);
 
       setClasses(classesRes.data || []);
@@ -463,11 +482,14 @@ export default function FeedingAdminPage() {
       setTodayEntries(entriesRes.data || []);
       setReceivedRecords(receivedRes.data || []);
       setSettingsRow(settingsRes.data || null);
-      setClosures([
-        ...(closuresRes.data || []),
-        ...(!ghanaHolidaysRes.error ? ghanaHolidaysRes.data || [] : []),
-      ]);
-      setAssignments(!assignmentsRes.error ? assignmentsRes.data || [] : []);
+      setClosures([...(closuresRes.data || []), ...(ghanaHolidaysRes.data || [])]);
+      setAssignments(assignmentsRes.data || []);
+
+      setShowingCachedData(
+        [classesRes, studentsRes, teachersRes, entriesRes, receivedRes, settingsRes, closuresRes, ghanaHolidaysRes, assignmentsRes].some(
+          (result) => result.fromCache
+        )
+      );
     } catch (error) {
       console.error(error);
       alert("Failed to load feeding admin data.");
@@ -497,17 +519,42 @@ export default function FeedingAdminPage() {
       //         submission total displayed in "Money Today" ─────────────────
       const roundedAmount = roundMoney(amountReceived);
 
-      const { error } = await supabase.from("received_money").insert([
-        {
-          date: today,
-          class_name: className,
-          amount_received: roundedAmount,
-          teacher_names: teacherNames,
-          received_by: getTeacherName(currentUser || {}),
-        },
-      ]);
+      const payload = {
+        date: today,
+        className,
+        amountReceived: roundedAmount,
+        teacherNames,
+      };
 
-      if (error) throw error;
+      let syncedOnline = false;
+
+      if (navigator.onLine) {
+        try {
+          const response = await authedFetch("/api/feeding/mark-received", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body?.error || "Failed to mark money as received.");
+
+          syncedOnline = true;
+        } catch (error: any) {
+          if (!(error instanceof TypeError)) throw error;
+          // fall through to offline queue on a genuine network failure
+        }
+      }
+
+      if (!syncedOnline) {
+        await queueOfflineAction(OFFLINE_MODULE, "mark-received", "/api/feeding/mark-received", payload);
+        setReceivedRecords((prev) => [
+          ...prev,
+          { date: today, class_name: className, amount_received: roundedAmount, teacher_names: teacherNames },
+        ]);
+        alert(`${className} money marked as received offline — will sync automatically.`);
+        return;
+      }
 
       const classRow =
         classes.find((item) => getClassName(item) === className) || null;
@@ -969,6 +1016,12 @@ export default function FeedingAdminPage() {
             <p style={{ margin: "4px 0 0", fontSize: "13px", opacity: 0.9 }}>
               {termBegins || "-"} to {termEnds || "-"}
             </p>
+            <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              <OfflineStatusPill online={online} pendingCount={pendingCount} syncing={syncing} />
+              {showingCachedData && (
+                <span style={{ fontSize: "12px", opacity: 0.85 }}>Showing last synced data</span>
+              )}
+            </div>
           </div>
 
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
