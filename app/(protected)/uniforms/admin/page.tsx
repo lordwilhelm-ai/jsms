@@ -561,12 +561,33 @@ export default function UniformsPage() {
     );
   }, [payments, classFilter]);
 
+  // currentTerm defaults to the "Current Term" placeholder and academicYear
+  // to "" until loadSettings() finds a real school_settings row. Only scope
+  // by term/year once we actually have a real current term, so we never
+  // silently zero out every stat when settings failed to load.
+  const hasTermScope = Boolean(currentTerm) && currentTerm !== "Current Term";
+
+  // Payments belonging to the current term/academic year, used for the
+  // "Balance Owing" dashboard stat so balances from previous terms don't
+  // silently keep accumulating into the "current" figure forever.
+  const currentTermPayments = useMemo(() => {
+    if (!hasTermScope) return payments;
+
+    return payments.filter((payment) => {
+      const sameTerm = !payment.term || payment.term === currentTerm;
+      const sameYear =
+        !academicYear || !payment.academic_year || payment.academic_year === academicYear;
+
+      return sameTerm && sameYear;
+    });
+  }, [payments, hasTermScope, currentTerm, academicYear]);
+
   const stats = useMemo(() => {
     const totalCollected = payments.reduce(
       (sum, item) => sum + numberValue(item.amount_paid),
       0,
     );
-    const totalBalance = payments.reduce(
+    const totalBalance = currentTermPayments.reduce(
       (sum, item) => sum + Math.max(numberValue(item.balance), 0),
       0,
     );
@@ -575,7 +596,7 @@ export default function UniformsPage() {
       0,
     );
     const profit = totalCollected - totalExpenses;
-    const owing = payments.filter(
+    const owing = currentTermPayments.filter(
       (item) => numberValue(item.balance) > 0,
     ).length;
 
@@ -588,7 +609,7 @@ export default function UniformsPage() {
       owing,
       given: givenItems.length,
     };
-  }, [payments, givenItems, expenses]);
+  }, [payments, currentTermPayments, givenItems, expenses]);
 
   const studentSuggestions = useMemo(() => {
     const value = clean(paymentForm.student_search).toLowerCase();
@@ -649,7 +670,7 @@ export default function UniformsPage() {
     givenSelections,
   ]);
 
-  async function generateReceiptNumber(studentId: string) {
+  async function generateReceiptNumber(studentId: string, attempt = 0) {
     const lastFour = getLastFourStudentId(studentId);
     const today = getTodayReceiptCode();
     const { start, end } = getDayRange();
@@ -661,11 +682,62 @@ export default function UniformsPage() {
       .gte("created_at", start)
       .lte("created_at", end);
 
+    // `attempt` is added on top of the counted rows so a retry after a
+    // duplicate-receipt conflict (two staff saving at the same moment) does
+    // not just recompute the same colliding number.
     const count =
       (data || []).filter((row: any) =>
         clean(row.receipt_number).startsWith(prefix),
-      ).length + 1;
+      ).length +
+      1 +
+      attempt;
     return `${prefix}/${String(count).padStart(2, "0")}`;
+  }
+
+  function isDuplicateReceiptError(error: any) {
+    if (!error) return false;
+    if (error.code === "23505") return true;
+
+    const message = String(error.message || error.details || "").toLowerCase();
+    return message.includes("duplicate") && message.includes("receipt");
+  }
+
+  // Counting today's rows and appending +1 is not safe under concurrent
+  // writes. Retry with a fresh receipt number when the insert reports a
+  // duplicate-key conflict.
+  //
+  // NOTE: this retry only helps if the `receipt_number` column has a unique
+  // constraint/index in the database so a real collision is rejected as an
+  // error instead of silently inserted twice. If no such constraint exists,
+  // add one at the DB level.
+  async function insertUniformPaymentWithReceipt(
+    studentId: string,
+    buildPayload: (receiptNumber: string) => AnyRow,
+  ) {
+    const MAX_ATTEMPTS = 4;
+    let lastError: any = null;
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const receipt = await generateReceiptNumber(studentId, attempt);
+
+      const { data, error } = await supabase
+        .from("jsms_uniform_payments")
+        .insert(buildPayload(receipt))
+        .select("*")
+        .single();
+
+      if (!error) {
+        return { data, receipt, error: null };
+      }
+
+      lastError = error;
+
+      if (!isDuplicateReceiptError(error)) {
+        return { data: null, receipt, error };
+      }
+    }
+
+    return { data: null, receipt: "", error: lastError };
   }
 
   function handleStudentPick(student: StudentOption) {
@@ -712,42 +784,39 @@ export default function UniformsPage() {
       if (paymentPaid > paymentTotal)
         throw new Error("Amount paid cannot be more than total amount.");
 
-      const receipt = await generateReceiptNumber(paymentForm.student_id);
       const itemNames = selectedUniformOptions
         .map((item) => item.label)
         .join(", ");
 
-      const paymentPayload = {
-        student_id: paymentForm.student_id,
-        student_name: paymentForm.student_name,
-        class_name: paymentForm.class_name,
-        receipt_number: receipt,
-        item_name: itemNames,
-        quantity: selectedUniformOptions.length || 1,
-        selected_items: selectedUniformOptions.map((item) => ({
-          key: item.key,
-          item_name: item.label,
-          price: item.price,
-          quantity: 1,
-        })),
-        total_amount: paymentTotal,
-        amount_paid: paymentPaid,
-        balance: paymentBalance,
-        payment_status: nextPaymentStatus,
-        receipt_issued_by: currentUserName,
-        received_by: currentUserName,
-        payment_note: paymentForm.note,
-        term: currentTerm,
-        academic_year: academicYear,
-      };
+      const { data: paymentData, receipt, error } =
+        await insertUniformPaymentWithReceipt(
+          paymentForm.student_id,
+          (receiptNumber) => ({
+            student_id: paymentForm.student_id,
+            student_name: paymentForm.student_name,
+            class_name: paymentForm.class_name,
+            receipt_number: receiptNumber,
+            item_name: itemNames,
+            quantity: selectedUniformOptions.length || 1,
+            selected_items: selectedUniformOptions.map((item) => ({
+              key: item.key,
+              item_name: item.label,
+              price: item.price,
+              quantity: 1,
+            })),
+            total_amount: paymentTotal,
+            amount_paid: paymentPaid,
+            balance: paymentBalance,
+            payment_status: nextPaymentStatus,
+            receipt_issued_by: currentUserName,
+            received_by: currentUserName,
+            payment_note: paymentForm.note,
+            term: currentTerm,
+            academic_year: academicYear,
+          }),
+        );
 
-      const { data: paymentData, error } = await supabase
-        .from("jsms_uniform_payments")
-        .insert(paymentPayload)
-        .select("*")
-        .single();
-
-      if (error) throw error;
+      if (error || !paymentData) throw error || new Error("Could not record uniform payment.");
 
       const itemsPayload = selectedUniformOptions.map((item) => ({
         payment_id: paymentData.id,

@@ -647,9 +647,26 @@ export default function BooksDashboardPage() {
       .filter((student) => student.student_name && student.class_name);
   }
 
+  // currentTerm defaults to the "Current Term" placeholder and academicYear
+  // to "" until loadSettings() finds a real school_settings row. Only scope
+  // by term/year once we actually have a real current term, so we never
+  // silently hide every structure/payment when settings failed to load.
+  const hasTermScope = Boolean(currentTerm) && currentTerm !== "Current Term";
+
   const activeStructures = useMemo(() => {
-    return structures.filter((item) => item.is_active !== false);
-  }, [structures]);
+    return structures.filter((item) => {
+      if (item.is_active === false) return false;
+      if (!hasTermScope) return true;
+
+      // Structures created before term/year was tracked have a null term;
+      // treat those as always eligible rather than hiding them.
+      const sameTerm = !item.term || item.term === currentTerm;
+      const sameYear =
+        !academicYear || !item.academic_year || item.academic_year === academicYear;
+
+      return sameTerm && sameYear;
+    });
+  }, [structures, hasTermScope, currentTerm, academicYear]);
 
   const selectedStructure = activeStructures.find(
     (item) => item.id === paymentForm.structure_id
@@ -677,6 +694,21 @@ export default function BooksDashboardPage() {
     return payments.filter((payment) => payment.class_name === classFilter);
   }, [payments, classFilter]);
 
+  // Payments belonging to the current term/academic year, used for the
+  // dashboard debt/pending stats so balances from previous terms don't
+  // silently keep accumulating into "current" figures forever.
+  const currentTermPayments = useMemo(() => {
+    if (!hasTermScope) return payments;
+
+    return payments.filter((payment) => {
+      const sameTerm = !payment.term || payment.term === currentTerm;
+      const sameYear =
+        !academicYear || !payment.academic_year || payment.academic_year === academicYear;
+
+      return sameTerm && sameYear;
+    });
+  }, [payments, hasTermScope, currentTerm, academicYear]);
+
   const stats = useMemo(() => {
     const totalStock = books.reduce(
       (sum, book) => sum + numberValue(book.quantity),
@@ -697,7 +729,7 @@ export default function BooksDashboardPage() {
       0
     );
 
-    const studentDebt = payments.reduce(
+    const studentDebt = currentTermPayments.reduce(
       (sum, payment) => sum + Math.max(numberValue(payment.balance), 0),
       0
     );
@@ -707,7 +739,7 @@ export default function BooksDashboardPage() {
       0
     );
 
-    const pendingBookStudents = payments.filter((payment) => {
+    const pendingBookStudents = currentTermPayments.filter((payment) => {
       const expected = getExpectedBooksForPayment(payment);
       const given = booksGiven.filter(
         (item) => item.payment_id === payment.id
@@ -726,7 +758,15 @@ export default function BooksDashboardPage() {
       supplierDebt,
       pendingBookStudents,
     };
-  }, [books, payments, supplierPurchases, booksGiven, structureItems, paymentItems]);
+  }, [
+    books,
+    payments,
+    currentTermPayments,
+    supplierPurchases,
+    booksGiven,
+    structureItems,
+    paymentItems,
+  ]);
 
   function getExpectedBooksForPayment(payment: BookPayment) {
     if (payment.payment_type === "full_structure") {
@@ -790,7 +830,7 @@ export default function BooksDashboardPage() {
     return "Some Pending";
   }
 
-  async function generateReceiptNumber(studentId: string) {
+  async function generateReceiptNumber(studentId: string, attempt = 0) {
     const code = getTodayReceiptCode();
     const lastFour = getLastFourStudentId(studentId);
     const { start, end } = getDayRange();
@@ -806,8 +846,58 @@ export default function BooksDashboardPage() {
       throw new Error("Could not generate receipt number.");
     }
 
-    const nextCount = String(Number(count || 0) + 1).padStart(2, "0");
+    // `attempt` is added on top of the counted rows so a retry after a
+    // duplicate-receipt conflict (two staff saving at the same moment) does
+    // not just recompute the same colliding number.
+    const nextCount = String(Number(count || 0) + 1 + attempt).padStart(2, "0");
     return `JVSB/${code}/${lastFour}/${nextCount}`;
+  }
+
+  function isDuplicateReceiptError(error: any) {
+    if (!error) return false;
+    if (error.code === "23505") return true;
+
+    const message = String(error.message || error.details || "").toLowerCase();
+    return message.includes("duplicate") && message.includes("receipt");
+  }
+
+  // Counting today's rows and appending +1 is not safe under concurrent
+  // writes: two staff recording a payment for the same student at the same
+  // moment can compute the same receipt number. This retries with a fresh
+  // number when the insert reports a duplicate-key conflict.
+  //
+  // NOTE: this retry only helps if the `receipt_number` column has a unique
+  // constraint/index in the database so that a real collision is actually
+  // rejected as an error instead of silently inserted twice. If no such
+  // constraint exists, add one at the DB level.
+  async function insertBookPaymentWithReceipt(
+    studentId: string,
+    payload: Record<string, any>
+  ) {
+    const MAX_ATTEMPTS = 4;
+    let lastError: any = null;
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const receiptNumber = await generateReceiptNumber(studentId, attempt);
+
+      const { data, error } = await supabase
+        .from("jsms_book_payments")
+        .insert({ ...payload, receipt_number: receiptNumber })
+        .select("*")
+        .single();
+
+      if (!error) {
+        return { data, error: null };
+      }
+
+      lastError = error;
+
+      if (!isDuplicateReceiptError(error)) {
+        return { data: null, error };
+      }
+    }
+
+    return { data: null, error: lastError };
   }
 
   async function handleReceiptSearch(value?: string) {
@@ -1005,15 +1095,12 @@ export default function BooksDashboardPage() {
     }
 
     const balance = total - paid;
-    const receiptNumber = await generateReceiptNumber(studentId);
 
-    const { data: paymentData, error: paymentError } = await supabase
-      .from("jsms_book_payments")
-      .insert({
+    const { data: paymentData, error: paymentError } =
+      await insertBookPaymentWithReceipt(studentId, {
         student_id: studentId,
         student_name: studentName,
         class_name: className,
-        receipt_number: receiptNumber,
         payment_type: paymentForm.payment_type,
         structure_id: structureId,
         paid_for: paidFor,
@@ -1026,9 +1113,7 @@ export default function BooksDashboardPage() {
         payment_note: paymentForm.note.trim() || null,
         term: currentTerm,
         academic_year: academicYear || null,
-      })
-      .select("*")
-      .single();
+      });
 
     if (paymentError || !paymentData) {
       alert(`Could not record payment: ${paymentError?.message || "Unknown error"}`);
@@ -1137,6 +1222,43 @@ export default function BooksDashboardPage() {
       return;
     }
 
+    // Validate stock availability before committing anything. Sum requested
+    // quantities per book (in case the popup lists the same book more than
+    // once) so we never issue more copies than are currently recorded in stock.
+    const neededByBookId = new Map<string, number>();
+
+    for (const row of rows) {
+      if (!row.book_id) continue;
+      neededByBookId.set(
+        row.book_id,
+        (neededByBookId.get(row.book_id) || 0) + numberValue(row.quantity_given)
+      );
+    }
+
+    const insufficient: string[] = [];
+
+    for (const [bookId, neededQty] of neededByBookId.entries()) {
+      const book = books.find((item) => item.id === bookId);
+      if (!book) continue;
+
+      const available = numberValue(book.quantity);
+
+      if (neededQty > available) {
+        insufficient.push(
+          `${book.book_name}: need ${neededQty}, only ${available} in stock`
+        );
+      }
+    }
+
+    if (insufficient.length > 0) {
+      alert(
+        `Cannot issue books. Not enough stock:\n\n${insufficient.join(
+          "\n"
+        )}\n\nRestock these books first, or reduce the quantity being given.`
+      );
+      return;
+    }
+
     const { error } = await supabase.from("jsms_books_given").insert(rows);
 
     if (error) {
@@ -1144,18 +1266,16 @@ export default function BooksDashboardPage() {
       return;
     }
 
-    for (const row of rows) {
-      if (!row.book_id) continue;
-
-      const book = books.find((item) => item.id === row.book_id);
+    for (const [bookId, givenQty] of neededByBookId.entries()) {
+      const book = books.find((item) => item.id === bookId);
       if (!book) continue;
 
       await supabase
         .from("jsms_books")
         .update({
-          quantity: Math.max(numberValue(book.quantity) - numberValue(row.quantity_given), 0),
+          quantity: Math.max(numberValue(book.quantity) - givenQty, 0),
         })
-        .eq("id", book.id);
+        .eq("id", bookId);
     }
 
     for (const row of rows) {
