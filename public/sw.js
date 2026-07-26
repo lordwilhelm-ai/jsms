@@ -1,4 +1,13 @@
-const CACHE_NAME = "jsms-pwa-v1";
+// Bump this string whenever a change needs to force-clear what's cached on
+// returning devices (the activate handler below deletes every cache that
+// isn't this exact name). Static JS/CSS chunks under /_next/static/ don't
+// actually need that though — Next.js content-hashes those filenames, so a
+// new deploy always requests brand-new URLs; old cached chunks just become
+// harmless orphans rather than ever being served as "stale code" to a
+// newer page. Page navigations are network-first (see below), so an online
+// user always gets the current HTML/script tags regardless of this name —
+// the cached copies only ever get served as an OFFLINE fallback.
+const CACHE_NAME = "jsms-pwa-v2";
 
 self.addEventListener("install", function (event) {
   self.skipWaiting();
@@ -42,13 +51,44 @@ self.addEventListener("fetch", function (event) {
 
   if (url.origin !== self.location.origin) return;
 
-  if (
-    url.pathname.startsWith("/_next/") ||
-    url.pathname.startsWith("/api/")
-  ) {
+  // Data traffic (/api/*) is never cached here — offline reads/writes for
+  // those go through the app's own IndexedDB layer (lib/offline/), not
+  // HTTP-level caching, since Supabase's own REST calls are cross-origin
+  // and this same-origin-only handler can't intercept those anyway.
+  if (url.pathname.startsWith("/api/")) {
     return;
   }
 
+  // Static build assets (/_next/static/*) are content-hashed by Next.js —
+  // a given URL's content never changes, so cache-first is always safe and
+  // is what actually makes a previously-visited page's JS/CSS available
+  // with zero network at all, instead of only its HTML shell.
+  if (url.pathname.startsWith("/_next/static/")) {
+    event.respondWith(
+      caches.match(request).then(function (cached) {
+        if (cached) return cached;
+
+        return fetch(request).then(function (response) {
+          const responseClone = response.clone();
+
+          caches.open(CACHE_NAME).then(function (cache) {
+            cache.put(request, responseClone).catch(function () {
+              return undefined;
+            });
+          });
+
+          return response;
+        });
+      })
+    );
+
+    return;
+  }
+
+  // Everything else same-origin (page navigations, other /_next/* requests,
+  // static files) — network-first so an online user always gets the
+  // current version, falling back to whatever was last cached (or the
+  // "/website" shell as a last resort) when the network is unavailable.
   event.respondWith(
     fetch(request)
       .then(function (response) {
