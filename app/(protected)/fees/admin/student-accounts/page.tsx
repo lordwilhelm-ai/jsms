@@ -224,7 +224,11 @@ function normalizeText(value: unknown) {
   return String(value || "").trim().toLowerCase();
 }
 
-function rowMatchesStudent(row: AnyRow, student: AnyRow | null, jvsId: string) {
+function nameClassKey(name: string, className: string) {
+  return `${name}|${className}`;
+}
+
+function rowMatchesStudent(row: AnyRow, student: AnyRow | null, jvsId: string, allowNameFallback: boolean) {
   if (!student) return false;
 
   const paymentId = paymentStudentId(row);
@@ -237,7 +241,11 @@ function rowMatchesStudent(row: AnyRow, student: AnyRow | null, jvsId: string) {
   if (jvsId && paymentId === jvsId) return true;
   if (studentDbId && paymentId === studentDbId) return true;
 
-  // fallback for older rows that saved only name + class instead of JVS ID
+  // fallback for older rows that saved only name + class instead of JVS ID --
+  // only trust it when exactly one student shares this name+class, otherwise
+  // leave it unmatched rather than risk crediting the wrong student.
+  if (!allowNameFallback) return false;
+
   return Boolean(rowName && studentName && rowName === studentName && (!rowClass || rowClass === studentClass));
 }
 
@@ -545,23 +553,47 @@ export default function StudentAccountsPage() {
   const className = getClassName(selectedStudent);
   const classRow = classMap.get(className) || null;
 
+  // Counts how many loaded students share the same normalized name+class, so
+  // the name/class payment-matching fallback (for legacy rows with no
+  // student ID) can be restricted to only the unambiguous cases below.
+  const nameClassCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    students.forEach((student) => {
+      const key = nameClassKey(normalizeText(getStudentName(student)), normalizeText(getClassName(student)));
+      map.set(key, (map.get(key) || 0) + 1);
+    });
+    return map;
+  }, [students]);
+
+  const allowNameFallback = useMemo(() => {
+    if (!selectedStudent) return false;
+    const key = nameClassKey(normalizeText(getStudentName(selectedStudent)), normalizeText(className));
+    return (nameClassCounts.get(key) || 0) === 1;
+  }, [selectedStudent, className, nameClassCounts]);
+
   const studentFeePayments = useMemo(() => {
     return feePayments.filter(
-      (row) => rowMatchesStudent(row, selectedStudent, jvsStudentId) && sameAcademicScope(row, academicYear, currentTerm, scope)
+      (row) =>
+        rowMatchesStudent(row, selectedStudent, jvsStudentId, allowNameFallback) &&
+        sameAcademicScope(row, academicYear, currentTerm, scope)
     );
-  }, [feePayments, selectedStudent, jvsStudentId, academicYear, currentTerm, scope]);
+  }, [feePayments, selectedStudent, jvsStudentId, allowNameFallback, academicYear, currentTerm, scope]);
 
   const studentBookPayments = useMemo(() => {
     return bookPayments.filter(
-      (row) => rowMatchesStudent(row, selectedStudent, jvsStudentId) && sameAcademicScope(row, academicYear, currentTerm, scope)
+      (row) =>
+        rowMatchesStudent(row, selectedStudent, jvsStudentId, allowNameFallback) &&
+        sameAcademicScope(row, academicYear, currentTerm, scope)
     );
-  }, [bookPayments, selectedStudent, jvsStudentId, academicYear, currentTerm, scope]);
+  }, [bookPayments, selectedStudent, jvsStudentId, allowNameFallback, academicYear, currentTerm, scope]);
 
   const studentUniformPayments = useMemo(() => {
     return uniformPayments.filter(
-      (row) => rowMatchesStudent(row, selectedStudent, jvsStudentId) && sameAcademicScope(row, academicYear, currentTerm, scope)
+      (row) =>
+        rowMatchesStudent(row, selectedStudent, jvsStudentId, allowNameFallback) &&
+        sameAcademicScope(row, academicYear, currentTerm, scope)
     );
-  }, [uniformPayments, selectedStudent, jvsStudentId, academicYear, currentTerm, scope]);
+  }, [uniformPayments, selectedStudent, jvsStudentId, allowNameFallback, academicYear, currentTerm, scope]);
 
   const feeBox = useMemo<AccountBox>(() => {
     const feeCalc = computeFeeExpected({ student: selectedStudent, classRow, newStudentItems });

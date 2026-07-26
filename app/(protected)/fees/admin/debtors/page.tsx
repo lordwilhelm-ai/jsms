@@ -152,7 +152,18 @@ function getLevelGroup(classRow: AnyRow | null, className: string) {
   return String(classRow?.fee_level_group || "").trim() || getLevelGroupFromClassName(className);
 }
 
-function sameStudentPayment(payment: AnyRow, student: AnyRow, studentId: string, studentName: string, className: string) {
+function nameClassKey(name: string, className: string) {
+  return `${name}|${className}`;
+}
+
+function sameStudentPayment(
+  payment: AnyRow,
+  student: AnyRow,
+  studentId: string,
+  studentName: string,
+  className: string,
+  allowNameFallback: boolean
+) {
   const paymentStudentId = String(payment.student_id || payment.studentId || "").trim();
   const paymentName = String(payment.student_name || payment.full_name || payment.name || "").trim().toLowerCase();
   const paymentClass = String(payment.class_name || payment.className || payment.class || "").trim().toLowerCase();
@@ -160,6 +171,12 @@ function sameStudentPayment(payment: AnyRow, student: AnyRow, studentId: string,
 
   if (studentId && paymentStudentId === studentId) return true;
   if (uuid && paymentStudentId === uuid) return true;
+
+  // Fallback for older rows that saved only name + class instead of a
+  // student ID -- only trust it when exactly one student shares this
+  // name+class, otherwise leave it unmatched rather than risk crediting the
+  // wrong student.
+  if (!allowNameFallback) return false;
 
   return (
     Boolean(paymentName) &&
@@ -227,11 +244,16 @@ function calculateExpectedFee(params: {
 function matchScope(row: AnyRow, scope: Scope, currentTerm: string, academicYear: string) {
   if (scope === "all") return true;
 
+  // A payment row must be tagged with the *same* term/year as the school's
+  // current settings to count as "current term". Previously a row with a
+  // blank term/year silently matched every term forever (once recorded, it
+  // would keep reducing a debtor's balance in every future term). This now
+  // matches the standard used on the main Fees Dashboard.
   const rowTerm = String(row.term || row.current_term || "").trim().toLowerCase();
   const rowYear = String(row.academic_year || row.year || "").trim().toLowerCase();
 
-  const termOk = !currentTerm || !rowTerm || rowTerm === currentTerm.toLowerCase();
-  const yearOk = !academicYear || !rowYear || rowYear === academicYear.toLowerCase();
+  const termOk = !currentTerm || rowTerm === currentTerm.toLowerCase();
+  const yearOk = !academicYear || rowYear === academicYear.toLowerCase();
 
   return termOk && yearOk;
 }
@@ -422,6 +444,18 @@ export default function DebtorsPage() {
     ];
   }, [students]);
 
+  // Counts how many students share the same normalized name+class, so the
+  // name/class payment-matching fallback (for legacy rows with no student
+  // ID) can be restricted to only the unambiguous cases below.
+  const nameClassCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    students.forEach((student) => {
+      const key = nameClassKey(getStudentName(student).toLowerCase(), getClassName(student).toLowerCase());
+      map.set(key, (map.get(key) || 0) + 1);
+    });
+    return map;
+  }, [students]);
+
   const feeDebtors = useMemo(() => {
     const rows: FeeDebtor[] = [];
 
@@ -430,10 +464,12 @@ export default function DebtorsPage() {
       const studentName = getStudentName(student);
       const className = getClassName(student);
       const classRow = classMap.get(className) || null;
+      const allowNameFallback =
+        (nameClassCounts.get(nameClassKey(studentName.toLowerCase(), className.toLowerCase())) || 0) === 1;
 
       const payments = feePayments
         .filter((payment) => matchScope(payment, scope, currentTerm, academicYear))
-        .filter((payment) => sameStudentPayment(payment, student, studentId, studentName, className))
+        .filter((payment) => sameStudentPayment(payment, student, studentId, studentName, className, allowNameFallback))
         .sort((a, b) => new Date(paymentDate(b)).getTime() - new Date(paymentDate(a)).getTime());
 
       const paid = payments.reduce((sum, payment) => sum + numberValue(payment.amount_paid), 0);
@@ -458,7 +494,7 @@ export default function DebtorsPage() {
     });
 
     return rows.sort((a, b) => b.balance - a.balance);
-  }, [students, feePayments, classMap, newStudentItems, scope, currentTerm, academicYear]);
+  }, [students, feePayments, classMap, newStudentItems, scope, currentTerm, academicYear, nameClassCounts]);
 
   function buildPaymentDebtors(payments: AnyRow[]) {
     const grouped = new Map<string, PaymentDebtor>();

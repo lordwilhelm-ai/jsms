@@ -99,8 +99,12 @@ function sameCurrentPeriod(row: AnyRow, academicYear: string, currentTerm: strin
   const rowYear = stringValue(row.academic_year || row.academicYear || row.year);
   const rowTerm = stringValue(row.term || row.current_term || row.school_term);
 
-  const sameAcademicYear = academicYear ? !rowYear || rowYear === academicYear : true;
-  const sameTerm = currentTerm ? !rowTerm || rowTerm === currentTerm : true;
+  // A payment must be explicitly tagged with the current term/year to count
+  // as "current" -- a blank term/year on the row no longer auto-matches
+  // (that let a stale payment count toward every future term's balance).
+  // Matches the standard used on the main Fees Dashboard.
+  const sameAcademicYear = academicYear ? rowYear === academicYear : true;
+  const sameTerm = currentTerm ? rowTerm === currentTerm : true;
 
   return sameAcademicYear && sameTerm;
 }
@@ -160,7 +164,7 @@ function getBalanceOutstanding(row: AnyRow | undefined) {
   );
 }
 
-function rowMatchesStudent(row: AnyRow, student: AnyRow, studentIdValue: string) {
+function rowMatchesStudent(row: AnyRow, student: AnyRow, studentIdValue: string, allowNameFallback: boolean) {
   const studentDbId = stringValue(student.id);
   const studentName = getStudentName(student).toLowerCase();
 
@@ -178,6 +182,12 @@ function rowMatchesStudent(row: AnyRow, student: AnyRow, studentIdValue: string)
 
   if (studentIdValue && rowIds.includes(studentIdValue)) return true;
   if (studentDbId && rowIds.includes(studentDbId)) return true;
+
+  // Fallback for older rows that saved only a name instead of a student ID
+  // -- only trust it when exactly one student in this class shares this
+  // name, otherwise leave it unmatched rather than risk crediting the wrong
+  // student.
+  if (!allowNameFallback) return false;
 
   const rowName = stringValue(row.student_name || row.full_name || row.name).toLowerCase();
   return !!rowName && !!studentName && rowName === studentName;
@@ -523,6 +533,28 @@ export default function FeesTeacherPage() {
     });
   }, [feeStructure, selectedClass, academicYear, currentTerm]);
 
+  // Counts how many active students in the selected class share the same
+  // name, so the name-only payment-matching fallback (for legacy rows with
+  // no student ID) can be restricted to only the unambiguous cases below.
+  const classNameCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!selectedClass) return map;
+
+    students.forEach((student) => {
+      if (!isActiveStudent(student)) return;
+
+      const classId = stringValue(student.class_id || student.classId);
+      const className = getStudentClassName(student, classMapById);
+      const belongs = (classId && classId === selectedClass.id) || (!!className && className === selectedClass.name);
+      if (!belongs) return;
+
+      const key = getStudentName(student).toLowerCase();
+      map.set(key, (map.get(key) || 0) + 1);
+    });
+
+    return map;
+  }, [students, selectedClass, classMapById]);
+
   const studentRows = useMemo<StudentFeeRow[]>(() => {
     if (!selectedClass) return [];
 
@@ -560,9 +592,10 @@ export default function FeesTeacherPage() {
       })
       .map((student) => {
         const studentIdValue = getStudentId(student);
+        const allowNameFallback = (classNameCounts.get(getStudentName(student).toLowerCase()) || 0) === 1;
 
         const history = currentPayments
-          .filter((payment) => rowMatchesStudent(payment, student, studentIdValue))
+          .filter((payment) => rowMatchesStudent(payment, student, studentIdValue, allowNameFallback))
           .sort((a, b) => rowTime(b) - rowTime(a));
 
         const summedPaid = history.reduce((sum, row) => sum + getPaymentAmount(row), 0);
@@ -597,7 +630,7 @@ export default function FeesTeacherPage() {
       });
 
     return rows.sort((a, b) => a.studentNameValue.localeCompare(b.studentNameValue));
-  }, [students, selectedClass, classMapById, query, currentPayments, selectedClassRow, feeStructureForClass]);
+  }, [students, selectedClass, classMapById, query, currentPayments, selectedClassRow, feeStructureForClass, classNameCounts]);
 
   const summary = useMemo(() => {
     return {

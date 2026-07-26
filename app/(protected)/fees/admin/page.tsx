@@ -154,7 +154,11 @@ function isStudentActive(student: AnyRow) {
   return true;
 }
 
-function paymentBelongsToStudent(payment: AnyRow, student: AnyRow) {
+function nameClassKey(name: string, className: string) {
+  return `${name}|${className}`;
+}
+
+function paymentBelongsToStudent(payment: AnyRow, student: AnyRow, allowNameFallback: boolean) {
   const studentInternalId = cleanText(student.id);
   const studentJvsId = findRealJvsId(student);
   const studentName = normalizeText(student.full_name || student.student_name || student.name);
@@ -167,7 +171,12 @@ function paymentBelongsToStudent(payment: AnyRow, student: AnyRow) {
   if (studentJvsId && paymentStudentId.toUpperCase() === studentJvsId.toUpperCase()) return true;
   if (studentInternalId && paymentStudentId === studentInternalId) return true;
 
-  // Old rows sometimes saved name/class only. This keeps old payments alive.
+  // Old rows sometimes saved name/class only. Only trust that fallback when
+  // exactly one active student shares this name+class -- with two or more
+  // matching students, guessing which one the payment belongs to risks
+  // crediting the wrong student, so it's left unmatched instead.
+  if (!allowNameFallback) return false;
+
   if (studentName && paymentStudentName && studentName === paymentStudentName) {
     if (!studentClass || !paymentClass || studentClass === paymentClass) return true;
   }
@@ -204,7 +213,8 @@ function getArrears(student: AnyRow) {
 
 function getStudentSpecificFee(student: AnyRow) {
   return numberValue(
-    student.custom_fee_amount ||
+    student.scholarship_amount ||
+      student.custom_fee_amount ||
       student.custom_fee ||
       student.fee_amount ||
       student.special_fee_amount ||
@@ -379,14 +389,37 @@ export default function FeesAdminPage() {
     return map;
   }, [classes]);
 
+  const activeStudents = useMemo(() => students.filter(isStudentActive), [students]);
+
+  // Counts how many active students share the same normalized name+class, so
+  // the name/class payment-matching fallback (for legacy rows with no
+  // student ID) can be restricted to only the unambiguous cases below.
+  const nameClassCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    activeStudents.forEach((student) => {
+      const key = nameClassKey(
+        normalizeText(student.full_name || student.student_name || student.name),
+        normalizeText(getClassName(student))
+      );
+      map.set(key, (map.get(key) || 0) + 1);
+    });
+    return map;
+  }, [activeStudents]);
+
   const studentRows = useMemo<StudentFinanceRow[]>(() => {
-    return students
-      .filter(isStudentActive)
+    return activeStudents
       .map((student) => {
         const studentId = getStudentDisplayId(student);
         const className = getClassName(student);
         const classRow = classMap.get(className) || null;
-        const studentPayments = currentTermPayments.filter((row) => paymentBelongsToStudent(row, student));
+        const studentKey = nameClassKey(
+          normalizeText(student.full_name || student.student_name || student.name),
+          normalizeText(className)
+        );
+        const allowNameFallback = (nameClassCounts.get(studentKey) || 0) === 1;
+        const studentPayments = currentTermPayments.filter((row) =>
+          paymentBelongsToStudent(row, student, allowNameFallback)
+        );
         const finance = calcStudentFinancials(student, classRow, studentPayments);
 
         return {
@@ -398,7 +431,7 @@ export default function FeesAdminPage() {
         } as StudentFinanceRow;
       })
       .sort((a, b) => cleanText(a.full_name || a.student_name).localeCompare(cleanText(b.full_name || b.student_name)));
-  }, [students, classMap, currentTermPayments]);
+  }, [activeStudents, classMap, currentTermPayments, nameClassCounts]);
 
   const summary = useMemo(() => {
     const totalFeesDue = studentRows.reduce((sum, row) => sum + row.totalOwed, 0);

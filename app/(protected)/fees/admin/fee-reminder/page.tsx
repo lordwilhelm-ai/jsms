@@ -149,7 +149,18 @@ function getParentPhone(row: AnyRow) {
   return text(found);
 }
 
-function paymentMatchesStudent(payment: AnyRow, student: AnyRow, studentId: string, studentName: string, className: string) {
+function nameClassKey(name: string, className: string) {
+  return `${name}|${className}`;
+}
+
+function paymentMatchesStudent(
+  payment: AnyRow,
+  student: AnyRow,
+  studentId: string,
+  studentName: string,
+  className: string,
+  allowNameFallback: boolean
+) {
   const paymentStudentId = text(payment.student_id || payment.studentId);
   const uuid = text(student.id);
   const paymentName = lower(payment.student_name || payment.full_name || payment.name);
@@ -158,6 +169,12 @@ function paymentMatchesStudent(payment: AnyRow, student: AnyRow, studentId: stri
   if (studentId && paymentStudentId === studentId) return true;
   if (uuid && paymentStudentId === uuid) return true;
 
+  // Fallback for older rows that saved only name + class instead of a
+  // student ID -- only trust it when exactly one student shares this
+  // name+class, otherwise leave it unmatched rather than risk crediting the
+  // wrong student.
+  if (!allowNameFallback) return false;
+
   return Boolean(paymentName) && paymentName === lower(studentName) && (!paymentClass || paymentClass === lower(className));
 }
 
@@ -165,8 +182,12 @@ function currentTermPayment(payment: AnyRow, academicYear: string, currentTerm: 
   const year = lower(payment.academic_year || payment.year);
   const term = lower(payment.term || payment.current_term);
 
-  const yearOk = !year || !academicYear || year === lower(academicYear);
-  const termOk = !term || !currentTerm || term === lower(currentTerm);
+  // A payment must be explicitly tagged with the current term/year to count
+  // as "current" -- a blank term/year on the row no longer auto-matches
+  // (that let a stale payment count toward every future term's balance).
+  // Matches the standard used on the main Fees Dashboard.
+  const yearOk = !academicYear || year === lower(academicYear);
+  const termOk = !currentTerm || term === lower(currentTerm);
 
   return yearOk && termOk;
 }
@@ -309,6 +330,18 @@ export default function FeeReminderPage() {
 
   const levelOptions = ["Playroom", "KG", "Lower Primary", "Upper Primary", "JHS"];
 
+  // Counts how many students share the same normalized name+class, so the
+  // name/class payment-matching fallback (for legacy rows with no student
+  // ID) can be restricted to only the unambiguous cases below.
+  const nameClassCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    students.forEach((student) => {
+      const key = nameClassKey(lower(getStudentName(student)), lower(getClassName(student)));
+      map.set(key, (map.get(key) || 0) + 1);
+    });
+    return map;
+  }, [students]);
+
   const allFinanceRows = useMemo<Recipient[]>(() => {
     return students
       .filter((student) => (typeof student.active === "boolean" ? student.active : true))
@@ -319,11 +352,13 @@ export default function FeeReminderPage() {
         const classRow = classMap.get(className) || null;
         const levelGroup = text(classRow?.fee_level_group) || getLevelGroupFromClassName(className);
         const expected = calculateExpected(student, classRow, newItems);
+        const allowNameFallback =
+          (nameClassCounts.get(nameClassKey(lower(studentName), lower(className))) || 0) === 1;
 
         const studentPayments = payments
           .filter(
             (payment) =>
-              paymentMatchesStudent(payment, student, studentId, studentName, className) &&
+              paymentMatchesStudent(payment, student, studentId, studentName, className, allowNameFallback) &&
               currentTermPayment(payment, academicYear, currentTerm)
           )
           .sort((a, b) => {
@@ -371,7 +406,7 @@ export default function FeeReminderPage() {
         ...row,
         message: fillMessage(messageTemplate, row, { schoolName, academicYear, currentTerm }),
       }));
-  }, [students, classMap, newItems, payments, academicYear, currentTerm, customPath, messageTemplate, schoolName]);
+  }, [students, classMap, newItems, payments, academicYear, currentTerm, customPath, messageTemplate, schoolName, nameClassCounts]);
 
   const individualMatches = useMemo(() => {
     const q = lower(studentSearch);

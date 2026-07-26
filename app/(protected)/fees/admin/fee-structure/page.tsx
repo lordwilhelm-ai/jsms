@@ -5,6 +5,7 @@ import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 
 type AnyRow = Record<string, any>;
 
@@ -161,6 +162,26 @@ function formatMoney(value: number) {
 
 function getErrorMessage(error: any, fallback: string) {
   return error?.message || error?.details || error?.hint || fallback;
+}
+
+// All fee-structure writes (classes.fee_* and new_student_fee_items) are
+// proxied through this authorized API route instead of writing directly to
+// Supabase from the browser client, so an admin-only action can't be
+// performed by a direct API/script call without a valid staff session.
+async function callStructureApi(body: AnyRow) {
+  const res = await authedFetch("/api/fees/update-structure", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new Error(data?.error || "Request failed.");
+  }
+
+  return data;
 }
 
 export default function FeesStructurePage() {
@@ -373,9 +394,15 @@ export default function FeesStructurePage() {
 
       const ids = affectedClasses.map((row) => row.id);
 
-      const { error } = await supabase.from("classes").update(payload).in("id", ids);
-
-      if (error) throw error;
+      await callStructureApi({
+        action: "save-level-fees",
+        classIds: ids,
+        level,
+        feeReturning: payload.fee_returning,
+        feeLacoste: payload.fee_lacoste,
+        feeMonwed: payload.fee_monwed,
+        feeFriday: payload.fee_friday,
+      });
 
       setClasses((prev) =>
         prev.map((item) =>
@@ -419,8 +446,15 @@ export default function FeesStructurePage() {
 
         const ids = affectedClasses.map((row) => row.id);
 
-        const { error } = await supabase.from("classes").update(payload).in("id", ids);
-        if (error) throw error;
+        await callStructureApi({
+          action: "save-level-fees",
+          classIds: ids,
+          level,
+          feeReturning: payload.fee_returning,
+          feeLacoste: payload.fee_lacoste,
+          feeMonwed: payload.fee_monwed,
+          feeFriday: payload.fee_friday,
+        });
       }
 
       setClasses((prev) =>
@@ -472,38 +506,32 @@ export default function FeesStructurePage() {
           amount,
         };
 
-        const { error } = await supabase
-          .from("new_student_fee_items")
-          .update(payload)
-          .eq("id", itemForm.id);
-
-        if (error) throw error;
+        const result = await callStructureApi({
+          action: "save-item",
+          id: itemForm.id,
+          itemName,
+          category,
+          amount,
+        });
 
         setNewStudentItems((prev) =>
-          prev.map((item) => (item.id === itemForm.id ? { ...item, ...payload } : item))
+          prev.map((item) => (item.id === itemForm.id ? { ...item, ...payload, ...(result.item || {}) } : item))
         );
 
         setMessage(`${itemName} updated.`);
       } else {
         const currentItems = newStudentItems.filter((item) => item.level_group === activeLevel);
-        const payload = {
-          level_group: activeLevel,
-          item_name: itemName,
+
+        const result = await callStructureApi({
+          action: "save-item",
+          levelGroup: activeLevel,
+          itemName,
           category,
           amount,
-          sort_order: currentItems.length + 1,
-          is_active: true,
-        };
+          sortOrder: currentItems.length + 1,
+        });
 
-        const { data, error } = await supabase
-          .from("new_student_fee_items")
-          .insert(payload)
-          .select("*")
-          .single();
-
-        if (error) throw error;
-
-        setNewStudentItems((prev) => [...prev, data as FeeItem]);
+        setNewStudentItems((prev) => [...prev, result.item as FeeItem]);
         setMessage(`${itemName} added to ${activeLevel}.`);
       }
 
@@ -524,12 +552,7 @@ export default function FeesStructurePage() {
       setSavingItem(true);
       setMessage("");
 
-      const { error } = await supabase
-        .from("new_student_fee_items")
-        .update({ is_active: false })
-        .eq("id", item.id);
-
-      if (error) throw error;
+      await callStructureApi({ action: "delete-item", id: item.id });
 
       setNewStudentItems((prev) => prev.filter((row) => row.id !== item.id));
       setMessage(`${item.item_name} removed.`);
@@ -554,23 +577,14 @@ export default function FeesStructurePage() {
       setMessage("");
 
       const defaults = DEFAULT_NEW_STUDENT_ITEMS[level] || [];
-      const payload = defaults.map((item, index) => ({
-        level_group: level,
-        item_name: item.item_name,
-        category: item.category,
-        amount: 0,
-        sort_order: index + 1,
-        is_active: true,
-      }));
 
-      const { data, error } = await supabase
-        .from("new_student_fee_items")
-        .insert(payload)
-        .select("*");
+      const result = await callStructureApi({
+        action: "seed-defaults",
+        levelGroup: level,
+        items: defaults,
+      });
 
-      if (error) throw error;
-
-      setNewStudentItems((prev) => [...prev, ...((data || []) as FeeItem[])]);
+      setNewStudentItems((prev) => [...prev, ...((result.items || []) as FeeItem[])]);
       setMessage(`Default new student structure added for ${level}. Enter the amounts now.`);
     } catch (error) {
       console.error(error);

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 import { notifyFeePayment } from "@/lib/jsmsNotify";
 
 type AnyRow = Record<string, any>;
@@ -54,7 +55,15 @@ const CLASS_ORDER = [
   "JHS 3",
 ];
 
-const STORAGE_KEY = "jvs_fees_record_payment_drafts_v6";
+// Drafts are stored per academic-year+term scope (not just by student ID), so
+// a cached draft from a past term can never be shown/saved as if it were the
+// current term's arrears/scholarship setup. Bumped to v7 because the storage
+// shape changed from a flat student-keyed map to a scope-keyed map of maps.
+const STORAGE_KEY = "jvs_fees_record_payment_drafts_v7";
+
+function getDraftScopeKey(academicYear: string, currentTerm: string) {
+  return academicYear && currentTerm ? `${academicYear}|${currentTerm}` : "__no_term__";
+}
 
 const COLORS = {
   bg: "#f7f4ec",
@@ -222,7 +231,7 @@ export default function RecordPaymentPage() {
 
   const [selectedClass, setSelectedClass] = useState(CLASS_ORDER[0]);
   const [studentSearch, setStudentSearch] = useState("");
-  const [drafts, setDrafts] = useState<Record<string, DraftRow>>({});
+  const [draftStore, setDraftStore] = useState<Record<string, Record<string, DraftRow>>>({});
 
   const [savingStudentId, setSavingStudentId] = useState("");
   const [savingPayment, setSavingPayment] = useState(false);
@@ -238,15 +247,15 @@ export default function RecordPaymentPage() {
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) setDrafts(JSON.parse(raw));
+      if (raw) setDraftStore(JSON.parse(raw));
     } catch {}
   }, []);
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(drafts));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(draftStore));
     } catch {}
-  }, [drafts]);
+  }, [draftStore]);
 
   useEffect(() => {
     let active = true;
@@ -321,6 +330,8 @@ export default function RecordPaymentPage() {
 
   const academicYear = String(settingsRow?.academic_year || "");
   const currentTerm = String(settingsRow?.current_term || "");
+  const draftScopeKey = getDraftScopeKey(academicYear, currentTerm);
+  const drafts = draftStore[draftScopeKey] || {};
 
   useEffect(() => {
     if (!academicYear || !currentTerm) return;
@@ -419,13 +430,19 @@ export default function RecordPaymentPage() {
 
   function updateDraft(student: AnyRow, patch: Partial<DraftRow>) {
     const studentIdValue = getStudentIdValue(student);
-    setDrafts((prev) => ({
-      ...prev,
-      [studentIdValue]: {
-        ...(prev[studentIdValue] || getDefaultDraft(student, currentTerm, academicYear)),
-        ...patch,
-      },
-    }));
+    setDraftStore((prev) => {
+      const scopeDrafts = prev[draftScopeKey] || {};
+      return {
+        ...prev,
+        [draftScopeKey]: {
+          ...scopeDrafts,
+          [studentIdValue]: {
+            ...(scopeDrafts[studentIdValue] || getDefaultDraft(student, currentTerm, academicYear)),
+            ...patch,
+          },
+        },
+      };
+    });
   }
 
   async function saveStudentSetup(student: AnyRow) {
@@ -436,32 +453,36 @@ export default function RecordPaymentPage() {
       setSavingStudentId(studentIdValue);
       setMessage("");
 
-      const scholarshipTypeMap: Record<ScholarshipType, string> = {
-        regular: "none",
-        full: "full",
-        half: "half",
-        custom: "custom",
-      };
-
       const isNewStudent = draft.studentType === "new";
-      const payload = {
-        is_new: isNewStudent,
-        is_new_student: isNewStudent,
-        student_type: isNewStudent ? "new" : "continuous",
-        admission_term:
-          isNewStudent && !student.admission_term ? currentTerm || null : student.admission_term || null,
-        admission_academic_year:
-          isNewStudent && !student.admission_academic_year
-            ? academicYear || null
-            : student.admission_academic_year || null,
-        scholarship_type: scholarshipTypeMap[draft.scholarshipType],
-        scholarship_amount:
-          draft.scholarshipType === "custom" ? numberValue(draft.customScholarshipAmount) : 0,
-        arrears: numberValue(draft.arrears),
-      };
+      const admissionTerm =
+        isNewStudent && !student.admission_term ? currentTerm || null : student.admission_term || null;
+      const admissionAcademicYear =
+        isNewStudent && !student.admission_academic_year
+          ? academicYear || null
+          : student.admission_academic_year || null;
 
-      const { error } = await supabase.from("students").update(payload).eq("id", student.id);
-      if (error) throw error;
+      // Proxied through an authorized API route (requireStaffRole + service
+      // role) instead of writing to `students` directly from the browser
+      // client, so this admin-only action can't be performed by a direct
+      // API/script call without a valid staff session.
+      const response = await authedFetch("/api/fees/save-student-setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          studentId: student.id,
+          isNewStudent,
+          admissionTerm,
+          admissionAcademicYear,
+          scholarshipType: draft.scholarshipType,
+          customScholarshipAmount: draft.customScholarshipAmount,
+          arrears: draft.arrears,
+        }),
+      });
+
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.error || "Failed to save.");
+
+      const payload = body.payload || {};
 
       setStudents((prev) =>
         prev.map((row) => (row.id === student.id ? { ...row, ...payload } : row))
@@ -508,49 +529,34 @@ export default function RecordPaymentPage() {
       setSavingPayment(true);
       setMessage("");
 
-      const now = new Date();
+      // Proxied through an authorized API route (requireStaffRole + service
+      // role): the receipt sequence number, cumulative/balance figures, and
+      // "entered by"/"recorded by" (resolved server-side from the actual
+      // logged-in staff session, not a hardcoded "Admin") are all computed
+      // there instead of trusting the browser client.
+      const response = await authedFetch("/api/fees/record-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          studentIdValue: paymentModal.studentIdValue,
+          studentName: paymentModal.studentName,
+          classNameValue: paymentModal.classNameValue,
+          academicYear,
+          term: currentTerm,
+          totalOwed: paymentModal.totalOwed,
+          totalPaidBefore: paymentModal.totalPaid,
+          amount,
+          paymentMethod,
+          notes: paymentNotes || null,
+        }),
+      });
 
-      const { count: previousPaymentCount, error: countError } = await supabase
-        .from("fee_payments")
-        .select("id", { count: "exact", head: true })
-        .eq("student_id", paymentModal.studentIdValue);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.error || "Failed to record payment.");
 
-      if (countError) throw countError;
-
-      const receiptNo = buildReceiptNo(
-        paymentModal.studentIdValue,
-        payments,
-        previousPaymentCount || 0
-      );
-      const paymentDate = now.toISOString().slice(0, 10);
-      const cumulativePaid = paymentModal.totalPaid + amount;
-      const outstandingBalance = Math.max(paymentModal.totalOwed - cumulativePaid, 0);
-
-      const payload = {
-        receipt_no: receiptNo,
-        student_id: paymentModal.studentIdValue,
-        student_name: paymentModal.studentName,
-        class_name: paymentModal.classNameValue,
-        academic_year: academicYear,
-        term: currentTerm,
-        payment_type: "fees",
-        total_fee: paymentModal.totalOwed,
-        amount_paid: amount,
-        cumulative_paid: cumulativePaid,
-        balance_after_payment: outstandingBalance,
-        payment_method: paymentMethod,
-        method: paymentMethod,
-        payment_date: paymentDate,
-        entered_by: "Admin",
-        recorded_by: "Admin",
-        note: paymentNotes || null,
-        notes: paymentNotes || null,
-        created_at: now.toISOString(),
-        updated_at: now.toISOString(),
-      };
-
-      const { error } = await supabase.from("fee_payments").insert([payload]);
-      if (error) throw error;
+      const payment = body.payment || {};
+      const receiptNo = String(payment.receipt_no || "");
+      const outstandingBalance = numberValue(payment.balance_after_payment);
 
       try {
         await notifyFeePayment({
@@ -565,7 +571,7 @@ export default function RecordPaymentPage() {
         console.warn("Payment saved, but notification failed:", notifyError);
       }
 
-      setPayments((prev) => [payload, ...prev]);
+      setPayments((prev) => [payment, ...prev]);
       setPaymentModal(null);
       setPaymentAmount("");
       setPaymentNotes("");
