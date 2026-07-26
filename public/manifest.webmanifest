@@ -2,7 +2,7 @@
   "name": "JSMS",
   "short_name": "JSMS",
   "description": "JSMS",
-  "start_url": "/dashboard/admin",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",

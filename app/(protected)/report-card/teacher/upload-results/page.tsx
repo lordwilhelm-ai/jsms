@@ -282,6 +282,14 @@ export default function UploadResultsPage() {
   const [messageTone, setMessageTone] = useState<"info" | "success" | "error">("info");
   const [assignmentError, setAssignmentError] = useState("");
   const bottomMessageRef = useRef<HTMLDivElement | null>(null);
+  // Tracks which class+subject scope `rows` currently holds data for, so the
+  // autosave effect below can tell "rows just changed because the teacher
+  // typed" apart from "rows still holds the previous subject's data while
+  // the next subject's fetch is in flight" — without this, switching subject
+  // fires the autosave effect (its deps include selectedSubject) before the
+  // fetch for the new subject resolves, writing the OLD subject's scores
+  // into the NEW subject's draft slot.
+  const rowsScopeRef = useRef<string>("");
 
   const availableSubjects = useMemo(() => {
     return uniqueList(subjectOptions);
@@ -553,6 +561,7 @@ export default function UploadResultsPage() {
       return draftRow ? recalcRow({ ...row, ...draftRow }) : row;
     });
 
+    rowsScopeRef.current = scopeKey;
     setRows(applyPositions(mergedRows));
     setLoadingStudents(false);
   }
@@ -589,6 +598,12 @@ export default function UploadResultsPage() {
     if (!settings.academic_year || !settings.current_term) return;
 
     const scopeKey = getDraftScopeKey(selectedClass, selectedSubject, settings.academic_year, settings.current_term);
+
+    // `rows` may still hold the previous scope's data while the fetch for
+    // this scope is in flight (see rowsScopeRef declaration above) — skip
+    // until loadStudentsAndScores has actually caught rows up to scopeKey.
+    if (rowsScopeRef.current !== scopeKey) return;
+
     const store = loadDraftStore();
     const scopeDraft: Record<string, ScoreRow> = {};
 
