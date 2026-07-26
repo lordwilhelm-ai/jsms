@@ -3,7 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
+import { queueOfflineAction } from "@/lib/offline/sync";
+import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
+import OfflineStatusPill from "@/app/components/OfflineStatusPill";
 import { notifyBookIssued } from "@/lib/jsmsNotify";
+
+const OFFLINE_MODULE = "books";
 import {
   getUniversalReceiptSuggestions,
   searchUniversalReceipt,
@@ -203,26 +209,6 @@ function formatDate(value: string | null | undefined) {
   });
 }
 
-function getTodayReceiptCode() {
-  const now = new Date();
-  const year = String(now.getFullYear()).slice(-2);
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}${day}`;
-}
-
-function getDayRange() {
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-
-  const end = new Date();
-  end.setHours(23, 59, 59, 999);
-
-  return {
-    start: start.toISOString(),
-    end: end.toISOString(),
-  };
-}
-
 function getLastFourStudentId(studentId: string) {
   const digitsOnly = String(studentId || "").replace(/\D/g, "");
 
@@ -403,6 +389,35 @@ export default function BooksDashboardPage() {
   const [issueSelections, setIssueSelections] = useState<
     Record<string, { checked: boolean; quantity: string }>
   >({});
+
+  // Set only when handleRecordPayment couldn't reach the server at all
+  // (offline). The popup still shows using a LOCAL fake payment
+  // (pendingIssue.payment.id = "local-pending-payment") so the UX matches
+  // the online flow exactly; saveBooksGivenFromPopup checks this to know it
+  // must bundle the payment + given books into ONE combined offline action
+  // instead of two, since there's no real payment id yet to hand off.
+  const [offlinePaymentPayload, setOfflinePaymentPayload] = useState<Record<string, any> | null>(null);
+
+  // Books that came back negative-stock after the last sync — surfaced as a
+  // reconciliation banner rather than blocking anything (see the approved
+  // "issue always succeeds, reconcile after sync" design).
+  const [oversoldBooks, setOversoldBooks] = useState<string[]>([]);
+
+  async function checkForOversoldBooks() {
+    const { data } = await supabase.from("jsms_books").select("book_name, quantity").lt("quantity", 0);
+    setOversoldBooks((data || []).map((row: any) => `${row.book_name} (${row.quantity})`));
+  }
+
+  const { online, pendingCount, syncing } = useOfflineStatus(OFFLINE_MODULE, async () => {
+    if (!navigator.onLine) return;
+
+    try {
+      await loadEverything();
+      await checkForOversoldBooks();
+    } catch (error) {
+      console.warn("Books: post-sync reload failed:", error);
+    }
+  });
 
   useEffect(() => {
     void loadEverything();
@@ -830,76 +845,6 @@ export default function BooksDashboardPage() {
     return "Some Pending";
   }
 
-  async function generateReceiptNumber(studentId: string, attempt = 0) {
-    const code = getTodayReceiptCode();
-    const lastFour = getLastFourStudentId(studentId);
-    const { start, end } = getDayRange();
-
-    const { count, error } = await supabase
-      .from("jsms_book_payments")
-      .select("id", { count: "exact", head: true })
-      .eq("student_id", studentId)
-      .gte("created_at", start)
-      .lte("created_at", end);
-
-    if (error) {
-      throw new Error("Could not generate receipt number.");
-    }
-
-    // `attempt` is added on top of the counted rows so a retry after a
-    // duplicate-receipt conflict (two staff saving at the same moment) does
-    // not just recompute the same colliding number.
-    const nextCount = String(Number(count || 0) + 1 + attempt).padStart(2, "0");
-    return `JVSB/${code}/${lastFour}/${nextCount}`;
-  }
-
-  function isDuplicateReceiptError(error: any) {
-    if (!error) return false;
-    if (error.code === "23505") return true;
-
-    const message = String(error.message || error.details || "").toLowerCase();
-    return message.includes("duplicate") && message.includes("receipt");
-  }
-
-  // Counting today's rows and appending +1 is not safe under concurrent
-  // writes: two staff recording a payment for the same student at the same
-  // moment can compute the same receipt number. This retries with a fresh
-  // number when the insert reports a duplicate-key conflict.
-  //
-  // NOTE: this retry only helps if the `receipt_number` column has a unique
-  // constraint/index in the database so that a real collision is actually
-  // rejected as an error instead of silently inserted twice. If no such
-  // constraint exists, add one at the DB level.
-  async function insertBookPaymentWithReceipt(
-    studentId: string,
-    payload: Record<string, any>
-  ) {
-    const MAX_ATTEMPTS = 4;
-    let lastError: any = null;
-
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const receiptNumber = await generateReceiptNumber(studentId, attempt);
-
-      const { data, error } = await supabase
-        .from("jsms_book_payments")
-        .insert({ ...payload, receipt_number: receiptNumber })
-        .select("*")
-        .single();
-
-      if (!error) {
-        return { data, error: null };
-      }
-
-      lastError = error;
-
-      if (!isDuplicateReceiptError(error)) {
-        return { data: null, error };
-      }
-    }
-
-    return { data: null, error: lastError };
-  }
-
   async function handleReceiptSearch(value?: string) {
     const receiptValue = String(value || receiptSearch).trim();
 
@@ -1096,11 +1041,68 @@ export default function BooksDashboardPage() {
 
     const balance = total - paid;
 
-    const { data: paymentData, error: paymentError } =
-      await insertBookPaymentWithReceipt(studentId, {
+    const requestPayload = {
+      studentId,
+      studentName,
+      className,
+      paymentType: paymentForm.payment_type,
+      structureId,
+      paidFor,
+      totalAmount: total,
+      amountPaid: paid,
+      term: currentTerm,
+      academicYear: academicYear || null,
+      note: paymentForm.note.trim() || null,
+      specificBooks:
+        paymentForm.payment_type === "specific_books"
+          ? selectedSpecificBooks.map((book) => ({
+              id: book.id,
+              book_name: book.book_name,
+              selling_price: numberValue(book.selling_price),
+            }))
+          : [],
+    };
+
+    let paymentData: BookPayment | null = null;
+    let wentOffline = false;
+
+    if (navigator.onLine) {
+      try {
+        const response = await authedFetch("/api/books/record-payment", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestPayload),
+        });
+
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          alert(`Could not record payment: ${body?.error || "Unknown error"}`);
+          return;
+        }
+
+        paymentData = body.payment as BookPayment;
+      } catch (error: any) {
+        if (!(error instanceof TypeError)) {
+          alert(`Could not record payment: ${error?.message || "Unknown error"}`);
+          return;
+        }
+        wentOffline = true;
+      }
+    } else {
+      wentOffline = true;
+    }
+
+    if (wentOffline) {
+      // Don't queue yet — the popup below still needs the given-books
+      // selection, and both steps get bundled into ONE offline action once
+      // the popup is confirmed (see saveBooksGivenFromPopup).
+      setOfflinePaymentPayload(requestPayload);
+      paymentData = {
+        id: "local-pending-payment",
         student_id: studentId,
         student_name: studentName,
         class_name: className,
+        receipt_number: "Pending sync",
         payment_type: paymentForm.payment_type,
         structure_id: structureId,
         paid_for: paidFor,
@@ -1113,31 +1115,13 @@ export default function BooksDashboardPage() {
         payment_note: paymentForm.note.trim() || null,
         term: currentTerm,
         academic_year: academicYear || null,
-      });
-
-    if (paymentError || !paymentData) {
-      alert(`Could not record payment: ${paymentError?.message || "Unknown error"}`);
-      return;
+        created_at: new Date().toISOString(),
+      };
+    } else {
+      setOfflinePaymentPayload(null);
     }
 
-    if (paymentForm.payment_type === "specific_books") {
-      const rows = selectedSpecificBooks.map((book) => ({
-        payment_id: paymentData.id,
-        book_id: book.id,
-        book_name: book.book_name,
-        quantity: 1,
-        unit_price: numberValue(book.selling_price),
-        total_price: numberValue(book.selling_price),
-      }));
-
-      const { error: itemsError } = await supabase
-        .from("jsms_book_payment_items")
-        .insert(rows);
-
-      if (itemsError) {
-        alert(`Payment saved, but selected books failed: ${itemsError.message}`);
-      }
-    }
+    if (!paymentData) return;
 
     const expectedBooks =
       paymentForm.payment_type === "full_structure"
@@ -1155,7 +1139,7 @@ export default function BooksDashboardPage() {
           }));
 
     setPendingIssue({
-      payment: paymentData as BookPayment,
+      payment: paymentData,
       expectedBooks,
     });
 
@@ -1183,7 +1167,10 @@ export default function BooksDashboardPage() {
     });
 
     setSelectedSpecificBookIds([]);
-    await loadEverything();
+
+    if (!wentOffline) {
+      await loadEverything();
+    }
   }
 
   async function saveBooksGivenFromPopup() {
@@ -1222,11 +1209,12 @@ export default function BooksDashboardPage() {
       return;
     }
 
-    // Validate stock availability before committing anything. Sum requested
-    // quantities per book (in case the popup lists the same book more than
-    // once) so we never issue more copies than are currently recorded in stock.
+    // Stock check against the LAST-SYNCED local cache only — this can be
+    // stale (another device may have issued the same book while this one
+    // was offline), and that's an accepted tradeoff: issuing is allowed to
+    // proceed anyway, and any resulting oversell surfaces afterward via the
+    // reconciliation banner rather than blocking staff at the shelf.
     const neededByBookId = new Map<string, number>();
-
     for (const row of rows) {
       if (!row.book_id) continue;
       neededByBookId.set(
@@ -1235,69 +1223,117 @@ export default function BooksDashboardPage() {
       );
     }
 
-    const insufficient: string[] = [];
+    const givenItemsPayload = rows.map((row) => ({
+      book_id: row.book_id,
+      book_name: row.book_name,
+      quantity_given: row.quantity_given,
+    }));
 
-    for (const [bookId, neededQty] of neededByBookId.entries()) {
-      const book = books.find((item) => item.id === bookId);
-      if (!book) continue;
-
-      const available = numberValue(book.quantity);
-
-      if (neededQty > available) {
-        insufficient.push(
-          `${book.book_name}: need ${neededQty}, only ${available} in stock`
-        );
-      }
-    }
-
-    if (insufficient.length > 0) {
-      alert(
-        `Cannot issue books. Not enough stock:\n\n${insufficient.join(
-          "\n"
-        )}\n\nRestock these books first, or reduce the quantity being given.`
+    // The payment itself never reached the server (offline) — bundle it
+    // with the given-books into one combined action instead of two.
+    if (offlinePaymentPayload) {
+      const offlineId = await queueOfflineAction(
+        OFFLINE_MODULE,
+        "record-payment-and-issue",
+        "/api/books/record-payment-and-issue",
+        { ...offlinePaymentPayload, givenItems: givenItemsPayload }
       );
+
+      setBooksGiven((prev) => [
+        ...rows.map(
+          (row, index) =>
+            ({
+              ...row,
+              id: `pending-${offlineId}-${index}`,
+            }) as BookGiven
+        ),
+        ...prev,
+      ]);
+
+      applyOptimisticStockDecrement(neededByBookId);
+      setOfflinePaymentPayload(null);
+      setPendingIssue(null);
+      setIssueSelections({});
+      alert("Saved offline. Payment and books given will sync automatically once you're back online.");
       return;
     }
 
-    const { error } = await supabase.from("jsms_books_given").insert(rows);
+    const issuePayload = {
+      paymentId: pendingIssue.payment.id,
+      receiptNumber: pendingIssue.payment.receipt_number,
+      studentId: pendingIssue.payment.student_id,
+      studentName: pendingIssue.payment.student_name,
+      className: pendingIssue.payment.class_name,
+      structureId: pendingIssue.payment.structure_id,
+      items: givenItemsPayload,
+    };
 
-    if (error) {
-      alert(`Could not save books given: ${error.message}`);
-      return;
-    }
-
-    for (const [bookId, givenQty] of neededByBookId.entries()) {
-      const book = books.find((item) => item.id === bookId);
-      if (!book) continue;
-
-      await supabase
-        .from("jsms_books")
-        .update({
-          quantity: Math.max(numberValue(book.quantity) - givenQty, 0),
-        })
-        .eq("id", bookId);
-    }
-
-    for (const row of rows) {
+    if (navigator.onLine) {
       try {
-        await notifyBookIssued({
-          studentId: row.student_id,
-          studentName: row.student_name,
-          className: row.class_name || "",
-          bookName:
-            numberValue(row.quantity_given) > 1
-              ? `${row.book_name} x${row.quantity_given}`
-              : row.book_name,
+        const response = await authedFetch("/api/books/issue", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(issuePayload),
         });
-      } catch (notifyError) {
-        console.error("Book issued notification failed:", notifyError);
+
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body?.error || "Could not save books given.");
+
+        if (Array.isArray(body.oversoldBooks) && body.oversoldBooks.length > 0) {
+          setOversoldBooks((prev) => Array.from(new Set([...prev, ...body.oversoldBooks])));
+        }
+
+        for (const row of rows) {
+          try {
+            await notifyBookIssued({
+              studentId: row.student_id,
+              studentName: row.student_name,
+              className: row.class_name || "",
+              bookName:
+                numberValue(row.quantity_given) > 1
+                  ? `${row.book_name} x${row.quantity_given}`
+                  : row.book_name,
+            });
+          } catch (notifyError) {
+            console.error("Book issued notification failed:", notifyError);
+          }
+        }
+
+        setPendingIssue(null);
+        setIssueSelections({});
+        await loadEverything();
+        alert("Books given saved.");
+        return;
+      } catch (error: any) {
+        if (!(error instanceof TypeError)) {
+          alert(`Could not save books given: ${error?.message || "Unknown error"}`);
+          return;
+        }
+        // fall through to offline queue on a genuine network failure
       }
     }
 
+    await queueOfflineAction(OFFLINE_MODULE, "issue", "/api/books/issue", issuePayload);
+
+    setBooksGiven((prev) => [
+      ...rows.map((row, index) => ({ ...row, id: `pending-issue-${index}-${Date.now()}` }) as BookGiven),
+      ...prev,
+    ]);
+
+    applyOptimisticStockDecrement(neededByBookId);
     setPendingIssue(null);
     setIssueSelections({});
-    await loadEverything();
-    alert("Books given saved.");
+    alert("Saved offline. Books given will sync automatically once you're back online.");
+  }
+
+  function applyOptimisticStockDecrement(neededByBookId: Map<string, number>) {
+    setBooks((prev) =>
+      prev.map((book) => {
+        const qty = neededByBookId.get(book.id);
+        if (!qty) return book;
+        return { ...book, quantity: numberValue(book.quantity) - qty };
+      })
+    );
   }
 
   async function openManualBooksGivenPopup() {
@@ -1390,17 +1426,38 @@ export default function BooksDashboardPage() {
       return;
     }
 
-    const { error } = await supabase
-      .from("jsms_books")
-      .update({ quantity: numberValue(book.quantity) + qty })
-      .eq("id", book.id);
+    if (navigator.onLine) {
+      try {
+        const response = await authedFetch("/api/books/restock", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bookId: book.id, quantity: qty }),
+        });
 
-    if (error) {
-      alert(`Could not restock: ${error.message}`);
-      return;
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body?.error || "Could not restock.");
+
+        await loadEverything();
+        return;
+      } catch (error: any) {
+        if (!(error instanceof TypeError)) {
+          alert(`Could not restock: ${error?.message || "Unknown error"}`);
+          return;
+        }
+        // fall through to offline queue on a genuine network failure
+      }
     }
 
-    await loadEverything();
+    await queueOfflineAction(OFFLINE_MODULE, "restock", "/api/books/restock", {
+      bookId: book.id,
+      quantity: qty,
+    });
+
+    setBooks((prev) =>
+      prev.map((item) => (item.id === book.id ? { ...item, quantity: numberValue(item.quantity) + qty } : item))
+    );
+
+    alert("Saved offline. Restock will sync automatically once you're back online.");
   }
 
   async function handleDeleteBook(book: Book) {
@@ -1704,6 +1761,9 @@ export default function BooksDashboardPage() {
               • Receipt issued by:{" "}
               <span className="font-black">{currentUserName}</span>
             </p>
+            <div className="mt-2">
+              <OfflineStatusPill online={online} pendingCount={pendingCount} syncing={syncing} />
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -1775,6 +1835,13 @@ export default function BooksDashboardPage() {
             )}
           </div>
         </div>
+
+        {oversoldBooks.length > 0 && (
+          <div className="rounded-3xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-800">
+            ⚠ {oversoldBooks.length} book{oversoldBooks.length > 1 ? "s" : ""} oversold while offline — review
+            stock: {oversoldBooks.join(", ")}
+          </div>
+        )}
 
         {loadError && (
           <div className="rounded-3xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700">
