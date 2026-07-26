@@ -22,6 +22,15 @@ type AuthResult =
 // unknown roles are filtered out here.
 function getRole(row: TeacherRow | null): StaffRole {
   const raw = String(row?.role || "").trim().toLowerCase();
+  // "super_admin"/"superadmin" is a real, distinct role value used elsewhere
+  // in this app's own login redirect (app/page.tsx, TeacherLoginModal.tsx)
+  // but StaffRole only has four literal values — normalize it to "owner"
+  // (the top tier) rather than passing the raw string through, since
+  // `raw as StaffRole` would just be a type-lie: every allowedRoles array
+  // this app passes to requireStaffRole only ever lists "owner"/"admin"/
+  // "headmaster"/"teacher" literally, never "super_admin", so a caller
+  // resolved to that raw string would still fail every `.includes()` check.
+  if (raw === "super_admin" || raw === "superadmin") return "owner";
   if (raw === "owner" || raw === "admin" || raw === "headmaster") return raw as StaffRole;
   return "teacher";
 }

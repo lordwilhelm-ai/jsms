@@ -68,7 +68,7 @@ const CLASS_ORDER = [
 
 function getRole(row: AnyRow | null) {
   const raw = String(row?.role || "").trim().toLowerCase();
-  if (raw === "owner" || raw === "admin" || raw === "headmaster") return raw;
+  if (raw === "owner" || raw === "admin" || raw === "headmaster" || raw === "super_admin" || raw === "superadmin") return raw;
   return "teacher";
 }
 

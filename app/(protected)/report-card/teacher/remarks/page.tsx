@@ -129,7 +129,7 @@ function cleanLower(value: unknown) {
 
 function getRole(row: TeacherRow | null) {
   const raw = cleanLower(row?.role);
-  if (raw === "owner" || raw === "admin" || raw === "headmaster") return raw;
+  if (raw === "owner" || raw === "admin" || raw === "headmaster" || raw === "super_admin" || raw === "superadmin") return raw;
   return "teacher";
 }
 
@@ -439,7 +439,7 @@ export default function ReportCardTeacherRemarksPage() {
 
     const role = getRole(row);
 
-    if (role === "owner" || role === "admin" || role === "headmaster") {
+    if (role === "owner" || role === "admin" || role === "headmaster" || role === "super_admin" || role === "superadmin") {
       setAssignmentError("This page is for teachers only.");
       setLoading(false);
       return;

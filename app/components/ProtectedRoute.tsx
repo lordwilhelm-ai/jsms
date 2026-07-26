@@ -8,6 +8,14 @@ type StaffRole = "owner" | "admin" | "headmaster" | "teacher";
 
 function getRole(row: Record<string, any> | null): StaffRole {
   const raw = String(row?.role || "").trim().toLowerCase();
+  // "super_admin"/"superadmin" is a real, distinct role value used elsewhere
+  // in this app's own login redirect (app/page.tsx, TeacherLoginModal.tsx)
+  // but StaffRole only has four literal values — normalize it to "owner"
+  // (the top tier) rather than passing the raw string through, since
+  // `raw as StaffRole` would just be a type-lie: the runtime string
+  // "super_admin" doesn't match any allowedRoles array anywhere (they only
+  // ever list "owner"/"admin"/"headmaster"/"teacher" literally).
+  if (raw === "super_admin" || raw === "superadmin") return "owner";
   if (raw === "owner" || raw === "admin" || raw === "headmaster") return raw as StaffRole;
   return "teacher";
 }

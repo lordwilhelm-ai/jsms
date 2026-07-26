@@ -60,7 +60,7 @@ type Settings = {
 
 function getRole(row: TeacherRow | null) {
   const raw = String(row?.role || "").trim().toLowerCase();
-  if (raw === "owner" || raw === "admin" || raw === "headmaster") return raw;
+  if (raw === "owner" || raw === "admin" || raw === "headmaster" || raw === "super_admin" || raw === "superadmin") return raw;
   return "teacher";
 }
 
@@ -424,7 +424,7 @@ export default function UploadResultsPage() {
 
     const role = getRole(row);
 
-    if (role === "owner" || role === "admin" || role === "headmaster") {
+    if (role === "owner" || role === "admin" || role === "headmaster" || role === "super_admin" || role === "superadmin") {
       setAssignmentError("This page is for teachers only.");
       setLoading(false);
       return;
