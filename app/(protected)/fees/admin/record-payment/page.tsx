@@ -6,6 +6,12 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
 import { notifyFeePayment } from "@/lib/jsmsNotify";
+import { getPendingByModule } from "@/lib/offline/db";
+import { queueOfflineAction } from "@/lib/offline/sync";
+import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
+import OfflineStatusPill from "@/app/components/OfflineStatusPill";
+
+const OFFLINE_MODULE = "fees";
 
 type AnyRow = Record<string, any>;
 type ScholarshipType = "regular" | "full" | "half" | "custom";
@@ -244,6 +250,51 @@ export default function RecordPaymentPage() {
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [paymentNotes, setPaymentNotes] = useState("");
 
+  // Payments recorded while offline, still sitting in the local outbox
+  // (lib/offline). Merged into currentTermPayments below so balance/paid-so-
+  // far reflect them immediately, tagged "Pending sync" until they land.
+  const [pendingPayments, setPendingPayments] = useState<AnyRow[]>([]);
+
+  async function refreshPendingPayments() {
+    const rows = await getPendingByModule(OFFLINE_MODULE);
+    const payments = rows
+      .filter((row) => row.action === "record-payment")
+      .map((row) => ({
+        id: `pending-${row.offline_id}`,
+        offline_id: row.offline_id,
+        student_id: row.payload.studentIdValue,
+        student_name: row.payload.studentName,
+        class_name: row.payload.classNameValue,
+        academic_year: row.payload.academicYear,
+        term: row.payload.term,
+        amount_paid: row.payload.amount,
+        payment_method: row.payload.paymentMethod,
+        notes: row.payload.notes,
+        receipt_no: "Pending sync",
+        created_at: row.created_at,
+        pending_sync: true,
+      }));
+
+    setPendingPayments(payments);
+  }
+
+  async function loadFeePayments() {
+    const { data, error } = await supabase
+      .from("fee_payments")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (!error) setPayments(data || []);
+  }
+
+  const { online, pendingCount, syncing } = useOfflineStatus(OFFLINE_MODULE, async () => {
+    await Promise.all([loadFeePayments(), refreshPendingPayments()]);
+  });
+
+  useEffect(() => {
+    void refreshPendingPayments();
+  }, []);
+
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -361,12 +412,12 @@ export default function RecordPaymentPage() {
   }, [classes]);
 
   const currentTermPayments = useMemo(() => {
-    return payments.filter(
+    return [...payments, ...pendingPayments].filter(
       (row) =>
         String(row.academic_year || "") === academicYear &&
         String(row.term || "") === currentTerm
     );
-  }, [payments, academicYear, currentTerm]);
+  }, [payments, pendingPayments, academicYear, currentTerm]);
 
   const visibleStudents = useMemo<StudentViewRow[]>(() => {
     const search = studentSearch.trim().toLowerCase();
@@ -516,6 +567,15 @@ export default function RecordPaymentPage() {
     setPaymentNotes("");
   }
 
+  async function queuePaymentOffline(payload: Record<string, any>) {
+    await queueOfflineAction(OFFLINE_MODULE, "record-payment", "/api/fees/record-payment", payload);
+    await refreshPendingPayments();
+    setPaymentModal(null);
+    setPaymentAmount("");
+    setPaymentNotes("");
+    setMessage("Saved offline — it will sync automatically once you're back online.");
+  }
+
   async function savePayment() {
     if (!paymentModal) return;
 
@@ -525,32 +585,54 @@ export default function RecordPaymentPage() {
       return;
     }
 
-    try {
-      setSavingPayment(true);
-      setMessage("");
+    const payload = {
+      studentDbId: paymentModal.studentDbId,
+      studentIdValue: paymentModal.studentIdValue,
+      studentName: paymentModal.studentName,
+      classNameValue: paymentModal.classNameValue,
+      academicYear,
+      term: currentTerm,
+      amount,
+      paymentMethod,
+      notes: paymentNotes || null,
+    };
 
+    setSavingPayment(true);
+    setMessage("");
+
+    // No connection at all — don't even attempt the round trip, queue it
+    // immediately so the cashier isn't stuck waiting on a request that can't
+    // possibly succeed.
+    if (!navigator.onLine) {
+      await queuePaymentOffline(payload);
+      setSavingPayment(false);
+      return;
+    }
+
+    let response: Response;
+
+    try {
       // Proxied through an authorized API route (requireStaffRole + service
       // role): the receipt sequence number, cumulative/balance figures, and
       // "entered by"/"recorded by" (resolved server-side from the actual
       // logged-in staff session, not a hardcoded "Admin") are all computed
       // there instead of trusting the browser client.
-      const response = await authedFetch("/api/fees/record-payment", {
+      response = await authedFetch("/api/fees/record-payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          studentIdValue: paymentModal.studentIdValue,
-          studentName: paymentModal.studentName,
-          classNameValue: paymentModal.classNameValue,
-          academicYear,
-          term: currentTerm,
-          totalOwed: paymentModal.totalOwed,
-          totalPaidBefore: paymentModal.totalPaid,
-          amount,
-          paymentMethod,
-          notes: paymentNotes || null,
-        }),
+        body: JSON.stringify(payload),
       });
+    } catch (networkError) {
+      // fetch() itself threw — a genuine connectivity failure (not a server
+      // error response), so this is exactly the "went offline mid-request"
+      // case the queue exists for.
+      console.warn("Record payment: network unreachable, queuing offline:", networkError);
+      await queuePaymentOffline(payload);
+      setSavingPayment(false);
+      return;
+    }
 
+    try {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.error || "Failed to record payment.");
 
@@ -672,6 +754,9 @@ export default function RecordPaymentPage() {
               <div>
                 <h2 style={{ margin: 0, fontSize: "30px" }}>Record Fees</h2>
                 <p style={{ margin: "8px 0 0", color: "#d1d5db" }}>{selectedClass}</p>
+                <div style={{ marginTop: "10px" }}>
+                  <OfflineStatusPill online={online} pendingCount={pendingCount} syncing={syncing} />
+                </div>
               </div>
 
               <Link href="/fees/admin" style={topButtonStyle}>
