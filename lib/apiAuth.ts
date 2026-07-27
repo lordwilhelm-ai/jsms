@@ -67,7 +67,7 @@ export async function requireStaffRole(
     (teachers || []).find((item) => item.auth_user_id === user.id) ||
     (teachers || []).find(
       (item) =>
-        String(item.email || "").trim().toLowerCase() ===
+        String(item.login_email || "").trim().toLowerCase() ===
         String(user.email || "").trim().toLowerCase()
     ) ||
     null;
