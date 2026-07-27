@@ -22,7 +22,7 @@ type AdminShellProps = {
 const defaultNavItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard/admin", emoji: "🏠" },
   { label: "Students", href: "/students", emoji: "🎓" },
-  { label: "Teachers", href: "/teachers", emoji: "👨‍🏫" },
+  { label: "Staff", href: "/teachers", emoji: "👨‍🏫" },
   { label: "Classes", href: "/classes", emoji: "🏫" },
   { label: "Subjects", href: "/subjects", emoji: "📚" },
   { label: "Settings", href: "/settings", emoji: "⚙️" },

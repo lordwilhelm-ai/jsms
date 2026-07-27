@@ -63,7 +63,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Phone is required." }, { status: 400 });
     }
 
-    if (!["teacher", "headmaster", "admin"].includes(role)) {
+    if (!["teacher", "headmaster", "admin", "other_staff"].includes(role)) {
       return NextResponse.json({ error: "Invalid role." }, { status: 400 });
     }
 

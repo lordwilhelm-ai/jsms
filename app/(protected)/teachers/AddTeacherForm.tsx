@@ -122,6 +122,7 @@ export default function AddTeacherForm() {
           <option value="teacher">Teacher</option>
           <option value="headmaster">Headmaster</option>
           <option value="admin">Admin</option>
+          <option value="other_staff">Other Staff</option>
         </select>
       </div>
 

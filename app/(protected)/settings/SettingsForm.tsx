@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
 import LogoUpload from "./LogoUpload";
+import SignatureUpload from "./SignatureUpload";
 
 type SettingsRecord = {
   id?: string;
   school_name?: string;
   motto?: string;
   logo_url?: string;
+  headmaster_signature_url?: string;
   academic_year?: string;
   current_term?: string;
   term_begins?: string;
@@ -21,6 +23,7 @@ export default function SettingsForm() {
   const [schoolName, setSchoolName] = useState("");
   const [motto, setMotto] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
+  const [headmasterSignatureUrl, setHeadmasterSignatureUrl] = useState("");
   const [academicYear, setAcademicYear] = useState("");
   const [currentTerm, setCurrentTerm] = useState("First Term");
   const [termBegins, setTermBegins] = useState("");
@@ -47,6 +50,7 @@ export default function SettingsForm() {
         setSchoolName(settings.school_name || "");
         setMotto(settings.motto || "");
         setLogoUrl(settings.logo_url || "");
+        setHeadmasterSignatureUrl(settings.headmaster_signature_url || "");
         setAcademicYear(settings.academic_year || "");
         setCurrentTerm(settings.current_term || "First Term");
         setTermBegins(settings.term_begins || "");
@@ -75,6 +79,7 @@ export default function SettingsForm() {
           school_name: schoolName,
           motto: motto,
           logo_url: logoUrl || null,
+          headmaster_signature_url: headmasterSignatureUrl || null,
           academic_year: academicYear,
           current_term: currentTerm,
           term_begins: termBegins || null,
@@ -169,6 +174,13 @@ export default function SettingsForm() {
 
       <div>
         <LogoUpload currentUrl={logoUrl} onUploadComplete={setLogoUrl} />
+      </div>
+
+      <div>
+        <SignatureUpload
+          currentUrl={headmasterSignatureUrl}
+          onUploadComplete={setHeadmasterSignatureUrl}
+        />
       </div>
 
       <div

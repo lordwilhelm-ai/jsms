@@ -13,6 +13,9 @@ export async function POST(request: Request) {
     const schoolName = String(body.school_name || "").trim();
     const motto = String(body.motto || "").trim();
     const logoUrl = body.logo_url ? String(body.logo_url) : null;
+    const headmasterSignatureUrl = body.headmaster_signature_url
+      ? String(body.headmaster_signature_url)
+      : null;
     const academicYear = String(body.academic_year || "").trim();
     const currentTerm = String(body.current_term || "").trim();
     const termBegins = body.term_begins ? String(body.term_begins) : null;
@@ -46,6 +49,7 @@ export async function POST(request: Request) {
           school_name: schoolName,
           motto,
           logo_url: logoUrl,
+          headmaster_signature_url: headmasterSignatureUrl,
           academic_year: academicYear,
           current_term: currentTerm,
           term_begins: termBegins,
@@ -71,6 +75,7 @@ export async function POST(request: Request) {
           school_name: schoolName,
           motto,
           logo_url: logoUrl,
+          headmaster_signature_url: headmasterSignatureUrl,
           academic_year: academicYear,
           current_term: currentTerm,
           term_begins: termBegins,

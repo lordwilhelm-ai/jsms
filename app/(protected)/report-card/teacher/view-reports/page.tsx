@@ -285,7 +285,10 @@ function getReportPromotedClass(
   return getPromotedClass(className, currentTerm);
 }
 
-function getHeadteacherSignatureUrl(teachers: any[]) {
+function getHeadteacherSignatureUrl(teachers: any[], settings: SettingsRow | null) {
+  const fromSettings = cleanText(settings?.headmaster_signature_url || "");
+  if (fromSettings) return fromSettings;
+
   const headteacher =
     teachers.find((teacher) => {
       const role = cleanLower(teacher.role);
@@ -1449,8 +1452,8 @@ export default function ReportCardsPage() {
   }, [isPreviewWindow, previewMode, previewStudentId, students, filteredStudents]);
 
   const headteacherSignatureUrl = useMemo(() => {
-    return getHeadteacherSignatureUrl(teachers);
-  }, [teachers]);
+    return getHeadteacherSignatureUrl(teachers, settings);
+  }, [teachers, settings]);
 
   const totalSchoolDays = useMemo(() => {
     return calculateSchoolDaysFromSettings(settings, holidayRows);

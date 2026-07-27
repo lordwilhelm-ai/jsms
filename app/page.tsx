@@ -65,6 +65,11 @@ export default function Home() {
         return;
       }
 
+      if (teacher.role === "other_staff") {
+        router.replace("/teacher-attendance/kiosk");
+        return;
+      }
+
       if (teacher.role === "teacher") {
         router.replace("/dashboard/teacher");
         return;

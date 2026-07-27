@@ -51,7 +51,7 @@ const softwareCards = [
 
 const sideMenuItems = [
   { label: "Dashboard", href: "/dashboard/admin", emoji: "🏠" },
-  { label: "Teachers", href: "/teachers", emoji: "👨‍🏫" },
+  { label: "Staff", href: "/teachers", emoji: "👨‍🏫" },
   { label: "Students", href: "/students", emoji: "🎓" },
   { label: "Classes", href: "/classes", emoji: "🏫" },
   { label: "Subjects", href: "/subjects", emoji: "📚" },

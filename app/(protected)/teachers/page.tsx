@@ -95,7 +95,14 @@ const roleOptions = [
   { value: "teacher", label: "Teacher" },
   { value: "headmaster", label: "Headmaster" },
   { value: "admin", label: "Admin" },
+  { value: "other_staff", label: "Other Staff" },
 ];
+
+function formatRoleLabel(role: string) {
+  const match = roleOptions.find((option) => option.value === role);
+  if (match) return match.label;
+  return role || "Teacher";
+}
 
 export default function TeachersPage() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
@@ -1084,7 +1091,7 @@ export default function TeachersPage() {
 
           <div>
             <p className="eyebrow">JVS Teacher Control</p>
-            <h1>Teacher Information & Records</h1>
+            <h1>Staff Information & Records</h1>
             <p className="hero-text">
               Manage teacher profiles, login details, photos, signatures, class
               assignments, and class-specific subjects from one cleaner dashboard.
@@ -1102,7 +1109,7 @@ export default function TeachersPage() {
         </header>
 
         <div className="stat-grid">
-          <StatCard label="Total Teachers" value={teacherSummary.total} />
+          <StatCard label="Total Staff" value={teacherSummary.total} />
           <StatCard label="Active Staff" value={teacherSummary.active} />
           <StatCard label="Assigned" value={teacherSummary.assigned} />
           <StatCard label="Hidden" value={teacherSummary.hidden} />
@@ -1186,7 +1193,7 @@ export default function TeachersPage() {
                       <p>{teacher.teacher_id || "No teacher ID"}</p>
 
                       <div className="pill-row">
-                        <span className="gold-pill">{teacher.role || "teacher"}</span>
+                        <span className="gold-pill">{formatRoleLabel(teacher.role || "teacher")}</span>
                         <span className={isActive ? "green-pill" : "red-pill"}>
                           {isActive ? "Active" : "Inactive"}
                         </span>
@@ -1659,7 +1666,7 @@ function TeacherDetailsModal({
             <p className="eyebrow">Teacher Record</p>
             <h2>{teacher.full_name || "Unnamed Teacher"}</h2>
             <p>
-              {teacher.teacher_id || "No teacher ID"} • {role}
+              {teacher.teacher_id || "No teacher ID"} • {formatRoleLabel(role)}
             </p>
           </div>
 

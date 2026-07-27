@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 
-export type StaffRole = "owner" | "admin" | "headmaster" | "teacher";
+export type StaffRole = "owner" | "admin" | "headmaster" | "teacher" | "other_staff";
 
 type TeacherRow = Record<string, any>;
 
@@ -32,6 +32,7 @@ function getRole(row: TeacherRow | null): StaffRole {
   // resolved to that raw string would still fail every `.includes()` check.
   if (raw === "super_admin" || raw === "superadmin") return "owner";
   if (raw === "owner" || raw === "admin" || raw === "headmaster") return raw as StaffRole;
+  if (raw === "other_staff") return "other_staff";
   return "teacher";
 }
 

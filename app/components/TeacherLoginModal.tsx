@@ -340,6 +340,11 @@ export default function TeacherLoginModal() {
         return;
       }
 
+      if (teacher.role === "other_staff") {
+        router.push("/teacher-attendance/kiosk");
+        return;
+      }
+
       if (teacher.role === "teacher") {
         router.push("/dashboard/teacher");
         return;

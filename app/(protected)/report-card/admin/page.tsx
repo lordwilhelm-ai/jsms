@@ -65,7 +65,7 @@ const CLASS_ORDER = [
 
 const QUICK_ACTIONS = [
   { title: "Students", subtitle: "Open main JSMS students", icon: FiUsers, path: "/students", gated: false },
-  { title: "Teachers", subtitle: "Open main JSMS teachers", icon: FiUserCheck, path: "/teachers", gated: false },
+  { title: "Staff", subtitle: "Open main JSMS staff", icon: FiUserCheck, path: "/teachers", gated: false },
   { title: "Classes", subtitle: "Open main JSMS classes", icon: FiBookOpen, path: "/classes", gated: false },
   { title: "Report Cards", subtitle: "Preview and print reports", icon: FiFileText, path: "/report-card/admin/reports", gated: true },
   { title: "Bills", subtitle: "Report-card payment area", icon: FiCreditCard, path: "/report-card/admin/billing", gated: false },

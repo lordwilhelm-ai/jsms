@@ -16,42 +16,71 @@ type HeadmasterInfo = {
   phone: string;
 };
 
+// Same module set as the admin dashboard — a headmaster has the same reach
+// as admin everywhere else in the app (every API route already pairs
+// "headmaster" with "admin" in requireStaffRole, and ProtectedRoute lets
+// any non-"teacher" role through admin-only pages), so this dashboard's own
+// shortcuts shouldn't be a smaller, hand-picked subset of admin's.
 const softwareCards = [
   {
-    title: "Students Database",
-    description: "Open student records and student details.",
-    href: "/sds",
-    emoji: "🎓",
-  },
-  {
     title: "Feeding",
-    description: "Open feeding, attendance, and related records.",
+    description: "Daily feeding, balances, class submissions, and payments.",
     href: "/feeding",
     emoji: "🍽️",
   },
   {
-    title: "Report Card",
-    description: "Open report cards, scores, and result management.",
-    href: "/report-card",
-    emoji: "📘",
-  },
-  {
     title: "Fees",
-    description: "Open fees tracking, payments, and arrears.",
+    description: "Payments, accounts, debtors, receipts, and reports.",
     href: "/fees/admin",
     emoji: "💳",
   },
   {
+    title: "Students Database",
+    description: "Student records, guardians, classes, and status.",
+    href: "/sds",
+    emoji: "🎓",
+  },
+  {
+    title: "Income & Expenditure",
+    description: "Income, expenses, balances, and financial reports.",
+    href: "/income-expenditure",
+    emoji: "💰",
+  },
+  {
+    title: "Report Card",
+    description: "Scores, remarks, attendance, and report views.",
+    href: "/report-card",
+    emoji: "📘",
+  },
+  {
     title: "Teacher Attendance",
-    description: "Track and manage teacher attendance records.",
+    description: "Sign-in, checkout, duty, and staff movement.",
     href: "/teacher-attendance",
     emoji: "📊",
+  },
+  {
+    title: "Admission",
+    description: "Forms, applications, receipts, and admits.",
+    href: "/admission",
+    emoji: "📝",
+  },
+  {
+    title: "Books",
+    description: "Book sales, stock, class issues, and payments.",
+    href: "/books",
+    emoji: "📚",
+  },
+  {
+    title: "Uniforms",
+    description: "Uniform sales, payments, stock, and balances.",
+    href: "/uniforms",
+    emoji: "👕",
   },
 ];
 
 const sideMenuItems = [
   { label: "Dashboard", href: "/dashboard/headmaster", emoji: "🏠" },
-  { label: "Teachers", href: "/teachers/view", emoji: "👨‍🏫" },
+  { label: "Staff", href: "/teachers", emoji: "👨‍🏫" },
   { label: "Students", href: "/students", emoji: "🎓" },
   { label: "Classes", href: "/classes", emoji: "🏫" },
   { label: "Subjects", href: "/subjects", emoji: "📚" },
