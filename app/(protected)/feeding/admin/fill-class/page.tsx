@@ -247,7 +247,7 @@ export default function AdminFillClassPage() {
     if (!navigator.onLine) return;
 
     try {
-      if (selectedClass) await loadClassData();
+      if (selectedClass) await loadClassData({ populateForm: false });
     } catch (error) {
       console.warn("Feeding fill-class: post-sync reload failed:", error);
     }
@@ -278,7 +278,16 @@ export default function AdminFillClassPage() {
   // loadClassData fetches students + existing entries + balances in one shot so
   // there is no timing gap where amounts get set before students exist (or get
   // cleared after students arrive).
-  async function loadClassData() {
+  //
+  // populateForm=false skips writing amounts/attendance/ateWithoutPayMap from
+  // what's currently saved server-side — used by the periodic post-sync
+  // refresh (useOfflineStatus polls every 30s regardless of whether anything
+  // actually synced) so it can't stomp on whatever the admin is still typing
+  // into the form before they've saved it. Everything else (existing-entry
+  // bookkeeping, the teacher-submitted banner, balances) is read-only display
+  // data and is always safe to refresh.
+  async function loadClassData(options?: { populateForm?: boolean }) {
+    const populateForm = options?.populateForm !== false;
     try {
       setLoadingStudents(true);
       setLoadingExisting(true);
@@ -382,9 +391,11 @@ export default function AdminFillClassPage() {
         }
       });
 
-      setAmounts(nextAmounts);
-      setAttendance(nextAttendance);
-      setAteWithoutPayMap(nextAteWithoutPay);
+      if (populateForm) {
+        setAmounts(nextAmounts);
+        setAttendance(nextAttendance);
+        setAteWithoutPayMap(nextAteWithoutPay);
+      }
 
       setLoadingStudents(false);
       setLoadingExisting(false);
