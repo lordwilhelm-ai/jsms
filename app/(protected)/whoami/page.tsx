@@ -171,6 +171,43 @@ export default function WhoAmIPage() {
               : "None found."}
           </div>
 
+          <div style={{ ...box, fontFamily: "Arial, sans-serif" }}>
+            <strong>Live tests — click these to see where you actually land:</strong>
+            <div style={{ display: "flex", gap: "12px", marginTop: "12px", flexWrap: "wrap" }}>
+              <a
+                href="/dashboard/admin"
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: "10px",
+                  background: "#064e3b",
+                  color: "#fff",
+                  textDecoration: "none",
+                  fontWeight: 700,
+                }}
+              >
+                Open /dashboard/admin directly
+              </a>
+              <a
+                href="/"
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: "10px",
+                  background: "#374151",
+                  color: "#fff",
+                  textDecoration: "none",
+                  fontWeight: 700,
+                }}
+              >
+                Open / (homepage) directly
+              </a>
+            </div>
+            <p style={{ marginTop: "10px", color: "#6b7280", fontSize: "13px" }}>
+              These are plain links (full page load, not app navigation) so each is a clean
+              test. Click "Open /dashboard/admin directly" first and tell me exactly what URL
+              you end up on.
+            </p>
+          </div>
+
           <p style={{ fontFamily: "Arial, sans-serif", color: "#6b7280", fontSize: "13px" }}>
             Take a screenshot of this whole page (scroll to get everything) and share it.
           </p>
