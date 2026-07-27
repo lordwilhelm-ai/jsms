@@ -65,10 +65,37 @@ function isAdminOnlyPath(pathname: string) {
 }
 
 // The admin-role lookup below is a live Supabase query, checked fresh on
-// every navigation into an admin-only path — deliberately NOT cached
-// anywhere (no localStorage, no fallback-to-last-known-value). If it can't
-// be verified right now, access is denied right now; nothing about who can
-// reach an admin page is ever decided from stale/local data.
+// every navigation into an admin-only path whenever there's a connection —
+// nothing about who can reach an admin page is ever decided from stale data
+// while online; a real error while online still fails closed. The one
+// exception is being genuinely offline (confirmed via navigator.onLine, not
+// inferred from an error shape): with literally no network there is no way
+// to verify anything live, so the last role this browser confirmed for this
+// user is used instead of hard-blocking every admin page the moment
+// connectivity drops.
+const ROLE_CACHE_KEY = "jsms_admin_role_cache_v2";
+
+function getCachedRole(userId: string): StaffRole | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(ROLE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed?.userId !== userId) return null;
+    return parsed?.role ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedRole(userId: string, role: StaffRole) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(ROLE_CACHE_KEY, JSON.stringify({ userId, role }));
+  } catch {
+    // storage unavailable/full — role just won't be cached this time
+  }
+}
 
 export default function ProtectedRoute({
   children,
@@ -107,14 +134,32 @@ export default function ProtectedRoute({
         }
 
         if (requiresAdmin) {
+          const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+
+          if (offline) {
+            // No connection at all — can't run the live check, so fall back
+            // to whatever this browser last confirmed for this exact user.
+            // A user this browser has never verified while online still
+            // fails closed, same as any other unverifiable case.
+            const cachedRole = getCachedRole(session.user.id);
+
+            if (cachedRole && cachedRole !== "teacher") {
+              setChecking(false);
+              return;
+            }
+
+            router.replace("/dashboard/teacher");
+            return;
+          }
+
           const { data: teachers, error: teachersError } = await supabase
             .from("teachers")
             .select("role,auth_user_id,login_email");
 
           if (!active) return;
 
-          // Couldn't verify (network error, etc.) — deny access outright,
-          // no fallback. Same as any other unverifiable case: fail closed.
+          // Couldn't verify (real error while online) — deny access
+          // outright, no fallback. Same as any other unverifiable case.
           if (teachersError) {
             router.replace("/dashboard/teacher");
             return;
@@ -132,6 +177,7 @@ export default function ProtectedRoute({
             null;
 
           const role = getRole(teacherRow);
+          setCachedRole(session.user.id, role);
 
           if (role === "teacher") {
             router.replace("/dashboard/teacher");
@@ -142,6 +188,15 @@ export default function ProtectedRoute({
         setChecking(false);
       } catch (error) {
         console.error("Session check error:", error);
+
+        if (typeof navigator !== "undefined" && navigator.onLine === false) {
+          // Can't safely verify anything with no connection at all — leave
+          // the user on whatever they're already looking at instead of
+          // bouncing them to a login screen that itself needs internet.
+          setChecking(false);
+          return;
+        }
+
         // If there's an auth error (like invalid refresh token), sign out and redirect
         await supabase.auth.signOut();
         router.replace("/");
@@ -154,6 +209,12 @@ export default function ProtectedRoute({
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!session) {
+        if (typeof navigator !== "undefined" && navigator.onLine === false) {
+          // A background token-refresh attempt failing purely because
+          // there's no connection isn't a real sign-out — don't bounce the
+          // user to a login page they can't reach right now.
+          return;
+        }
         // when session ends, send to login (no next)
         router.replace("/");
       }

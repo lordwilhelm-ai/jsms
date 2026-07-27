@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
 
 export type SchoolSettings = {
   id: string;
@@ -31,13 +32,19 @@ export default function useSchoolSettings() {
 
   useEffect(() => {
     async function loadSettings() {
-      const { data } = await supabase
-        .from("school_settings")
-        .select(
-          "id, school_name, motto, logo_url, academic_year, current_term, term_begins, term_ends"
-        )
-        .limit(1)
-        .single();
+      const { data } = await fetchWithCache(
+        "school-settings",
+        "current",
+        () =>
+          supabase
+            .from("school_settings")
+            .select(
+              "id, school_name, motto, logo_url, academic_year, current_term, term_begins, term_ends"
+            )
+            .limit(1)
+            .single(),
+        null as any
+      );
 
       if (data) {
         setSettings({
