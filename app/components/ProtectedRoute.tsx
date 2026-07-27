@@ -71,14 +71,13 @@ function isAdminOnlyPath(pathname: string) {
 const KIOSK_PATH = "/teacher-attendance/kiosk";
 
 // The admin-role lookup below is a live Supabase query, checked fresh on
-// every navigation into an admin-only path whenever there's a connection —
-// nothing about who can reach an admin page is ever decided from stale data
-// while online; a real error while online still fails closed. The one
-// exception is being genuinely offline (confirmed via navigator.onLine, not
-// inferred from an error shape): with literally no network there is no way
-// to verify anything live, so the last role this browser confirmed for this
-// user is used instead of hard-blocking every admin page the moment
-// connectivity drops.
+// every navigation whenever the call can actually complete — nothing about
+// who can reach an admin page is ever decided from stale data while
+// reachable; a real error while reachable still fails closed. The one
+// exception is genuinely being unable to reach Supabase (offline, or the
+// call hangs — see isUnreachable below): with no way to verify anything
+// live, the last role this browser confirmed for this user is used instead
+// of hard-blocking every page the moment connectivity drops or degrades.
 const ROLE_CACHE_KEY = "jsms_admin_role_cache_v2";
 
 function getCachedRole(userId: string): StaffRole | null {
@@ -101,6 +100,38 @@ function setCachedRole(userId: string, role: StaffRole) {
   } catch {
     // storage unavailable/full — role just won't be cached this time
   }
+}
+
+// A "timeout" error, distinct from a real rejection — thrown when a
+// Supabase call neither resolves nor rejects within CHECK_TIMEOUT_MS.
+class CheckTimeoutError extends Error {}
+const CHECK_TIMEOUT_MS = 8000;
+
+// navigator.onLine only reflects whether a network interface exists, not
+// whether it actually reaches the internet — a connected-but-dead Wi-Fi
+// router still reports online, so a Supabase call in that state can hang
+// indefinitely instead of failing fast. Racing every such call against a
+// hard timeout means "Checking access..." can never get stuck forever:
+// either the call finishes, or it's treated the same as being offline.
+function withTimeout<T>(promise: PromiseLike<T>, ms: number = CHECK_TIMEOUT_MS): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new CheckTimeoutError("timed out")), ms);
+    Promise.resolve(promise).then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
+function isUnreachable(error: unknown) {
+  if (error instanceof CheckTimeoutError) return true;
+  return typeof navigator !== "undefined" && navigator.onLine === false;
 }
 
 export default function ProtectedRoute({
@@ -127,7 +158,7 @@ export default function ProtectedRoute({
       try {
         const {
           data: { session },
-        } = await supabase.auth.getSession();
+        } = await withTimeout(supabase.auth.getSession());
 
         if (!active) return;
 
@@ -145,12 +176,55 @@ export default function ProtectedRoute({
         }
 
         if (needsRoleCheck) {
-          const offline = typeof navigator !== "undefined" && navigator.onLine === false;
-          let role: StaffRole;
+          let unreachable = typeof navigator !== "undefined" && navigator.onLine === false;
+          let role: StaffRole | null = null;
 
-          if (offline) {
-            // No connection at all — can't run the live check, so fall back
-            // to whatever this browser last confirmed for this exact user.
+          if (!unreachable) {
+            try {
+              const { data: teachers, error: teachersError } = await withTimeout(
+                supabase.from("teachers").select("role,auth_user_id,login_email")
+              );
+
+              if (!active) return;
+
+              if (teachersError) {
+                // Couldn't verify (real error while reachable) — deny
+                // access outright, no fallback.
+                router.replace("/dashboard/teacher");
+                return;
+              }
+
+              // Fail CLOSED on no match — an authenticated account with no
+              // corresponding teachers row is never treated as admin.
+              const teacherRow =
+                (teachers || []).find((row: any) => row.auth_user_id === session.user.id) ||
+                (teachers || []).find(
+                  (row: any) =>
+                    String(row.login_email || "").trim().toLowerCase() ===
+                    String(session.user.email || "").trim().toLowerCase()
+                ) ||
+                null;
+
+              role = getRole(teacherRow);
+              setCachedRole(session.user.id, role);
+            } catch (err) {
+              if (!active) return;
+              if (!isUnreachable(err)) {
+                console.error("Role check error:", err);
+                router.replace("/dashboard/teacher");
+                return;
+              }
+              // Genuinely unreachable (offline) or the call just hung past
+              // CHECK_TIMEOUT_MS — navigator.onLine can't be trusted to
+              // catch the second case up front, so this is caught here
+              // instead of leaving "Checking access..." stuck forever.
+              unreachable = true;
+            }
+          }
+
+          if (unreachable) {
+            // No way to run the live check right now, so fall back to
+            // whatever this browser last confirmed for this exact user.
             const cachedRole = getCachedRole(session.user.id);
 
             if (!cachedRole) {
@@ -169,33 +243,6 @@ export default function ProtectedRoute({
             }
 
             role = cachedRole;
-          } else {
-            const { data: teachers, error: teachersError } = await supabase
-              .from("teachers")
-              .select("role,auth_user_id,login_email");
-
-            if (!active) return;
-
-            // Couldn't verify (real error while online) — deny access
-            // outright, no fallback. Same as any other unverifiable case.
-            if (teachersError) {
-              router.replace("/dashboard/teacher");
-              return;
-            }
-
-            // Fail CLOSED on no match — an authenticated account with no
-            // corresponding teachers row is never treated as admin.
-            const teacherRow =
-              (teachers || []).find((row: any) => row.auth_user_id === session.user.id) ||
-              (teachers || []).find(
-                (row: any) =>
-                  String(row.login_email || "").trim().toLowerCase() ===
-                  String(session.user.email || "").trim().toLowerCase()
-              ) ||
-              null;
-
-            role = getRole(teacherRow);
-            setCachedRole(session.user.id, role);
           }
 
           // Kiosk-only lockdown: no matter what page this role tried to
@@ -215,10 +262,11 @@ export default function ProtectedRoute({
       } catch (error) {
         console.error("Session check error:", error);
 
-        if (typeof navigator !== "undefined" && navigator.onLine === false) {
-          // Can't safely verify anything with no connection at all — leave
-          // the user on whatever they're already looking at instead of
-          // bouncing them to a login screen that itself needs internet.
+        if (isUnreachable(error)) {
+          // Can't safely verify anything right now (offline, or the call
+          // just hung past CHECK_TIMEOUT_MS) — leave the user on whatever
+          // they're already looking at instead of bouncing them to a login
+          // screen that itself needs internet.
           setChecking(false);
           return;
         }

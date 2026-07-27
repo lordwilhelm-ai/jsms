@@ -888,6 +888,7 @@ export default function TeachersPage() {
   }
 
   async function openEditModal(teacher: Teacher) {
+    setMessage("");
     const assignments = await loadTeacherAssignments(teacher.id, teacher);
 
     setEditForm({
@@ -1100,7 +1101,10 @@ export default function TeachersPage() {
 
           <button
             type="button"
-            onClick={() => setShowAddModal(true)}
+            onClick={() => {
+              setMessage("");
+              setShowAddModal(true);
+            }}
             disabled={busy}
             className="primary-button"
           >
@@ -1295,6 +1299,7 @@ export default function TeachersPage() {
           uploadingSignature={uploadingAddSignature}
           onPhotoUpload={handleAddPhotoUpload}
           onSignatureUpload={handleAddSignatureUpload}
+          message={message}
         />
       )}
 
@@ -1319,6 +1324,7 @@ export default function TeachersPage() {
           uploadingSignature={uploadingEditSignature}
           onPhotoUpload={handleEditPhotoUpload}
           onSignatureUpload={handleEditSignatureUpload}
+          message={message}
         />
       )}
 
@@ -1376,6 +1382,7 @@ function TeacherFormModal({
   uploadingSignature,
   onPhotoUpload,
   onSignatureUpload,
+  message,
 }: {
   title: string;
   subtitle: string;
@@ -1397,6 +1404,7 @@ function TeacherFormModal({
   uploadingSignature: boolean;
   onPhotoUpload: (file: File) => void;
   onSignatureUpload: (file: File) => void;
+  message?: string;
 }) {
   return (
     <div className="modal-overlay">
@@ -1618,6 +1626,12 @@ function TeacherFormModal({
             </div>
           )}
         </section>
+
+        {message && (
+          <div className={message.startsWith("Error:") ? "alert error" : "alert"}>
+            {message}
+          </div>
+        )}
 
         <div className="modal-actions">
           <button type="button" onClick={onClose} disabled={busy} className="soft-button">
