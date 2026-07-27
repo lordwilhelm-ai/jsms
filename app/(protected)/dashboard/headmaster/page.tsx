@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabase";
-import ProtectedRoute from "@/app/components/ProtectedRoute";
 import LogoutButton from "@/app/components/LogoutButton";
 import useSchoolSettings from "@/app/components/useSchoolSettings";
 
@@ -60,11 +59,7 @@ const sideMenuItems = [
 ];
 
 export default function HeadmasterDashboardPage() {
-  return (
-    <ProtectedRoute>
-      <HeadmasterDashboardPageClient />
-    </ProtectedRoute>
-  );
+  return <HeadmasterDashboardPageClient />;
 }
 
 function HeadmasterDashboardPageClient() {

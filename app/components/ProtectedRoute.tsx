@@ -78,13 +78,17 @@ export default function ProtectedRoute({
   const router = useRouter();
   const pathname = usePathname();
   const [checking, setChecking] = useState(true);
+  const [denyInfo, setDenyInfo] = useState<Record<string, any> | null>(null);
 
   useEffect(() => {
     let active = true;
 
     async function checkSession() {
       const requiresAdmin = isAdminOnlyPath(pathname);
-      if (requiresAdmin) setChecking(true);
+      if (requiresAdmin) {
+        setChecking(true);
+        setDenyInfo(null);
+      }
 
       try {
         const {
@@ -115,8 +119,18 @@ export default function ProtectedRoute({
 
           // Couldn't verify (network error, etc.) — deny access outright,
           // no fallback. Same as any other unverifiable case: fail closed.
+          // TEMPORARY: instead of redirecting immediately, show exactly what
+          // this query returned so the actual failure mode is visible
+          // instead of guessed at. Remove once the redirect bug is found.
           if (teachersError) {
-            router.replace("/dashboard/teacher");
+            setDenyInfo({
+              reason: "teachersError",
+              pathname,
+              sessionUserId: session.user.id,
+              sessionEmail: session.user.email,
+              error: teachersError,
+            });
+            setChecking(false);
             return;
           }
 
@@ -134,7 +148,17 @@ export default function ProtectedRoute({
           const role = getRole(teacherRow);
 
           if (role === "teacher") {
-            router.replace("/dashboard/teacher");
+            setDenyInfo({
+              reason: "resolvedRoleIsTeacher",
+              pathname,
+              sessionUserId: session.user.id,
+              sessionEmail: session.user.email,
+              teacherRowCount: (teachers || []).length,
+              teacherRow,
+              rawRole: teacherRow?.role ?? null,
+              allRows: teachers,
+            });
+            setChecking(false);
             return;
           }
         }
@@ -164,6 +188,57 @@ export default function ProtectedRoute({
       subscription.unsubscribe();
     };
   }, [router, pathname]);
+
+  if (denyInfo) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          padding: "24px",
+          background: "#fffdf2",
+          fontFamily: "Arial, sans-serif",
+        }}
+      >
+        <div style={{ maxWidth: 720, margin: "0 auto" }}>
+          <h1 style={{ marginBottom: 12 }}>Access check debug (temporary)</h1>
+          <p style={{ marginBottom: 12 }}>
+            This account was about to be sent to /dashboard/teacher. Here is
+            exactly why, straight from the actual check that runs on this
+            page. Screenshot this before tapping the button below.
+          </p>
+          <pre
+            style={{
+              background: "#111827",
+              color: "#e5e7eb",
+              padding: 16,
+              borderRadius: 12,
+              overflowX: "auto",
+              fontSize: 12,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all",
+            }}
+          >
+            {JSON.stringify(denyInfo, null, 2)}
+          </pre>
+          <button
+            type="button"
+            onClick={() => router.replace("/dashboard/teacher")}
+            style={{
+              marginTop: 16,
+              padding: "10px 16px",
+              borderRadius: 10,
+              background: "#064e3b",
+              color: "#fff",
+              border: "none",
+              fontWeight: 700,
+            }}
+          >
+            Continue to Teacher Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (checking) {
     return (

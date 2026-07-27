@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import { supabase } from "@/lib/supabase";
-import ProtectedRoute from "@/app/components/ProtectedRoute";
 import LogoutButton from "@/app/components/LogoutButton";
 import useSchoolSettings from "@/app/components/useSchoolSettings";
 
@@ -120,11 +119,7 @@ function readableDate(value: unknown) {
 }
 
 export default function AdminDashboardPage() {
-  return (
-    <ProtectedRoute>
-      <AdminDashboardPageClient />
-    </ProtectedRoute>
-  );
+  return <AdminDashboardPageClient />;
 }
 
 function AdminDashboardPageClient() {
