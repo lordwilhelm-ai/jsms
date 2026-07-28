@@ -6,7 +6,9 @@ import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
 import { queueOfflineAction } from "@/lib/offline/sync";
 import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
+import { useModuleLoadBadge } from "@/lib/offline/useModulePrefetch";
 import OfflineStatusPill from "@/app/components/OfflineStatusPill";
+import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
 import { notifyBookIssued } from "@/lib/jsmsNotify";
 
@@ -1757,8 +1759,11 @@ export default function BooksDashboardPage() {
     },
   ] as const;
 
+  const moduleDownloadStatus = useModuleLoadBadge(loading);
+
   return (
     <main className="min-h-screen bg-[#f7f3df] p-4 sm:p-6">
+      <ModuleDownloadBadge status={moduleDownloadStatus} label="Books" />
       <section className="mx-auto max-w-7xl space-y-4">
         <div className="flex flex-col gap-3 rounded-3xl border border-yellow-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <div>

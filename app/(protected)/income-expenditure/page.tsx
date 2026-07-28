@@ -10,6 +10,8 @@ import { queueOfflineAction, cancelPendingAction } from "@/lib/offline/sync";
 import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
 import OfflineStatusPill from "@/app/components/OfflineStatusPill";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { useModuleLoadBadge } from "@/lib/offline/useModulePrefetch";
+import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 
 const OFFLINE_MODULE = "income-expenditure";
 
@@ -1172,6 +1174,8 @@ export default function IncomeExpenditurePage() {
     }
   }
 
+  const moduleDownloadStatus = useModuleLoadBadge(loading);
+
   if (loading) {
     return (
       <main style={loadingPageStyle}>
@@ -1182,6 +1186,7 @@ export default function IncomeExpenditurePage() {
 
   return (
     <main style={pageStyle}>
+      <ModuleDownloadBadge status={moduleDownloadStatus} label="Income & Expenditure" />
       <style jsx global>{`
         @media print {
           .no-print {

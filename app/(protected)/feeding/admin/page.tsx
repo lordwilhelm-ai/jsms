@@ -10,7 +10,10 @@ import { authedFetch } from "@/lib/apiClient";
 import { queueOfflineAction } from "@/lib/offline/sync";
 import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { useModulePrefetch } from "@/lib/offline/useModulePrefetch";
+import { buildFeedingPrefetchTasks } from "@/lib/offline/prefetch/feeding";
 import OfflineStatusPill from "@/app/components/OfflineStatusPill";
+import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 
 const OFFLINE_MODULE = "feeding";
 
@@ -685,6 +688,15 @@ export default function FeedingAdminPage() {
   const motto = String(settingsRow?.motto || "Success in Excellence");
   const academicYear = String(settingsRow?.academic_year || "-");
   const currentTerm = String(settingsRow?.current_term || "-");
+
+  // Downloads every class's feeding data (not just the currently open one)
+  // plus every sub-page's own data, so the whole module — including
+  // switching classes in Fill for Class — works offline after this once
+  // opening while online.
+  const prefetchStatus = useModulePrefetch(
+    useMemo(() => buildFeedingPrefetchTasks(today, academicYear), [today, academicYear]),
+    Boolean(settingsRow)
+  );
   const termBegins = String(settingsRow?.term_begins || "");
   const termEnds = String(settingsRow?.term_ends || "");
   const feedingFee = Number(settingsRow?.feeding_fee || 6);
@@ -985,6 +997,7 @@ export default function FeedingAdminPage() {
         color: COLORS.text,
       }}
     >
+      <ModuleDownloadBadge status={prefetchStatus} label="Feeding" />
       <div
         style={{
           background: COLORS.secondary,

@@ -7,7 +7,9 @@ import { authedFetch } from "@/lib/apiClient";
 import { queueOfflineAction } from "@/lib/offline/sync";
 import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
 import OfflineStatusPill from "@/app/components/OfflineStatusPill";
+import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { useModuleLoadBadge } from "@/lib/offline/useModulePrefetch";
 
 const OFFLINE_MODULE = "uniforms";
 
@@ -1015,6 +1017,8 @@ export default function UniformsPage() {
     setMessage("Marked as given offline — will sync automatically.");
   }
 
+  const moduleDownloadStatus = useModuleLoadBadge(loading);
+
   if (loading) {
     return (
       <main className="min-h-screen bg-[#fffaf0] p-6">
@@ -1027,6 +1031,7 @@ export default function UniformsPage() {
 
   return (
     <main className="min-h-screen bg-[#fffaf0] text-gray-950">
+      <ModuleDownloadBadge status={moduleDownloadStatus} label="Uniforms" />
       <style jsx global>{`
         button,
         a,

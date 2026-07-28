@@ -18,6 +18,9 @@ import {
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { useModulePrefetch } from "@/lib/offline/useModulePrefetch";
+import { buildReportCardPrefetchTasks } from "@/lib/offline/prefetch/report-card";
+import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 import { useReportCardAccess } from "@/hooks/useReportCardAccess";
 
 const OFFLINE_MODULE = "report-card";
@@ -139,6 +142,11 @@ export default function ReportCardAdminDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [showingCachedData, setShowingCachedData] = useState(false);
   const [settings, setSettings] = useState<SettingsRow | null>(null);
+
+  // Downloads every other Report Card sub-page's data (reports, billing) in
+  // the background so opening the module once online is enough for the
+  // whole module to be browsable offline afterward.
+  const prefetchStatus = useModulePrefetch(buildReportCardPrefetchTasks(), !loading);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
   const [classes, setClasses] = useState<ClassRow[]>([]);
@@ -242,6 +250,7 @@ export default function ReportCardAdminDashboardPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
+      <ModuleDownloadBadge status={prefetchStatus} label="Report Card" />
 
       {/* Payment gate — only shows when user clicked something gated */}
       {showGate && (

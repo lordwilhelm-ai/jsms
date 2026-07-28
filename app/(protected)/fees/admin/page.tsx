@@ -12,7 +12,10 @@ import {
 } from "@/lib/universalReceiptSearch";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
 import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
+import { useModulePrefetch } from "@/lib/offline/useModulePrefetch";
+import { buildFeesPrefetchTasks } from "@/lib/offline/prefetch/fees";
 import OfflineStatusPill from "@/app/components/OfflineStatusPill";
+import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 
 const OFFLINE_MODULE = "fees";
 
@@ -379,6 +382,11 @@ export default function FeesAdminPage() {
   const academicYear = cleanText(settingsRow?.academic_year || "");
   const currentTerm = cleanText(settingsRow?.current_term || "");
 
+  // Downloads every other Fees sub-page's data (not just this dashboard's
+  // own) in the background so opening the module once online is enough for
+  // every class/student across the whole module to work offline afterward.
+  const prefetchStatus = useModulePrefetch(buildFeesPrefetchTasks(), Boolean(settingsRow));
+
   const currentTermPayments = useMemo(() => {
     return payments.filter((row) => {
       const paymentYear = cleanText(row.academic_year);
@@ -516,12 +524,13 @@ export default function FeesAdminPage() {
     <main
       style={{
         height: "100vh",
+        overflow: "hidden",
         background: COLORS.bg,
         fontFamily: "Arial, sans-serif",
         color: COLORS.text,
-        overflow: "hidden",
       }}
     >
+      <ModuleDownloadBadge status={prefetchStatus} label="Fees" />
       <style jsx global>{`
         @keyframes feeCardIn {
           from { opacity: 0; transform: translateY(12px); }

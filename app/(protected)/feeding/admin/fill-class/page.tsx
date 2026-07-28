@@ -7,6 +7,7 @@ import { authedFetch } from "@/lib/apiClient";
 import { queueOfflineAction } from "@/lib/offline/sync";
 import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { fetchClassFeedingSnapshot } from "@/lib/offline/feedingClassData";
 import OfflineStatusPill from "@/app/components/OfflineStatusPill";
 
 const OFFLINE_MODULE = "feeding";
@@ -297,39 +298,24 @@ export default function AdminFillClassPage() {
       setLoadingTeacherCredits(true);
       setTeacherSubmittedInfo(null);
 
-      // Step 1: students + existing entries + teacher credits in parallel
-      const [studentsRes, entriesRes, creditRes] = await Promise.all([
-        supabase
-          .from("students")
-          .select("*")
-          .eq("class_name", selectedClass),
-        supabase
-          .from("daily_entries")
-          .select("*")
-          .eq("date", selectedDate)
-          .eq("class_name", selectedClass),
-        supabase
-          .from("daily_entries")
-          .select("*")
-          .eq("date", selectedDate)
-          .eq("class_name", selectedClass)
-          .eq("entered_by_role", "teacher")
-          .eq("admin_override_ate_without_pay", true)
-          .order("student_name", { ascending: true }),
-      ]);
+      // Same fetch (and cache keys) the module-wide prefetch on the Feeding
+      // dashboard uses, so switching to any class already prefetched today
+      // works instantly offline, not just whichever one happens to be open.
+      const snapshot = await fetchClassFeedingSnapshot({
+        className: selectedClass,
+        date: selectedDate,
+        academicYear,
+      });
 
-      if (studentsRes.error) throw studentsRes.error;
-      if (entriesRes.error) throw entriesRes.error;
-
-      const activeStudents = (studentsRes.data || [])
+      const activeStudents = snapshot.students
         .filter(isActiveStudent)
         .sort((a, b) => getStudentName(a).localeCompare(getStudentName(b)));
 
-      const entries = (entriesRes.data || []) as DailyEntry[];
+      const entries = snapshot.entries as DailyEntry[];
 
       setStudents(activeStudents);
       setExistingEntries(entries);
-      setTeacherCreditEntries((creditRes.error ? [] : creditRes.data || []) as DailyEntry[]);
+      setTeacherCreditEntries(snapshot.teacherCredits as DailyEntry[]);
 
       // Detect teacher submission banner
       const teacherRow = entries.find(
@@ -413,25 +399,8 @@ export default function AdminFillClassPage() {
       // (scoped to the current academic year) makes re-saving the same date
       // idempotent: the recomputed newBalance always starts from the same
       // pre-date balance no matter how many times it's saved.
-      const ids = activeStudents.map((s) => getStudentIdValue(s)).filter(Boolean);
-      if (!ids.length) {
-        setBalances({});
-        setLoadingBalances(false);
-        return;
-      }
-
-      const { data: priorLedgerRows, error: ledgerBalanceError } = await supabase
-        .from("balance_ledger")
-        .select("student_id, date, new_balance, academic_year")
-        .in("student_id", ids)
-        .eq("academic_year", academicYear)
-        .lt("date", selectedDate)
-        .order("date", { ascending: true });
-
-      if (ledgerBalanceError) throw ledgerBalanceError;
-
       const nextBalances: BalanceMap = {};
-      (priorLedgerRows || []).forEach((row) => {
+      snapshot.priorLedgerRows.forEach((row: any) => {
         const sid = String(row.student_id || "").trim();
         if (!sid) return;
         // Rows arrive oldest -> newest, so the last write per student is the
@@ -439,6 +408,7 @@ export default function AdminFillClassPage() {
         nextBalances[sid] = Number(row.new_balance ?? 0);
       });
       setBalances(nextBalances);
+      setShowingCachedData((prev) => prev || snapshot.fromCache);
     } catch (error) {
       console.error(error);
       alert("Failed to load class data.");
