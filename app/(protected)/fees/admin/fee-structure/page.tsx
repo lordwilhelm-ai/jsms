@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { queueOfflineAction } from "@/lib/offline/sync";
 
 const OFFLINE_MODULE = "fees";
 
@@ -172,19 +173,33 @@ function getErrorMessage(error: any, fallback: string) {
 // Supabase from the browser client, so an admin-only action can't be
 // performed by a direct API/script call without a valid staff session.
 async function callStructureApi(body: AnyRow) {
-  const res = await authedFetch("/api/fees/update-structure", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  try {
+    const res = await authedFetch("/api/fees/update-structure", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
 
-  const data = await res.json().catch(() => ({}));
+    const data = await res.json().catch(() => ({}));
 
-  if (!res.ok) {
-    throw new Error(data?.error || "Request failed.");
+    if (!res.ok) {
+      throw new Error(data?.error || "Request failed.");
+    }
+
+    return data;
+  } catch (error) {
+    // Only "save-level-fees" is safe to blindly queue for later — it
+    // doesn't need anything back from the server. Adding/seeding a new
+    // student-fee item returns a server-generated id the caller needs
+    // immediately, so those stay online-only rather than showing a draft
+    // row that can't actually be edited/deleted until it syncs.
+    const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
+    if (isOffline && body.action === "save-level-fees") {
+      await queueOfflineAction("fees", "update-structure", "/api/fees/update-structure", body);
+      return { queued: true };
+    }
+    throw error;
   }
-
-  return data;
 }
 
 export default function FeesStructurePage() {
@@ -405,7 +420,7 @@ export default function FeesStructurePage() {
 
       const ids = affectedClasses.map((row) => row.id);
 
-      await callStructureApi({
+      const result = await callStructureApi({
         action: "save-level-fees",
         classIds: ids,
         level,
@@ -426,7 +441,11 @@ export default function FeesStructurePage() {
         )
       );
 
-      setMessage(`${level} continuing fees and uniform prices updated.`);
+      setMessage(
+        result?.queued
+          ? `${level} fees saved offline — will sync automatically.`
+          : `${level} continuing fees and uniform prices updated.`
+      );
     } catch (error) {
       console.error(error);
       setMessage(`Error: ${getErrorMessage(error, "Failed to save fee structure.")}`);
@@ -438,6 +457,7 @@ export default function FeesStructurePage() {
   async function saveAllLevels() {
     try {
       setMessage("");
+      let anyQueued = false;
 
       for (const level of LEVEL_GROUPS) {
         const form = formRows[level];
@@ -457,7 +477,7 @@ export default function FeesStructurePage() {
 
         const ids = affectedClasses.map((row) => row.id);
 
-        await callStructureApi({
+        const result = await callStructureApi({
           action: "save-level-fees",
           classIds: ids,
           level,
@@ -466,6 +486,8 @@ export default function FeesStructurePage() {
           feeMonwed: payload.fee_monwed,
           feeFriday: payload.fee_friday,
         });
+
+        if (result?.queued) anyQueued = true;
       }
 
       setClasses((prev) =>
@@ -485,7 +507,11 @@ export default function FeesStructurePage() {
         })
       );
 
-      setMessage("All level fee structures updated.");
+      setMessage(
+        anyQueued
+          ? "All level fee structures saved offline — will sync automatically."
+          : "All level fee structures updated."
+      );
     } catch (error) {
       console.error(error);
       setMessage(`Error: ${getErrorMessage(error, "Failed to save all levels.")}`);

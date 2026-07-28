@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { queueOfflineAction, cancelPendingAction } from "@/lib/offline/sync";
 
 const OFFLINE_MODULE = "feeding";
 
@@ -14,6 +16,10 @@ type Closure = {
   end_date: string;
   type: "holiday" | "vacation";
   active?: boolean;
+  // Set only for an entry added while offline that hasn't synced yet — a
+  // delete before it syncs just drops it from the local queue instead of
+  // calling the delete API for a row that was never actually created.
+  pendingOfflineId?: string;
 };
 
 type SettingsRow = {
@@ -94,37 +100,47 @@ export default function FeedingHolidaysPage() {
       return;
     }
 
+    const payload = {
+      name: newName.trim(),
+      type: newType,
+      start_date: newStartDate,
+      end_date: finalEndDate,
+    };
+
     try {
       setSaving(true);
 
-      const { data, error } = await supabase
-        .from("school_closures")
-        .insert([
-          {
-            name: newName.trim(),
-            type: newType,
-            start_date: newStartDate,
-            end_date: finalEndDate,
-            active: true,
-          },
-        ])
-        .select()
-        .single();
+      try {
+        const res = await authedFetch("/api/feeding/holidays/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body?.error || "Failed to add closure.");
 
-      if (error) {
-        throw error;
+        setClosures((prev) =>
+          [...prev, body.closure as Closure].sort((a, b) => a.start_date.localeCompare(b.start_date))
+        );
+        alert("Added successfully.");
+      } catch (error) {
+        const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
+        if (!isOffline) throw error;
+
+        const offlineId = await queueOfflineAction(OFFLINE_MODULE, "add-holiday", "/api/feeding/holidays/create", payload);
+        setClosures((prev) =>
+          [
+            ...prev,
+            { id: offlineId, active: true, pendingOfflineId: offlineId, ...payload } as Closure,
+          ].sort((a, b) => a.start_date.localeCompare(b.start_date))
+        );
+        alert("Saved offline — will sync automatically.");
       }
-
-      setClosures((prev) =>
-        [...prev, data as Closure].sort((a, b) => a.start_date.localeCompare(b.start_date))
-      );
 
       setNewName("");
       setNewType("holiday");
       setNewStartDate("");
       setNewEndDate("");
-
-      alert("Added successfully.");
     } catch (error) {
       console.error(error);
       alert("Failed to add closure.");
@@ -133,20 +149,39 @@ export default function FeedingHolidaysPage() {
     }
   }
 
-  async function deleteClosure(id: string, name: string) {
-    const confirmed = window.confirm(`Delete "${name}"?`);
+  async function deleteClosure(closure: Closure) {
+    const confirmed = window.confirm(`Delete "${closure.name}"?`);
     if (!confirmed) return;
+
+    const id = closure.id;
 
     try {
       setDeletingId(id);
 
-      const { error } = await supabase.from("school_closures").delete().eq("id", id);
-
-      if (error) {
-        throw error;
+      // Still just sitting in the offline queue, never actually created
+      // server-side — drop it locally instead of calling delete on a row
+      // that doesn't exist yet.
+      if (closure.pendingOfflineId) {
+        await cancelPendingAction(closure.pendingOfflineId);
+        setClosures((prev) => prev.filter((item) => item.id !== id));
+        return;
       }
 
-      setClosures((prev) => prev.filter((item) => item.id !== id));
+      try {
+        const res = await authedFetch("/api/feeding/holidays/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body?.error || "Failed to delete closure.");
+        setClosures((prev) => prev.filter((item) => item.id !== id));
+      } catch (error) {
+        const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
+        if (!isOffline) throw error;
+        await queueOfflineAction(OFFLINE_MODULE, "delete-holiday", "/api/feeding/holidays/delete", { id });
+        setClosures((prev) => prev.filter((item) => item.id !== id));
+      }
     } catch (error) {
       console.error(error);
       alert("Failed to delete closure.");
@@ -306,7 +341,7 @@ export default function FeedingHolidaysPage() {
                     <td style={tdStyle}>{item.active === false ? "Inactive" : "Active"}</td>
                     <td style={tdStyle}>
                       <button
-                        onClick={() => deleteClosure(item.id, item.name)}
+                        onClick={() => deleteClosure(item)}
                         style={deleteButtonStyle}
                         disabled={deletingId === item.id}
                       >

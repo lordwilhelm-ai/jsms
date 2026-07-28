@@ -4,9 +4,30 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { queueOfflineAction } from "@/lib/offline/sync";
 import Link from "next/link";
 
 const OFFLINE_MODULE = "fees";
+
+async function saveClassFeesPayload(payload: Record<string, any>) {
+  try {
+    const res = await authedFetch("/api/classes/update-fees", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body?.error || "Save failed");
+    return { queued: false };
+  } catch (error) {
+    const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
+    if (isOffline) {
+      await queueOfflineAction(OFFLINE_MODULE, "update-class-fees", "/api/classes/update-fees", payload);
+      return { queued: true };
+    }
+    throw error;
+  }
+}
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
@@ -59,20 +80,15 @@ export default function ClassFeesPage() {
     try {
       const cls = classes.find((c) => c.id === id);
       if (!cls) throw new Error("Class not found");
-      const res = await authedFetch("/api/classes/update-fees", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id,
-          fee_returning: Number(cls.fee_returning || 0),
-          fee_new: Number(cls.fee_new || 0),
-          fee_lacoste: Number(cls.fee_lacoste || 0),
-          fee_monwed: Number(cls.fee_monwed || 0),
-          fee_friday: Number(cls.fee_friday || 0),
-        }),
+      const result = await saveClassFeesPayload({
+        id,
+        fee_returning: Number(cls.fee_returning || 0),
+        fee_new: Number(cls.fee_new || 0),
+        fee_lacoste: Number(cls.fee_lacoste || 0),
+        fee_monwed: Number(cls.fee_monwed || 0),
+        fee_friday: Number(cls.fee_friday || 0),
       });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body?.error || "Save failed");
+      if (result.queued) setError("Saved offline — will sync automatically.");
     } catch (err: any) {
       setError(err?.message || String(err));
     } finally {
@@ -84,22 +100,19 @@ export default function ClassFeesPage() {
     setSaving(true);
     setError(null);
     try {
+      let anyQueued = false;
       for (const cls of classes) {
-        const res = await authedFetch("/api/classes/update-fees", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: cls.id,
-            fee_returning: Number(cls.fee_returning || 0),
-            fee_new: Number(cls.fee_new || 0),
-            fee_lacoste: Number(cls.fee_lacoste || 0),
-            fee_monwed: Number(cls.fee_monwed || 0),
-            fee_friday: Number(cls.fee_friday || 0),
-          }),
+        const result = await saveClassFeesPayload({
+          id: cls.id,
+          fee_returning: Number(cls.fee_returning || 0),
+          fee_new: Number(cls.fee_new || 0),
+          fee_lacoste: Number(cls.fee_lacoste || 0),
+          fee_monwed: Number(cls.fee_monwed || 0),
+          fee_friday: Number(cls.fee_friday || 0),
         });
-        const body = await res.json();
-        if (!res.ok) throw new Error(body?.error || "Save failed");
+        if (result.queued) anyQueued = true;
       }
+      if (anyQueued) setError("Saved offline — will sync automatically.");
     } catch (err: any) {
       setError(err?.message || String(err));
     } finally {

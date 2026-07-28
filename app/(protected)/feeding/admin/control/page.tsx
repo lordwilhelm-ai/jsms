@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { queueOfflineAction } from "@/lib/offline/sync";
 
 const OFFLINE_MODULE = "feeding";
 
@@ -49,29 +51,27 @@ export default function FeedingControlPage() {
 
     try {
       const payload = {
+        id: recordId || undefined,
         feeding_fee: Number(feedingFee),
         minimum_to_eat: Number(minimumToEat),
       };
 
-      if (recordId) {
-        const { error } = await supabase
-          .from("school_settings")
-          .update(payload)
-          .eq("id", recordId);
-
-        if (error) throw error;
-      } else {
-        const { data, error } = await supabase
-          .from("school_settings")
-          .insert([payload])
-          .select()
-          .single();
-
-        if (error) throw error;
-        setRecordId(String(data.id || ""));
+      try {
+        const res = await authedFetch("/api/feeding/update-control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Save failed.");
+        if (data.id) setRecordId(String(data.id));
+        setMessage("Feeding control saved successfully.");
+      } catch (error) {
+        const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
+        if (!isOffline) throw error;
+        await queueOfflineAction(OFFLINE_MODULE, "update-control", "/api/feeding/update-control", payload);
+        setMessage("Saved offline — will sync automatically.");
       }
-
-      setMessage("Feeding control saved successfully.");
     } catch (error) {
       console.error(error);
       setMessage("Error: Failed to save feeding control.");
