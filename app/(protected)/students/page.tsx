@@ -2,6 +2,27 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import SDSFileUpload from "@/app/components/SDSFileUpload";
+
+const OFFLINE_MODULE = "students";
+
+// Students entered through SDS/admission only ever get a single full_name
+// column filled in — first_name/other_name/last_name are specific to this
+// page's own Add Student form. Falling back to splitting full_name means
+// Edit still populates every field instead of leaving them blank for any
+// student who wasn't added from here.
+function splitFullName(fullName: string) {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { firstName: "", otherName: "", lastName: "" };
+  if (parts.length === 1) return { firstName: parts[0], otherName: "", lastName: "" };
+  if (parts.length === 2) return { firstName: parts[0], otherName: "", lastName: parts[1] };
+  return {
+    firstName: parts[0],
+    otherName: parts.slice(1, -1).join(" "),
+    lastName: parts[parts.length - 1],
+  };
+}
 
 function generateRandomStudentId(existingStudents: any[]) {
   let newId = "";
@@ -19,14 +40,16 @@ function generateRandomStudentId(existingStudents: any[]) {
 }
 
 function mapDbStudent(row: any) {
-  const firstName = row.first_name || "";
-  const otherName = row.other_name || "";
-  const lastName = row.last_name || "";
   const fullName =
     row.full_name ||
-    [firstName, otherName, lastName].filter(Boolean).join(" ").trim() ||
+    [row.first_name, row.other_name, row.last_name].filter(Boolean).join(" ").trim() ||
     row.student_name ||
     "Unnamed Student";
+
+  const hasSeparateNameFields = Boolean(row.first_name || row.last_name);
+  const { firstName, otherName, lastName } = hasSeparateNameFields
+    ? { firstName: row.first_name || "", otherName: row.other_name || "", lastName: row.last_name || "" }
+    : splitFullName(fullName === "Unnamed Student" ? "" : fullName);
 
   return {
     id: row.id,
@@ -67,6 +90,7 @@ export default function Students() {
   const [students, setStudents] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const [showSingleModal, setShowSingleModal] = useState(false);
@@ -206,42 +230,36 @@ export default function Students() {
   };
 
   const fetchClasses = async () => {
-    const { data, error } = await supabase
-      .from("classes")
-      .select("*")
-      .order("class_order", { ascending: true });
+    const { data, fromCache } = await fetchWithCache(
+      OFFLINE_MODULE,
+      "classes",
+      () => supabase.from("classes").select("*").order("class_order", { ascending: true }),
+      [] as any[]
+    );
 
-    if (error) {
-      console.error(error);
-      alert("Failed to load classes from Supabase.");
-      return [];
-    }
-
-    setClasses(data || []);
-    return data || [];
+    setClasses(data);
+    if (fromCache) setShowingCachedData(true);
+    return data;
   };
 
   const fetchStudents = async () => {
     setLoading(true);
 
-    const { data, error } = await supabase
-      .from("students")
-      .select("*")
-      .order("created_at", { ascending: true });
+    const { data, fromCache } = await fetchWithCache(
+      OFFLINE_MODULE,
+      "students",
+      () => supabase.from("students").select("*").order("created_at", { ascending: true }),
+      [] as any[]
+    );
 
-    if (error) {
-      console.error(error);
-      alert("Failed to load students from Supabase.");
-      setLoading(false);
-      return;
-    }
-
-    setStudents((data || []).map(mapDbStudent));
+    setStudents(data.map(mapDbStudent));
+    if (fromCache) setShowingCachedData(true);
     setLoading(false);
   };
 
   useEffect(() => {
     async function boot() {
+      setShowingCachedData(false);
       await fetchClasses();
       await fetchStudents();
     }
@@ -717,6 +735,9 @@ export default function Students() {
           <p className="mt-1 text-sm text-gray-500">
             View student photos, full names, IDs, guardians, status, and promotions.
           </p>
+          {showingCachedData && (
+            <p className="mt-1 text-xs text-gray-400">Showing last synced data</p>
+          )}
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
@@ -1342,15 +1363,15 @@ export default function Students() {
                 }
               />
 
-              <input
-                type="text"
-                placeholder="Photo URL"
-                className="rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-sky-500 md:col-span-3"
-                value={singleForm.photoUrl}
-                onChange={(e) =>
-                  setSingleForm({ ...singleForm, photoUrl: e.target.value })
-                }
-              />
+              <div className="md:col-span-3">
+                <SDSFileUpload
+                  label="Student Photo"
+                  value={singleForm.photoUrl}
+                  accept="image/*"
+                  folder="jsms/sds/student-photos"
+                  onUploaded={(url) => setSingleForm({ ...singleForm, photoUrl: url })}
+                />
+              </div>
 
               <textarea
                 placeholder="Medical Notes"
@@ -1626,15 +1647,15 @@ export default function Students() {
                 }
               />
 
-              <input
-                type="text"
-                placeholder="Photo URL"
-                className="rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-sky-500 md:col-span-3"
-                value={editForm.photoUrl}
-                onChange={(e) =>
-                  setEditForm({ ...editForm, photoUrl: e.target.value })
-                }
-              />
+              <div className="md:col-span-3">
+                <SDSFileUpload
+                  label="Student Photo"
+                  value={editForm.photoUrl}
+                  accept="image/*"
+                  folder="jsms/sds/student-photos"
+                  onUploaded={(url) => setEditForm({ ...editForm, photoUrl: url })}
+                />
+              </div>
 
               <textarea
                 placeholder="Medical Notes"
