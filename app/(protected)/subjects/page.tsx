@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { authedFetch } from "@/lib/apiClient";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { useModuleLoadBadge } from "@/lib/offline/useModulePrefetch";
+import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 
 const OFFLINE_MODULE = "subjects";
 
@@ -268,6 +270,8 @@ export default function SubjectsPage() {
     }
   }
 
+  const moduleDownloadStatus = useModuleLoadBadge(loading);
+
   return (
     <main
       style={{
@@ -278,6 +282,7 @@ export default function SubjectsPage() {
         padding: "18px",
       }}
     >
+      <ModuleDownloadBadge status={moduleDownloadStatus} label="Subjects" />
       <style>{`
         @media (max-width: 640px) {
           .subjects-split-grid {

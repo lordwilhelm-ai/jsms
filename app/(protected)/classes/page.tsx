@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { authedFetch } from "@/lib/apiClient";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { useModuleLoadBadge } from "@/lib/offline/useModulePrefetch";
+import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 
 const OFFLINE_MODULE = "classes";
 
@@ -83,6 +85,8 @@ export default function ClassesPage() {
     }
   }
 
+  const moduleDownloadStatus = useModuleLoadBadge(loading);
+
   return (
     <main
       style={{
@@ -93,6 +97,7 @@ export default function ClassesPage() {
         padding: "18px",
       }}
     >
+      <ModuleDownloadBadge status={moduleDownloadStatus} label="Classes" />
       <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
         <div
           style={{

@@ -7,6 +7,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { useModuleLoadBadge } from "@/lib/offline/useModulePrefetch";
+import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 import { haversineMeters } from "@/lib/geo";
 
 const OFFLINE_MODULE = "teacher-attendance";
@@ -610,6 +612,8 @@ export default function TeacherAttendancePage() {
     }
   }
 
+  const moduleDownloadStatus = useModuleLoadBadge(loading);
+
   if (loading) {
     return (
       <main style={loadingPageStyle}>
@@ -630,6 +634,7 @@ export default function TeacherAttendancePage() {
         attendanceSettings={attendanceSettings}
         lastSyncedAt={lastSyncedAt}
         showingCachedData={showingCachedData}
+        moduleDownloadStatus={moduleDownloadStatus}
       />
     );
   }
@@ -646,6 +651,7 @@ export default function TeacherAttendancePage() {
         padding: "10px",
       }}
     >
+      <ModuleDownloadBadge status={moduleDownloadStatus} label="Teacher Attendance" />
       <div style={{ maxWidth: "500px", margin: "0 auto" }}>
         <div style={teacherHeaderStyle}>
           <div style={headerFlexStyle}>
@@ -788,6 +794,7 @@ function AdminTeacherAttendanceView({
   attendanceSettings,
   lastSyncedAt,
   showingCachedData,
+  moduleDownloadStatus,
 }: {
   currentUserRow: AnyRow | null;
   settingsRow: AnyRow | null;
@@ -798,6 +805,7 @@ function AdminTeacherAttendanceView({
   attendanceSettings: AttendanceLocationSettings;
   lastSyncedAt: Date | null;
   showingCachedData: boolean;
+  moduleDownloadStatus: import("@/lib/offline/useModulePrefetch").ModulePrefetchStatus;
 }) {
   const [search, setSearch] = useState("");
 
@@ -879,6 +887,7 @@ function AdminTeacherAttendanceView({
         padding: "12px",
       }}
     >
+      <ModuleDownloadBadge status={moduleDownloadStatus} label="Teacher Attendance" />
       <div style={{ maxWidth: "1150px", margin: "0 auto" }}>
         <div style={adminHeaderStyle}>
           <div style={headerFlexStyle}>

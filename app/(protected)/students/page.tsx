@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { useModuleLoadBadge } from "@/lib/offline/useModulePrefetch";
+import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 import SDSFileUpload from "@/app/components/SDSFileUpload";
 
 const OFFLINE_MODULE = "students";
@@ -727,8 +729,11 @@ export default function Students() {
     setSelectedStudentIds([]);
   };
 
+  const moduleDownloadStatus = useModuleLoadBadge(loading);
+
   return (
     <div className="space-y-6">
+      <ModuleDownloadBadge status={moduleDownloadStatus} label="Students" />
       <div className="flex flex-col gap-4 rounded-2xl bg-white p-5 shadow-sm lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-xl font-bold text-gray-800">Students</h1>

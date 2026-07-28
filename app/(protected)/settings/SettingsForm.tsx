@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { useModuleLoadBadge } from "@/lib/offline/useModulePrefetch";
+import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 import LogoUpload from "./LogoUpload";
 import SignatureUpload from "./SignatureUpload";
 
@@ -116,6 +118,8 @@ export default function SettingsForm() {
     }
   }
 
+  const moduleDownloadStatus = useModuleLoadBadge(loading);
+
   if (loading) {
     return (
       <div
@@ -144,6 +148,7 @@ export default function SettingsForm() {
         gap: "18px",
       }}
     >
+      <ModuleDownloadBadge status={moduleDownloadStatus} label="Settings" />
       {showingCachedData && (
         <p style={{ margin: 0, fontSize: "12px", color: "#92400e" }}>Showing last synced data</p>
       )}

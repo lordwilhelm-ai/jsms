@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { useModuleLoadBadge } from "@/lib/offline/useModulePrefetch";
+import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 
 const OFFLINE_MODULE = "admission";
 
@@ -474,6 +476,8 @@ export default function AdmissionAdminPage() {
 
   const emergency = getEmergencyContact(details);
 
+  const moduleDownloadStatus = useModuleLoadBadge(loading);
+
   if (loading) {
     return (
       <main style={styles.page}>
@@ -484,6 +488,7 @@ export default function AdmissionAdminPage() {
 
   return (
     <main style={styles.page}>
+      <ModuleDownloadBadge status={moduleDownloadStatus} label="Admission" />
       <style>{`
         @media (max-width: 900px) {
           .admission-top-grid {

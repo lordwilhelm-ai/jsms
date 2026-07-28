@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { useModuleLoadBadge } from "@/lib/offline/useModulePrefetch";
+import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 
 const OFFLINE_MODULE = "sds";
 
@@ -389,6 +391,8 @@ export default function SDSAdminPage() {
     }
   }
 
+  const moduleDownloadStatus = useModuleLoadBadge(loading);
+
   if (checkingUser || loading) {
     return <div style={{ padding: "24px" }}>Loading SDS...</div>;
   }
@@ -402,6 +406,7 @@ export default function SDSAdminPage() {
         color: COLORS.text,
       }}
     >
+      <ModuleDownloadBadge status={moduleDownloadStatus} label="Students Database" />
       <div
         style={{
           background: COLORS.secondary,

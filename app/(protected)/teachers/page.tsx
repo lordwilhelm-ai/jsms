@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { useModuleLoadBadge } from "@/lib/offline/useModulePrefetch";
+import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 
 const OFFLINE_MODULE = "staff";
 
@@ -1099,8 +1101,11 @@ export default function TeachersPage() {
     }
   }
 
+  const moduleDownloadStatus = useModuleLoadBadge(loading);
+
   return (
     <main className="teacher-page">
+      <ModuleDownloadBadge status={moduleDownloadStatus} label="Staff" />
       <style>{teacherPageStyles}</style>
 
       <div className="bg-orb bg-orb-one" />
