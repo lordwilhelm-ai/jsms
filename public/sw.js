@@ -50,7 +50,11 @@ self.addEventListener("fetch", function (event) {
   if (url.pathname.startsWith("/_next/static/")) {
     event.respondWith(
       caches.open(CACHE_NAME).then(function (cache) {
-        return cache.match(request).then(function (cached) {
+        // ignoreVary: Next's static chunk responses don't set a
+        // request-varying Vary header, but staying consistent with the
+        // navigation handler below costs nothing and rules out any future
+        // surprise here too.
+        return cache.match(request, { ignoreVary: true }).then(function (cached) {
           if (cached) return cached;
           return fetch(request).then(function (response) {
             if (response && response.ok) cache.put(request, response.clone());
@@ -78,7 +82,14 @@ self.addEventListener("fetch", function (event) {
           return response;
         })
         .catch(function () {
-          return cache.match(request).then(function (cached) {
+          // Next sets a Vary header (RSC vs full-HTML) that differs between
+          // a hard page load and the RSC-payload fetch a client-side Link
+          // navigation makes to the SAME URL — matching Vary-strictly here
+          // would miss a page that was genuinely cached moments ago just
+          // because this particular request is the "other" navigation
+          // style. Offline fallback only cares "is there anything usable
+          // for this URL at all", so Vary is deliberately ignored.
+          return cache.match(request, { ignoreVary: true }).then(function (cached) {
             return cached || Response.error();
           });
         });
