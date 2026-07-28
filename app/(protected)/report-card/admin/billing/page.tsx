@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FiArrowLeft, FiRefreshCw, FiSearch } from "react-icons/fi";
 import { supabase } from "@/lib/supabase";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "report-card";
 
 const CLASS_ORDER = [
   "Playroom 1", "Playroom 2", "KG 1", "KG 2",
@@ -229,6 +232,7 @@ export default function ReportCardBillingPage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [settings, setSettings] = useState<SettingsRow | null>(null);
   const [classes, setClasses] = useState<ClassRow[]>([]);
@@ -245,20 +249,23 @@ export default function ReportCardBillingPage() {
   async function loadData() {
     setLoading(true);
     const [studentsRes, settingsRes, classesRes, feeLiveRes, feePaymentsRes, feeStructureRes] = await Promise.all([
-      supabase.from("students").select("*"),
-      supabase.from("school_settings").select("*").order("updated_at", { ascending: false }).limit(1).maybeSingle(),
-      supabase.from("classes").select("*").order("class_order", { ascending: true }),
-      supabase.from("jsms_report_fee_live_view").select("*"),
-      supabase.from("fee_payments").select("*"),
-      supabase.from("fee_structure").select("*"),
+      fetchWithCache(OFFLINE_MODULE, "students", () => supabase.from("students").select("*"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").order("updated_at", { ascending: false }).limit(1).maybeSingle(), null as any),
+      fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*").order("class_order", { ascending: true }), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "jsms_report_fee_live_view", () => supabase.from("jsms_report_fee_live_view").select("*"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "fee_structure", () => supabase.from("fee_structure").select("*"), [] as any[]),
     ]);
 
-    if (!studentsRes.error) setStudents((studentsRes.data || []).filter(isActiveStudent));
-    if (!settingsRes.error) setSettings(settingsRes.data || null);
-    if (!classesRes.error) setClasses(classesRes.data || []);
-    if (!feeLiveRes.error) setFeeLiveRows(feeLiveRes.data || []);
-    if (!feePaymentsRes.error) setFeePayments(feePaymentsRes.data || []);
-    if (!feeStructureRes.error) setFeeStructures(feeStructureRes.data || []);
+    setStudents((studentsRes.data || []).filter(isActiveStudent));
+    setSettings(settingsRes.data || null);
+    setClasses(classesRes.data || []);
+    setFeeLiveRows(feeLiveRes.data || []);
+    setFeePayments(feePaymentsRes.data || []);
+    setFeeStructures(feeStructureRes.data || []);
+    setShowingCachedData(
+      [studentsRes, settingsRes, classesRes, feeLiveRes, feePaymentsRes, feeStructureRes].some((r) => r.fromCache)
+    );
     setLoading(false);
   }
 
@@ -310,6 +317,9 @@ export default function ReportCardBillingPage() {
           <h1 className="text-2xl font-extrabold text-gray-900">Bills</h1>
           <p className="mt-2 text-sm text-gray-500">Fees for next term, as they will appear on each student&apos;s report card.</p>
           <p className="mt-2 text-sm font-semibold text-sky-700">{currentTerm || "Current Term"} • {academicYear || "Academic Year"}</p>
+          {showingCachedData && (
+            <p className="mt-2 text-xs text-gray-400">Showing last synced data</p>
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

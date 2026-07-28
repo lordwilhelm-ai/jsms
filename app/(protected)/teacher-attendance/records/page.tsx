@@ -5,6 +5,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "teacher-attendance";
 
 type AnyRow = Record<string, any>;
 type FilterMode = "today" | "week" | "month" | "term" | "year" | "custom";
@@ -239,6 +242,7 @@ export default function TeacherAttendanceRecordsPage() {
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error" | "info">("info");
+  const [showingCachedData, setShowingCachedData] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -257,13 +261,11 @@ export default function TeacherAttendanceRecordsPage() {
         }
 
         const [teachersRes, settingsRes] = await Promise.all([
-          supabase.from("teachers").select("*"),
-          supabase.from("school_settings").select("*").limit(1).maybeSingle(),
+          fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as any[]),
+          fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null as any),
         ]);
 
         if (!active) return;
-
-        if (teachersRes.error) throw teachersRes.error;
 
         const allUsers = teachersRes.data || [];
 
@@ -302,6 +304,7 @@ export default function TeacherAttendanceRecordsPage() {
         setEndDate(range.end);
 
         await loadRecords(range.start, range.end);
+        setShowingCachedData((prev) => prev || teachersRes.fromCache || settingsRes.fromCache);
       } catch (error: any) {
         console.error(error);
         setMessage(error?.message || "Failed to load records page.");
@@ -312,16 +315,27 @@ export default function TeacherAttendanceRecordsPage() {
     }
 
     async function loadRecords(start: string, end: string) {
-      const { data, error } = await supabase
-        .from("teacher_attendance")
-        .select("*")
-        .gte("attendance_date", start)
-        .lte("attendance_date", end)
-        .order("attendance_date", { ascending: false })
-        .order("teacher_name", { ascending: true });
+      // Cache key encodes the date range — otherwise switching ranges while
+      // offline would silently serve whichever range was cached last as if
+      // it were the one just requested.
+      const { data, fromCache } = await fetchWithCache(
+        OFFLINE_MODULE,
+        `records:${start}_${end}`,
+        () =>
+          supabase
+            .from("teacher_attendance")
+            .select("*")
+            .gte("attendance_date", start)
+            .lte("attendance_date", end)
+            .order("attendance_date", { ascending: false })
+            .order("teacher_name", { ascending: true }),
+        [] as any[]
+      );
 
-      if (error) throw error;
-      if (active) setRecords(data || []);
+      if (active) {
+        setRecords(data);
+        setShowingCachedData(fromCache);
+      }
     }
 
     void loadPage();
@@ -342,17 +356,22 @@ export default function TeacherAttendanceRecordsPage() {
         return;
       }
 
-      const { data, error } = await supabase
-        .from("teacher_attendance")
-        .select("*")
-        .gte("attendance_date", nextStart)
-        .lte("attendance_date", nextEnd)
-        .order("attendance_date", { ascending: false })
-        .order("teacher_name", { ascending: true });
+      const { data, fromCache } = await fetchWithCache(
+        OFFLINE_MODULE,
+        `records:${nextStart}_${nextEnd}`,
+        () =>
+          supabase
+            .from("teacher_attendance")
+            .select("*")
+            .gte("attendance_date", nextStart)
+            .lte("attendance_date", nextEnd)
+            .order("attendance_date", { ascending: false })
+            .order("teacher_name", { ascending: true }),
+        [] as any[]
+      );
 
-      if (error) throw error;
-
-      setRecords(data || []);
+      setRecords(data);
+      setShowingCachedData(fromCache);
     } catch (error: any) {
       console.error(error);
       setMessage(error?.message || "Failed to load attendance records.");
@@ -487,6 +506,9 @@ export default function TeacherAttendanceRecordsPage() {
               <p style={headerNameStyle}>
                 Print records by today, week, month, term, year, or custom range
               </p>
+              {showingCachedData && (
+                <p style={{ margin: "4px 0 0", fontSize: "11px", opacity: 0.85 }}>Showing last synced data</p>
+              )}
             </div>
 
             <div style={headerRightStyle}>

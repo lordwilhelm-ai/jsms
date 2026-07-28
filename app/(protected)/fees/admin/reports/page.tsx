@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "fees";
 
 type AnyRow = Record<string, any>;
 type ModuleType = "Fees" | "Books" | "Uniforms";
@@ -216,18 +219,17 @@ function normalizeUniformPayment(row: AnyRow): ReportPayment {
   };
 }
 
-async function safeSelect(table: string) {
-  const { data, error } = await supabase
-    .from(table)
-    .select("*")
-    .order("created_at", { ascending: false });
+async function safeSelect(table: string, cacheFlags?: boolean[]) {
+  const result = await fetchWithCache(
+    OFFLINE_MODULE,
+    table,
+    () => supabase.from(table).select("*").order("created_at", { ascending: false }),
+    [] as AnyRow[]
+  );
 
-  if (error) {
-    console.warn(`${table} not loaded:`, error.message);
-    return [] as AnyRow[];
-  }
+  if (cacheFlags) cacheFlags.push(result.fromCache);
 
-  return (data || []) as AnyRow[];
+  return result.data;
 }
 
 function getSettingDate(settingsRow: AnyRow | null, keys: string[]) {
@@ -374,6 +376,7 @@ export default function FinanceReportsPage() {
 
   const [checkingUser, setCheckingUser] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [settingsRow, setSettingsRow] = useState<AnyRow | null>(null);
   const [payments, setPayments] = useState<ReportPayment[]>([]);
   const [search, setSearch] = useState("");
@@ -403,17 +406,20 @@ export default function FinanceReportsPage() {
         return;
       }
 
+      const cacheFlags: boolean[] = [];
       const [teachersRes, settingsRes, feesRows, booksRows, uniformRows] = await Promise.all([
-        supabase.from("teachers").select("*"),
-        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-        safeSelect("fee_payments"),
-        safeSelect("jsms_book_payments"),
-        safeSelect("jsms_uniform_payments"),
+        fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as AnyRow[]),
+        fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
+        safeSelect("fee_payments", cacheFlags),
+        safeSelect("jsms_book_payments", cacheFlags),
+        safeSelect("jsms_uniform_payments", cacheFlags),
       ]);
 
       if (!active) return;
 
-      if (teachersRes.error || !teachersRes.data || teachersRes.data.length === 0) {
+      setShowingCachedData(cacheFlags.some(Boolean) || teachersRes.fromCache || settingsRes.fromCache);
+
+      if (!teachersRes.data || teachersRes.data.length === 0) {
         router.replace("/");
         return;
       }
@@ -703,6 +709,11 @@ export default function FinanceReportsPage() {
               <p style={{ margin: 0, color: COLORS.muted, fontWeight: 700 }}>
                 {schoolName} • {activeRangeLabel}
               </p>
+              {showingCachedData && (
+                <p style={{ margin: "6px 0 0", fontSize: "12px", opacity: 0.85, color: COLORS.muted }}>
+                  Showing last synced data
+                </p>
+              )}
             </div>
 
             <div className="no-print" style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>

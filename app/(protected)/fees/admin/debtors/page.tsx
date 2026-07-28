@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "fees";
 
 type AnyRow = Record<string, any>;
 type ActiveTab = "fees" | "books" | "uniforms";
@@ -301,6 +304,7 @@ export default function DebtorsPage() {
 
   const [checkingUser, setCheckingUser] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [message, setMessage] = useState("");
   const [settingsRow, setSettingsRow] = useState<AnyRow | null>(null);
   const [classes, setClasses] = useState<AnyRow[]>([]);
@@ -337,24 +341,36 @@ export default function DebtorsPage() {
 
         const [teachersRes, settingsRes, classesRes, studentsRes, feePaymentsRes, newItemsRes, bookPaymentsRes, uniformPaymentsRes] =
           await Promise.all([
-            supabase.from("teachers").select("*"),
-            supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-            supabase.from("classes").select("*"),
-            supabase.from("students").select("*"),
-            supabase.from("fee_payments").select("*").order("created_at", { ascending: false }),
-            supabase
-              .from("new_student_fee_items")
-              .select("*")
-              .eq("is_active", true)
-              .order("level_group", { ascending: true })
-              .order("sort_order", { ascending: true }),
-            supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }),
-            supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }),
+            fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as AnyRow[]),
+            fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
+            fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*"), [] as AnyRow[]),
+            fetchWithCache(OFFLINE_MODULE, "students", () => supabase.from("students").select("*"), [] as AnyRow[]),
+            fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+            fetchWithCache(
+              OFFLINE_MODULE,
+              "new_student_fee_items",
+              () =>
+                supabase
+                  .from("new_student_fee_items")
+                  .select("*")
+                  .eq("is_active", true)
+                  .order("level_group", { ascending: true })
+                  .order("sort_order", { ascending: true }),
+              [] as AnyRow[]
+            ),
+            fetchWithCache(OFFLINE_MODULE, "jsms_book_payments", () => supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+            fetchWithCache(OFFLINE_MODULE, "jsms_uniform_payments", () => supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
           ]);
 
         if (!active) return;
 
-        if (teachersRes.error || !teachersRes.data || teachersRes.data.length === 0) {
+        setShowingCachedData(
+          [teachersRes, settingsRes, classesRes, studentsRes, feePaymentsRes, newItemsRes, bookPaymentsRes, uniformPaymentsRes].some(
+            (r) => r.fromCache
+          )
+        );
+
+        if (!teachersRes.data || teachersRes.data.length === 0) {
           router.replace("/");
           return;
         }
@@ -378,26 +394,14 @@ export default function DebtorsPage() {
           return;
         }
 
-        if (classesRes.error) throw classesRes.error;
-        if (studentsRes.error) throw studentsRes.error;
-        if (feePaymentsRes.error) throw feePaymentsRes.error;
-        if (newItemsRes.error) throw newItemsRes.error;
-        if (bookPaymentsRes.error) throw bookPaymentsRes.error;
-
         setSettingsRow(settingsRes.data || null);
         setClasses(classesRes.data || []);
         setStudents(studentsRes.data || []);
         setFeePayments(feePaymentsRes.data || []);
         setNewStudentItems(newItemsRes.data || []);
         setBookPayments(bookPaymentsRes.data || []);
-
-        if (uniformPaymentsRes.error) {
-          setUniformPayments([]);
-          setUniformWarning("Uniform debtors will show after the uniform module/table is created.");
-        } else {
-          setUniformPayments(uniformPaymentsRes.data || []);
-          setUniformWarning("");
-        }
+        setUniformPayments(uniformPaymentsRes.data || []);
+        setUniformWarning("");
       } catch (error) {
         console.error(error);
         const errorMessage =
@@ -641,6 +645,11 @@ export default function DebtorsPage() {
             <p style={{ margin: "4px 0 0", fontSize: "12px", color: COLORS.goldSoft }}>
               {academicYear || "-"} • {currentTerm || "-"}
             </p>
+            {showingCachedData && (
+              <p style={{ margin: "8px 0 0", fontSize: "12px", opacity: 0.85, color: COLORS.goldSoft }}>
+                Showing last synced data
+              </p>
+            )}
           </div>
 
           <div style={{ display: "grid", gap: "10px" }}>

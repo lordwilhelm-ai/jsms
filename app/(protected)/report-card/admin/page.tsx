@@ -17,7 +17,22 @@ import {
 } from "react-icons/fi";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
 import { useReportCardAccess } from "@/hooks/useReportCardAccess";
+
+const OFFLINE_MODULE = "report-card";
+
+// /api/* is never cached by the service worker — offline fallback for these
+// goes through fetchWithCache's IndexedDB mirror instead, wrapping the
+// authedFetch call itself as the "fetcher" so it shares the same {data,
+// error} contract as a Supabase query.
+function fetchJsonRows(url: string) {
+  return authedFetch(url).then(async (response) => {
+    const body = await response.json();
+    if (!response.ok) return { data: null, error: body.error || "Request failed." };
+    return { data: body.rows || [], error: null };
+  });
+}
 
 function AdminPaymentGate({
   amountDue,
@@ -122,6 +137,7 @@ export default function ReportCardAdminDashboardPage() {
   const access = useReportCardAccess();
 
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [settings, setSettings] = useState<SettingsRow | null>(null);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
@@ -140,32 +156,36 @@ export default function ReportCardAdminDashboardPage() {
     setLoading(true);
     const [
       settingsRes, studentsRes, teachersRes, classesRes,
-      scoresRaw, attendanceRaw, remarksRaw, assignmentsRes,
+      scoresRes, attendanceRes, remarksRes, assignmentsRes,
     ] = await Promise.all([
-      supabase.from("school_settings").select("school_name,current_academic_year,academic_year,current_term").order("updated_at", { ascending: false }).limit(1).maybeSingle(),
-      supabase.from("students").select("id,student_id,jvs_id,class_name,is_active,active,left_school,status"),
-      supabase.from("teachers").select("id,full_name,role"),
-      supabase.from("classes").select("id,name,class_name,class_order").order("class_order", { ascending: true }),
-      authedFetch("/api/report-card/scores"),
-      authedFetch("/api/report-card/attendance"),
-      authedFetch("/api/report-card/cards"),
-      supabase.from("teacher_class_assignments").select("teacher_id,class_id"),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "school_settings",
+        () => supabase.from("school_settings").select("school_name,current_academic_year,academic_year,current_term").order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+        null as any
+      ),
+      fetchWithCache(OFFLINE_MODULE, "students", () => supabase.from("students").select("id,student_id,jvs_id,class_name,is_active,active,left_school,status"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("id,full_name,role"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("id,name,class_name,class_order").order("class_order", { ascending: true }), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "scores", () => fetchJsonRows("/api/report-card/scores"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "attendance", () => fetchJsonRows("/api/report-card/attendance"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "cards", () => fetchJsonRows("/api/report-card/cards"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "teacher_class_assignments", () => supabase.from("teacher_class_assignments").select("teacher_id,class_id"), [] as any[]),
     ]);
 
-    const [scoresData, attendanceData, remarksData] = await Promise.all([
-      scoresRaw.json(),
-      attendanceRaw.json(),
-      remarksRaw.json(),
-    ]);
-
-    if (!settingsRes.error) setSettings(settingsRes.data || null);
-    if (!studentsRes.error) setStudents((studentsRes.data || []).filter(isActiveStudent));
-    if (!teachersRes.error) setTeachers(teachersRes.data || []);
-    if (!classesRes.error) setClasses(classesRes.data || []);
-    if (scoresRaw.ok) setScores(scoresData.rows || []);
-    if (attendanceRaw.ok) setAttendance(attendanceData.rows || []);
-    if (remarksRaw.ok) setRemarks(remarksData.rows || []);
-    if (!assignmentsRes.error) setAssignments(assignmentsRes.data || []);
+    setSettings(settingsRes.data || null);
+    setStudents((studentsRes.data || []).filter(isActiveStudent));
+    setTeachers(teachersRes.data || []);
+    setClasses(classesRes.data || []);
+    setScores(scoresRes.data || []);
+    setAttendance(attendanceRes.data || []);
+    setRemarks(remarksRes.data || []);
+    setAssignments(assignmentsRes.data || []);
+    setShowingCachedData(
+      [settingsRes, studentsRes, teachersRes, classesRes, scoresRes, attendanceRes, remarksRes, assignmentsRes].some(
+        (r) => r.fromCache
+      )
+    );
     setLoading(false);
   }
 
@@ -275,6 +295,9 @@ export default function ReportCardAdminDashboardPage() {
             <div>
               <h1 className="text-2xl font-black text-slate-900">Admin Dashboard</h1>
               <p className="mt-1 text-sm text-slate-500">Manage students, teachers, classes, report cards, bills, messages and settings</p>
+              {showingCachedData && (
+                <p className="mt-1 text-xs text-slate-400">Showing last synced data</p>
+              )}
             </div>
             <div className="text-left sm:text-right">
               <p className="font-bold text-slate-900">Admin</p>

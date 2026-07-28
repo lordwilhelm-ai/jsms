@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "feeding";
 
 type StudentBalance = Record<string, any>;
 type SettingsRow = Record<string, any>;
@@ -36,6 +39,7 @@ function getBalance(row: Record<string, any>) {
 
 export default function AdminDebtorsPage() {
   const [loading, setLoading] = useState(false);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [balances, setBalances] = useState<StudentBalance[]>([]);
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [settingsRow, setSettingsRow] = useState<SettingsRow | null>(null);
@@ -52,17 +56,15 @@ export default function AdminDebtorsPage() {
       setLoading(true);
 
       const [balancesRes, settingsRes, classesRes] = await Promise.all([
-        supabase.from("student_balances").select("*"),
-        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-        supabase.from("classes").select("*").order("class_order", { ascending: true }),
+        fetchWithCache(OFFLINE_MODULE, "student_balances", () => supabase.from("student_balances").select("*"), [] as StudentBalance[]),
+        fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
+        fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*").order("class_order", { ascending: true }), [] as ClassRow[]),
       ]);
-
-      if (balancesRes.error) throw balancesRes.error;
-      if (classesRes.error) throw classesRes.error;
 
       setBalances(balancesRes.data || []);
       setSettingsRow(settingsRes.data || null);
       setClasses(classesRes.data || []);
+      setShowingCachedData([balancesRes, settingsRes, classesRes].some((r) => r.fromCache));
     } catch (error) {
       console.error(error);
       alert("Failed to load debtor balances.");
@@ -178,6 +180,9 @@ export default function AdminDebtorsPage() {
             <h1 style={{ margin: 0 }}>Debtors</h1>
             <p style={{ margin: "6px 0 0", fontWeight: "bold" }}>{schoolName}</p>
             <p style={{ margin: "4px 0 0", opacity: 0.9 }}>{motto}</p>
+            {showingCachedData && (
+              <p style={{ margin: "6px 0 0", fontSize: "12px", opacity: 0.85 }}>Showing last synced data</p>
+            )}
             <p style={{ margin: "6px 0 0", fontSize: "13px", opacity: 0.9 }}>
               <strong>{academicYear}</strong> • <strong>{currentTerm}</strong>
             </p>

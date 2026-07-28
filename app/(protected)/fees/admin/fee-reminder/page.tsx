@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "fees";
 
 type AnyRow = Record<string, any>;
 type SendMode = "owing" | "all" | "class" | "level" | "individual";
@@ -266,6 +269,7 @@ function inputStyle(): React.CSSProperties {
 
 export default function FeeReminderPage() {
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [students, setStudents] = useState<AnyRow[]>([]);
   const [classes, setClasses] = useState<AnyRow[]>([]);
   const [payments, setPayments] = useState<AnyRow[]>([]);
@@ -291,11 +295,11 @@ export default function FeeReminderPage() {
       setLoading(true);
 
       const [studentsRes, classesRes, paymentsRes, settingsRes, newItemsRes] = await Promise.all([
-        supabase.from("students").select("*"),
-        supabase.from("classes").select("*"),
-        supabase.from("fee_payments").select("*"),
-        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-        supabase.from("new_student_fee_items").select("*"),
+        fetchWithCache(OFFLINE_MODULE, "students", () => supabase.from("students").select("*"), [] as AnyRow[]),
+        fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*"), [] as AnyRow[]),
+        fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*"), [] as AnyRow[]),
+        fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
+        fetchWithCache(OFFLINE_MODULE, "new_student_fee_items", () => supabase.from("new_student_fee_items").select("*"), [] as AnyRow[]),
       ]);
 
       setStudents(studentsRes.data || []);
@@ -303,6 +307,9 @@ export default function FeeReminderPage() {
       setPayments(paymentsRes.data || []);
       setSettings(settingsRes.data || null);
       setNewItems(newItemsRes.data || []);
+      setShowingCachedData(
+        [studentsRes, classesRes, paymentsRes, settingsRes, newItemsRes].some((r) => r.fromCache)
+      );
       setLoading(false);
     }
 
@@ -650,6 +657,11 @@ export default function FeeReminderPage() {
               <p style={{ margin: "10px 0 0", color: COLORS.muted, fontSize: 18 }}>
                 Send fee reminders and print class fee reports straight away.
               </p>
+              {showingCachedData && (
+                <p style={{ margin: "6px 0 0", fontSize: 12, opacity: 0.75, color: COLORS.muted }}>
+                  Showing last synced data
+                </p>
+              )}
             </div>
 
             <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 18, padding: "14px 22px" }}>

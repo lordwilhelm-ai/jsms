@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "feeding";
 
 type EntryRow = Record<string, any>;
 type ReceivedRow = Record<string, any>;
@@ -138,6 +141,7 @@ export default function FeedingReportsPage() {
   const [loading, setLoading] = useState(false);
   const [entries, setEntries] = useState<EntryRow[]>([]);
   const [receivedMoney, setReceivedMoney] = useState<ReceivedRow[]>([]);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [settingsRow, setSettingsRow] = useState<SettingsRow | null>(null);
 
@@ -161,34 +165,55 @@ export default function FeedingReportsPage() {
       setLoading(true);
 
       const [settingsRes, classesRes] = await Promise.all([
-        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-        supabase.from("classes").select("*").order("class_order", { ascending: true }),
+        fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
+        fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*").order("class_order", { ascending: true }), [] as ClassRow[]),
       ]);
 
       setSettingsRow(settingsRes.data || null);
       setClasses(classesRes.data || []);
 
-      let entriesQuery = supabase.from("daily_entries").select("*");
-      let receivedQuery = supabase.from("received_money").select("*");
+      // Cache key must encode the mode+date(s) — otherwise switching the
+      // date/filter while offline would silently serve whichever range was
+      // cached last as if it were the one just requested.
+      const scopeKey =
+        reportMode === "today"
+          ? `today:${today}`
+          : reportMode === "single"
+          ? `single:${singleDate}`
+          : `range:${startDate}_${endDate}`;
 
-      if (reportMode === "today") {
-        entriesQuery = entriesQuery.eq("date", today);
-        receivedQuery = receivedQuery.eq("date", today);
-      } else if (reportMode === "single") {
-        entriesQuery = entriesQuery.eq("date", singleDate);
-        receivedQuery = receivedQuery.eq("date", singleDate);
-      } else {
-        entriesQuery = entriesQuery.gte("date", startDate).lte("date", endDate);
-        receivedQuery = receivedQuery.gte("date", startDate).lte("date", endDate);
-      }
-
-      const [entriesRes, receivedRes] = await Promise.all([entriesQuery, receivedQuery]);
-
-      if (entriesRes.error) throw entriesRes.error;
-      if (receivedRes.error) throw receivedRes.error;
+      const [entriesRes, receivedRes] = await Promise.all([
+        fetchWithCache(
+          OFFLINE_MODULE,
+          `daily_entries:${scopeKey}`,
+          () => {
+            let query = supabase.from("daily_entries").select("*");
+            if (reportMode === "today") query = query.eq("date", today);
+            else if (reportMode === "single") query = query.eq("date", singleDate);
+            else query = query.gte("date", startDate).lte("date", endDate);
+            return query;
+          },
+          [] as EntryRow[]
+        ),
+        fetchWithCache(
+          OFFLINE_MODULE,
+          `received_money:${scopeKey}`,
+          () => {
+            let query = supabase.from("received_money").select("*");
+            if (reportMode === "today") query = query.eq("date", today);
+            else if (reportMode === "single") query = query.eq("date", singleDate);
+            else query = query.gte("date", startDate).lte("date", endDate);
+            return query;
+          },
+          [] as ReceivedRow[]
+        ),
+      ]);
 
       setEntries(entriesRes.data || []);
       setReceivedMoney(receivedRes.data || []);
+      setShowingCachedData(
+        [settingsRes, classesRes, entriesRes, receivedRes].some((r) => r.fromCache)
+      );
     } catch (error) {
       console.error(error);
       alert("Failed to load reports.");
@@ -489,6 +514,9 @@ export default function FeedingReportsPage() {
             <h1 style={{ margin: 0, fontSize: "28px" }}>Feeding Reports</h1>
             <p style={{ margin: "6px 0 0", fontWeight: "bold" }}>{schoolName}</p>
             <p style={{ margin: "4px 0 0", opacity: 0.9 }}>{motto}</p>
+            {showingCachedData && (
+              <p style={{ margin: "6px 0 0", fontSize: "12px", opacity: 0.85 }}>Showing last synced data</p>
+            )}
             <p style={{ margin: "6px 0 0", fontSize: "13px", opacity: 0.9 }}>
               <strong>{academicYear}</strong> • <strong>{currentTerm}</strong>
             </p>

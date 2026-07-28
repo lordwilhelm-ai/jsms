@@ -5,6 +5,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "sds";
 
 type TeacherRow = Record<string, any>;
 type StudentRow = Record<string, any>;
@@ -131,6 +134,7 @@ export default function SDSAdminPage() {
   const [editingStudentId, setEditingStudentId] = useState("");
   const [savingStudent, setSavingStudent] = useState(false);
   const [message, setMessage] = useState("");
+  const [showingCachedData, setShowingCachedData] = useState(false);
 
   const [form, setForm] = useState(emptyForm);
 
@@ -150,15 +154,15 @@ export default function SDSAdminPage() {
       }
 
       const [teachersRes, studentsRes, classesRes, settingsRes] = await Promise.all([
-        supabase.from("teachers").select("*"),
-        supabase.from("students").select("*"),
-        supabase.from("classes").select("*").order("class_order", { ascending: true }),
-        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
+        fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as any[]),
+        fetchWithCache(OFFLINE_MODULE, "students", () => supabase.from("students").select("*"), [] as any[]),
+        fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*").order("class_order", { ascending: true }), [] as any[]),
+        fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null as any),
       ]);
 
       if (!active) return;
 
-      if (teachersRes.error || !teachersRes.data || teachersRes.data.length === 0) {
+      if (!teachersRes.data || teachersRes.data.length === 0) {
         router.replace("/");
         return;
       }
@@ -185,6 +189,9 @@ export default function SDSAdminPage() {
       setStudents(studentsRes.data || []);
       setClasses(classesRes.data || []);
       setSettingsRow(settingsRes.data || null);
+      setShowingCachedData(
+        [teachersRes, studentsRes, classesRes, settingsRes].some((r) => r.fromCache)
+      );
 
       setCheckingUser(false);
       setLoading(false);
@@ -421,6 +428,9 @@ export default function SDSAdminPage() {
             <p style={{ margin: "6px 0 0", fontSize: "13px", opacity: 0.9 }}>
               <strong>{academicYear}</strong> • <strong>{currentTerm}</strong>
             </p>
+            {showingCachedData && (
+              <p style={{ margin: "6px 0 0", fontSize: "12px", opacity: 0.85 }}>Showing last synced data</p>
+            )}
           </div>
 
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>

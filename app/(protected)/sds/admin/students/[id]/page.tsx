@@ -5,7 +5,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
 import SDSFileUpload from "@/app/components/SDSFileUpload";
+
+const OFFLINE_MODULE = "sds";
 
 type TeacherRow = Record<string, any>;
 type ClassRow = Record<string, any>;
@@ -68,6 +71,7 @@ export default function SDSAdminStudentProfilePage() {
 
   const [checkingUser, setCheckingUser] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [userRole, setUserRole] = useState<"teacher" | "admin" | "other">("other");
@@ -133,15 +137,26 @@ export default function SDSAdminStudentProfilePage() {
         }
 
         const [teachersRes, studentRes, settingsRes, classesRes] = await Promise.all([
-          supabase.from("teachers").select("*"),
-          supabase.from("students").select("*").eq("id", studentRowId).maybeSingle(),
-          supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-          supabase.from("classes").select("*").order("class_order", { ascending: true }),
+          fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as any[]),
+          // Per-student cache key — each student's detail gets its own
+          // entry instead of one shared/overwritten key.
+          fetchWithCache(
+            OFFLINE_MODULE,
+            `student-${studentRowId}`,
+            () => supabase.from("students").select("*").eq("id", studentRowId).maybeSingle(),
+            null as any
+          ),
+          fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null as any),
+          fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*").order("class_order", { ascending: true }), [] as any[]),
         ]);
 
         if (!active) return;
 
-        if (teachersRes.error || !teachersRes.data || teachersRes.data.length === 0) {
+        setShowingCachedData(
+          [teachersRes, studentRes, settingsRes, classesRes].some((r) => r.fromCache)
+        );
+
+        if (!teachersRes.data || teachersRes.data.length === 0) {
           router.replace("/");
           return;
         }
@@ -207,8 +222,8 @@ export default function SDSAdminStudentProfilePage() {
           }
         }
 
-        if (studentRes.error || !studentRes.data) {
-          setMessage(`Error: ${studentRes.error?.message || "Student not found."}`);
+        if (!studentRes.data) {
+          setMessage("Error: Student not found.");
           setCheckingUser(false);
           setLoading(false);
           return;
@@ -487,6 +502,9 @@ export default function SDSAdminStudentProfilePage() {
             <p style={{ margin: "6px 0 0", fontSize: "11px", opacity: 0.9 }}>
               <strong>{academicYear}</strong> • <strong>{currentTerm}</strong>
             </p>
+            {showingCachedData && (
+              <p style={{ margin: "6px 0 0", fontSize: "11px", opacity: 0.85 }}>Showing last synced data</p>
+            )}
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: "8px", width: "100%", maxWidth: "300px" }}>

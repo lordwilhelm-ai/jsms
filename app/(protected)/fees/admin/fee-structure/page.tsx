@@ -6,6 +6,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "fees";
 
 type AnyRow = Record<string, any>;
 
@@ -189,6 +192,7 @@ export default function FeesStructurePage() {
 
   const [checkingUser, setCheckingUser] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [savingLevel, setSavingLevel] = useState("");
   const [savingItem, setSavingItem] = useState(false);
   const [seedingLevel, setSeedingLevel] = useState("");
@@ -221,21 +225,31 @@ export default function FeesStructurePage() {
       }
 
       const [teachersRes, settingsRes, classesRes, itemsRes] = await Promise.all([
-        supabase.from("teachers").select("*"),
-        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-        supabase.from("classes").select("*"),
-        supabase
-          .from("new_student_fee_items")
-          .select("*")
-          .eq("is_active", true)
-          .order("level_group", { ascending: true })
-          .order("sort_order", { ascending: true })
-          .order("created_at", { ascending: true }),
+        fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as AnyRow[]),
+        fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
+        fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*"), [] as AnyRow[]),
+        fetchWithCache(
+          OFFLINE_MODULE,
+          "new_student_fee_items",
+          () =>
+            supabase
+              .from("new_student_fee_items")
+              .select("*")
+              .eq("is_active", true)
+              .order("level_group", { ascending: true })
+              .order("sort_order", { ascending: true })
+              .order("created_at", { ascending: true }),
+          [] as AnyRow[]
+        ),
       ]);
 
       if (!active) return;
 
-      if (teachersRes.error || !teachersRes.data || teachersRes.data.length === 0) {
+      setShowingCachedData(
+        [teachersRes, settingsRes, classesRes, itemsRes].some((r) => r.fromCache)
+      );
+
+      if (!teachersRes.data || teachersRes.data.length === 0) {
         router.replace("/");
         return;
       }
@@ -260,9 +274,6 @@ export default function FeesStructurePage() {
         router.replace("/fees/teacher");
         return;
       }
-
-      if (classesRes.error) throw classesRes.error;
-      if (itemsRes.error) throw itemsRes.error;
 
       const classRows = classesRes.data || [];
       const nextForms: Record<string, AnyRow> = {};
@@ -671,6 +682,11 @@ export default function FeesStructurePage() {
             <p style={{ margin: "4px 0 0", fontSize: "12px", color: COLORS.goldSoft }}>
               {academicYear || "-"} • {currentTerm || "-"}
             </p>
+            {showingCachedData && (
+              <p style={{ margin: "8px 0 0", fontSize: "12px", opacity: 0.85, color: COLORS.goldSoft }}>
+                Showing last synced data
+              </p>
+            )}
           </div>
 
           <div style={{ display: "grid", gap: "10px" }}>

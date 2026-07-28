@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { authedFetch } from "@/lib/apiClient";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "classes";
 
 type ClassItem = {
   id: string;
@@ -13,6 +16,7 @@ type ClassItem = {
 export default function ClassesPage() {
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [message, setMessage] = useState("");
   const [seeding, setSeeding] = useState(false);
 
@@ -21,17 +25,25 @@ export default function ClassesPage() {
     setMessage("");
 
     try {
-      const response = await authedFetch("/api/classes/list", {
-        method: "GET",
-      });
+      // The service worker never caches /api/* — offline fallback for this
+      // page goes through fetchWithCache's IndexedDB mirror instead, so the
+      // authedFetch call itself is wrapped as the "fetcher".
+      const { data, fromCache } = await fetchWithCache<ClassItem[]>(
+        OFFLINE_MODULE,
+        "classes",
+        () =>
+          authedFetch("/api/classes/list", { method: "GET" }).then(async (response) => {
+            const body = await response.json();
+            if (!response.ok) {
+              return { data: null, error: body.error || "Failed to load classes." };
+            }
+            return { data: body.classes || [], error: null };
+          }),
+        []
+      );
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to load classes.");
-      }
-
-      setClasses(data.classes || []);
+      setClasses(data);
+      setShowingCachedData(fromCache);
     } catch (error) {
       setMessage(
         error instanceof Error ? `Error: ${error.message}` : "Error loading classes."
@@ -126,6 +138,11 @@ export default function ClassesPage() {
             Manage the official school classes saved in the central system.
             Everything is done on this page.
           </p>
+          {showingCachedData && (
+            <p style={{ margin: "8px 0 0", fontSize: "12px", opacity: 0.85, color: "rgba(255,255,255,0.85)" }}>
+              Showing last synced data
+            </p>
+          )}
         </div>
 
         <div

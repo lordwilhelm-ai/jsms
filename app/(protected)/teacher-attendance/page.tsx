@@ -6,7 +6,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
 import { haversineMeters } from "@/lib/geo";
+
+const OFFLINE_MODULE = "teacher-attendance";
 import {
   getGhanaDateString,
   getGhanaEndOfWeekSunday,
@@ -193,6 +196,7 @@ export default function TeacherAttendancePage() {
   const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
   const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [showingCachedData, setShowingCachedData] = useState(false);
 
   const currentUserRowRef = useRef<AnyRow | null>(null);
   const roleRef = useRef<string>("");
@@ -210,17 +214,12 @@ export default function TeacherAttendancePage() {
       }
 
       const [teachersRes, settingsRes, attendanceSettingsRes] = await Promise.all([
-        supabase.from("teachers").select("*"),
-        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-        supabase.from("teacher_attendance_settings").select("*").limit(1).maybeSingle(),
+        fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as AnyRow[]),
+        fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null as any),
+        fetchWithCache(OFFLINE_MODULE, "teacher_attendance_settings", () => supabase.from("teacher_attendance_settings").select("*").limit(1).maybeSingle(), null as any),
       ]);
 
       const teachers = teachersRes.data || [];
-
-      if (teachersRes.error) {
-        if (!isBackground) router.replace("/");
-        return;
-      }
 
       const matchedUser =
         teachers.find((item) => item.auth_user_id === session.user.id) ||
@@ -262,29 +261,31 @@ export default function TeacherAttendancePage() {
 
       if (isAdminRole(role)) {
         const [todayAllRes, dutyThisRes, dutyNextRes] = await Promise.all([
-          supabase
-            .from("teacher_attendance")
-            .select("*")
-            .eq("attendance_date", today)
-            .order("teacher_name", { ascending: true }),
-          supabase
-            .from("teacher_duty_roster")
-            .select("*")
-            .gte("week_start_date", weekStart)
-            .lte("week_start_date", weekEnd)
-            .order("week_start_date", { ascending: true }),
-          supabase
-            .from("teacher_duty_roster")
-            .select("*")
-            .gte("week_start_date", nextStart)
-            .lte("week_start_date", nextEnd)
-            .order("week_start_date", { ascending: true }),
+          fetchWithCache(
+            OFFLINE_MODULE,
+            `teacher_attendance:${today}`,
+            () => supabase.from("teacher_attendance").select("*").eq("attendance_date", today).order("teacher_name", { ascending: true }),
+            [] as AnyRow[]
+          ),
+          fetchWithCache(
+            OFFLINE_MODULE,
+            `duty_roster:this:${weekStart}`,
+            () => supabase.from("teacher_duty_roster").select("*").gte("week_start_date", weekStart).lte("week_start_date", weekEnd).order("week_start_date", { ascending: true }),
+            [] as AnyRow[]
+          ),
+          fetchWithCache(
+            OFFLINE_MODULE,
+            `duty_roster:next:${nextStart}`,
+            () => supabase.from("teacher_duty_roster").select("*").gte("week_start_date", nextStart).lte("week_start_date", nextEnd).order("week_start_date", { ascending: true }),
+            [] as AnyRow[]
+          ),
         ]);
 
         setTodayAllAttendance(todayAllRes.data || []);
         setDutyThisWeek(dutyThisRes.data || []);
         setDutyNextWeek(dutyNextRes.data || []);
         setLastSyncedAt(new Date());
+        setShowingCachedData([teachersRes, settingsRes, attendanceSettingsRes, todayAllRes, dutyThisRes, dutyNextRes].some((r) => r.fromCache));
         return;
       }
 
@@ -297,32 +298,30 @@ export default function TeacherAttendancePage() {
       teacherIdRef.current = teacherId;
 
       const [todayRes, historyRes, dutyThisRes, dutyNextRes] = await Promise.all([
-        supabase
-          .from("teacher_attendance")
-          .select("*")
-          .eq("teacher_id", teacherId)
-          .eq("attendance_date", today)
-          .maybeSingle(),
-        supabase
-          .from("teacher_attendance")
-          .select("*")
-          .eq("teacher_id", teacherId)
-          .order("attendance_date", { ascending: false })
-          .limit(30),
-        supabase
-          .from("teacher_duty_roster")
-          .select("*")
-          .eq("teacher_id", teacherId)
-          .gte("week_start_date", weekStart)
-          .lte("week_start_date", weekEnd)
-          .order("week_start_date", { ascending: true }),
-        supabase
-          .from("teacher_duty_roster")
-          .select("*")
-          .eq("teacher_id", teacherId)
-          .gte("week_start_date", nextStart)
-          .lte("week_start_date", nextEnd)
-          .order("week_start_date", { ascending: true }),
+        fetchWithCache(
+          OFFLINE_MODULE,
+          `teacher_attendance:${teacherId}:${today}`,
+          () => supabase.from("teacher_attendance").select("*").eq("teacher_id", teacherId).eq("attendance_date", today).maybeSingle(),
+          null as any
+        ),
+        fetchWithCache(
+          OFFLINE_MODULE,
+          `teacher_attendance_history:${teacherId}`,
+          () => supabase.from("teacher_attendance").select("*").eq("teacher_id", teacherId).order("attendance_date", { ascending: false }).limit(30),
+          [] as AnyRow[]
+        ),
+        fetchWithCache(
+          OFFLINE_MODULE,
+          `duty_roster:${teacherId}:this:${weekStart}`,
+          () => supabase.from("teacher_duty_roster").select("*").eq("teacher_id", teacherId).gte("week_start_date", weekStart).lte("week_start_date", weekEnd).order("week_start_date", { ascending: true }),
+          [] as AnyRow[]
+        ),
+        fetchWithCache(
+          OFFLINE_MODULE,
+          `duty_roster:${teacherId}:next:${nextStart}`,
+          () => supabase.from("teacher_duty_roster").select("*").eq("teacher_id", teacherId).gte("week_start_date", nextStart).lte("week_start_date", nextEnd).order("week_start_date", { ascending: true }),
+          [] as AnyRow[]
+        ),
       ]);
 
       setTodayAttendance(todayRes.data || null);
@@ -330,6 +329,7 @@ export default function TeacherAttendancePage() {
       setDutyThisWeek(dutyThisRes.data || []);
       setDutyNextWeek(dutyNextRes.data || []);
       setLastSyncedAt(new Date());
+      setShowingCachedData([teachersRes, settingsRes, attendanceSettingsRes, todayRes, historyRes, dutyThisRes, dutyNextRes].some((r) => r.fromCache));
     } catch (error) {
       console.error(error);
       if (!isBackground) {
@@ -629,6 +629,7 @@ export default function TeacherAttendancePage() {
         dutyNextWeek={dutyNextWeek}
         attendanceSettings={attendanceSettings}
         lastSyncedAt={lastSyncedAt}
+        showingCachedData={showingCachedData}
       />
     );
   }
@@ -786,6 +787,7 @@ function AdminTeacherAttendanceView({
   dutyNextWeek,
   attendanceSettings,
   lastSyncedAt,
+  showingCachedData,
 }: {
   currentUserRow: AnyRow | null;
   settingsRow: AnyRow | null;
@@ -795,6 +797,7 @@ function AdminTeacherAttendanceView({
   dutyNextWeek: AnyRow[];
   attendanceSettings: AttendanceLocationSettings;
   lastSyncedAt: Date | null;
+  showingCachedData: boolean;
 }) {
   const [search, setSearch] = useState("");
 
@@ -903,6 +906,9 @@ function AdminTeacherAttendanceView({
                   <div style={{ marginTop: "3px" }}>
                     Live • synced {formatTime(lastSyncedAt.toISOString())}
                   </div>
+                )}
+                {showingCachedData && (
+                  <div style={{ marginTop: "3px" }}>Showing last synced data</div>
                 )}
               </div>
             </div>

@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "staff";
 
 type Teacher = {
   id: string;
@@ -113,6 +116,7 @@ export default function TeachersPage() {
   const [teacherSubjectRows, setTeacherSubjectRows] = useState<TeacherSubjectRow[]>([]);
 
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -488,37 +492,60 @@ export default function TeachersPage() {
         teacherAssignmentsRes,
         teacherSubjectsRes,
       ] = await Promise.all([
-        supabase
-          .from("teachers")
-          .select(
-            "id, teacher_id, full_name, username, phone, photo_url, signature_url, role, is_active, is_visible, created_at, updated_at, auth_user_id, login_email, assigned_classes, password_changed, password_changed_at, force_password_change"
-          )
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("classes")
-          .select("id, class_name, name, class_order, level")
-          .eq("is_active", true)
-          .order("class_order", { ascending: true }),
-        supabase
-          .from("subjects")
-          .select("id, subject_name, name, subject_order")
-          .eq("is_active", true)
-          .order("subject_order", { ascending: true }),
-        supabase.from("class_subjects").select("id, class_id, subject_id"),
-        supabase
-          .from("teacher_class_assignments")
-          .select("teacher_id, class_id, assignment_type"),
-        supabase
-          .from("teacher_subjects")
-          .select("teacher_id, class_id, subject_id"),
+        fetchWithCache(
+          OFFLINE_MODULE,
+          "teachers",
+          () =>
+            supabase
+              .from("teachers")
+              .select(
+                "id, teacher_id, full_name, username, phone, photo_url, signature_url, role, is_active, is_visible, created_at, updated_at, auth_user_id, login_email, assigned_classes, password_changed, password_changed_at, force_password_change"
+              )
+              .order("created_at", { ascending: false }),
+          [] as Teacher[]
+        ),
+        fetchWithCache(
+          OFFLINE_MODULE,
+          "classes",
+          () =>
+            supabase
+              .from("classes")
+              .select("id, class_name, name, class_order, level")
+              .eq("is_active", true)
+              .order("class_order", { ascending: true }),
+          [] as ClassItem[]
+        ),
+        fetchWithCache(
+          OFFLINE_MODULE,
+          "subjects",
+          () =>
+            supabase
+              .from("subjects")
+              .select("id, subject_name, name, subject_order")
+              .eq("is_active", true)
+              .order("subject_order", { ascending: true }),
+          [] as SubjectItem[]
+        ),
+        fetchWithCache(OFFLINE_MODULE, "class_subjects", () => supabase.from("class_subjects").select("id, class_id, subject_id"), [] as ClassSubject[]),
+        fetchWithCache<TeacherAssignmentRow[]>(
+          OFFLINE_MODULE,
+          "teacher_class_assignments",
+          () => supabase.from("teacher_class_assignments").select("teacher_id, class_id, assignment_type"),
+          []
+        ),
+        fetchWithCache<TeacherSubjectRow[]>(
+          OFFLINE_MODULE,
+          "teacher_subjects",
+          () => supabase.from("teacher_subjects").select("teacher_id, class_id, subject_id"),
+          []
+        ),
       ]);
 
-      if (teachersRes.error) throw teachersRes.error;
-      if (classesRes.error) throw classesRes.error;
-      if (subjectsRes.error) throw subjectsRes.error;
-      if (classSubjectsRes.error) throw classSubjectsRes.error;
-      if (teacherAssignmentsRes.error) throw teacherAssignmentsRes.error;
-      if (teacherSubjectsRes.error) throw teacherSubjectsRes.error;
+      setShowingCachedData(
+        [teachersRes, classesRes, subjectsRes, classSubjectsRes, teacherAssignmentsRes, teacherSubjectsRes].some(
+          (r) => r.fromCache
+        )
+      );
 
       setTeachers((teachersRes.data as Teacher[]) || []);
       setClasses((classesRes.data as ClassItem[]) || []);
@@ -1097,6 +1124,9 @@ export default function TeachersPage() {
               Manage teacher profiles, login details, photos, signatures, class
               assignments, and class-specific subjects from one cleaner dashboard.
             </p>
+            {showingCachedData && (
+              <p style={{ margin: "6px 0 0", fontSize: "12px", opacity: 0.85 }}>Showing last synced data</p>
+            )}
           </div>
 
           <button

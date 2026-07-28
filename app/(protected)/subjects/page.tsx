@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { authedFetch } from "@/lib/apiClient";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "subjects";
 
 type SubjectItem = {
   id: string;
@@ -26,32 +29,47 @@ export default function SubjectsPage() {
   const [customSubjectOrder, setCustomSubjectOrder] = useState("");
 
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [savingLinks, setSavingLinks] = useState(false);
   const [addingSubject, setAddingSubject] = useState(false);
   const [message, setMessage] = useState("");
 
   async function loadSubjects() {
-    const response = await authedFetch("/api/subjects/list");
-    const data = await response.json();
+    // /api/* is never cached by the service worker — offline fallback goes
+    // through fetchWithCache's IndexedDB mirror instead, wrapping the
+    // authedFetch call itself as the "fetcher".
+    const { data, fromCache } = await fetchWithCache<SubjectItem[]>(
+      OFFLINE_MODULE,
+      "subjects",
+      () =>
+        authedFetch("/api/subjects/list").then(async (response) => {
+          const body = await response.json();
+          if (!response.ok) return { data: null, error: body.error || "Failed to load subjects." };
+          return { data: body.subjects || [], error: null };
+        }),
+      []
+    );
 
-    if (!response.ok) {
-      throw new Error(data.error || "Failed to load subjects.");
-    }
-
-    setSubjects(data.subjects || []);
+    setSubjects(data);
+    if (fromCache) setShowingCachedData(true);
   }
 
   async function loadClasses() {
-    const response = await authedFetch("/api/classes/list");
-    const data = await response.json();
+    const { data: rows, fromCache } = await fetchWithCache<ClassItem[]>(
+      OFFLINE_MODULE,
+      "classes",
+      () =>
+        authedFetch("/api/classes/list").then(async (response) => {
+          const body = await response.json();
+          if (!response.ok) return { data: null, error: body.error || "Failed to load classes." };
+          return { data: body.classes || [], error: null };
+        }),
+      []
+    );
 
-    if (!response.ok) {
-      throw new Error(data.error || "Failed to load classes.");
-    }
-
-    const rows = data.classes || [];
     setClasses(rows);
+    if (fromCache) setShowingCachedData(true);
 
     if (!selectedClassId && rows.length > 0) {
       setSelectedClassId(rows[0].id);
@@ -83,6 +101,7 @@ export default function SubjectsPage() {
   async function loadAll() {
     setLoading(true);
     setMessage("");
+    setShowingCachedData(false);
 
     try {
       await Promise.all([loadSubjects(), loadClasses()]);
@@ -311,6 +330,11 @@ export default function SubjectsPage() {
           >
             Manage the official subjects and assign them to classes on this same page.
           </p>
+          {showingCachedData && (
+            <p style={{ margin: "8px 0 0", fontSize: "12px", opacity: 0.85, color: "rgba(255,255,255,0.85)" }}>
+              Showing last synced data
+            </p>
+          )}
         </div>
 
         {message && (

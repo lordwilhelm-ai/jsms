@@ -4,6 +4,9 @@ import EnableNotificationsButton from "@/components/EnableNotificationsButton";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "admission";
 
 type AdmissionApp = {
   id: string;
@@ -118,6 +121,7 @@ const emptyDetails: Partial<AdmissionApp> = {
 
 export default function AdmissionAdminPage() {
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -151,14 +155,12 @@ export default function AdmissionAdminPage() {
     setError(null);
 
     const [settingsRes, classesRes, appsRes] = await Promise.all([
-      supabase.from("admission_settings").select("*").limit(1).maybeSingle(),
-      supabase.from("classes").select("*").order("class_order", { ascending: true }),
-      supabase.from("v_admission_applications").select("*").order("created_at", { ascending: false }),
+      fetchWithCache(OFFLINE_MODULE, "admission_settings", () => supabase.from("admission_settings").select("*").limit(1).maybeSingle(), null as any),
+      fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*").order("class_order", { ascending: true }), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "v_admission_applications", () => supabase.from("v_admission_applications").select("*").order("created_at", { ascending: false }), [] as any[]),
     ]);
 
-    if (settingsRes.error) setError(settingsRes.error.message);
-    if (classesRes.error) setError(classesRes.error.message);
-    if (appsRes.error) setError(appsRes.error.message);
+    setShowingCachedData([settingsRes, classesRes, appsRes].some((r) => r.fromCache));
 
     if (settingsRes.data) {
       setSettings(settingsRes.data as AdmissionSettings);
@@ -495,6 +497,9 @@ export default function AdmissionAdminPage() {
           <p style={styles.eyebrow}>🎓 JSMS Admission</p>
           <h1 style={styles.title}>Admission Management</h1>
           <p style={styles.subtitle}>Sell forms, complete applicant details, print receipts, and admit students into JSMS.</p>
+          {showingCachedData && (
+            <p style={{ ...styles.subtitle, fontSize: 12, opacity: 0.85 }}>Showing last synced data</p>
+          )}
         </div>
 
         <div style={styles.headerActions}>

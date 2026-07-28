@@ -3,22 +3,27 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "feeding";
 
 export default function FeedingControlPage() {
   const [recordId, setRecordId] = useState("");
   const [feedingFee, setFeedingFee] = useState("6");
   const [minimumToEat, setMinimumToEat] = useState("5");
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
     async function loadSettings() {
-      const { data } = await supabase
-        .from("school_settings")
-        .select("*")
-        .limit(1)
-        .maybeSingle();
+      const { data, fromCache } = await fetchWithCache(
+        OFFLINE_MODULE,
+        "school_settings",
+        () => supabase.from("school_settings").select("*").limit(1).maybeSingle(),
+        null as any
+      );
 
       if (data) {
         setRecordId(String(data.id || ""));
@@ -26,6 +31,7 @@ export default function FeedingControlPage() {
         setMinimumToEat(String(data.minimum_to_eat || 5));
       }
 
+      setShowingCachedData(fromCache);
       setLoading(false);
     }
 
@@ -103,6 +109,9 @@ export default function FeedingControlPage() {
           <p style={{ margin: "10px 0 0", fontSize: "13px", opacity: 0.9 }}>
             Change feeding amount and minimum amount to eat.
           </p>
+          {showingCachedData && (
+            <p style={{ margin: "6px 0 0", fontSize: "12px", opacity: 0.85 }}>Showing last synced data</p>
+          )}
         </div>
 
         <div

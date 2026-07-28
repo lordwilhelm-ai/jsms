@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
 import { queueOfflineAction } from "@/lib/offline/sync";
 import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
 import OfflineStatusPill from "@/app/components/OfflineStatusPill";
 
 const OFFLINE_MODULE = "feeding";
@@ -235,6 +236,7 @@ export default function AdminFillClassPage() {
   } | null>(null);
 
   const [loadingPage, setLoadingPage] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [loadingTeachers, setLoadingTeachers] = useState(false);
   const [loadingBalances, setLoadingBalances] = useState(false);
@@ -462,17 +464,19 @@ export default function AdminFillClassPage() {
         teacherAssignmentsRes,
         teacherClassesRes,
       ] = await Promise.all([
-        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-        supabase.from("classes").select("*").order("class_order", { ascending: true }),
-        supabase.from("teachers").select("*"),
-        supabase.from("school_closures").select("*").order("start_date", { ascending: true }),
-        supabase.from("teacher_class_assignments").select("*"),
-        supabase.from("teacher_classes").select("*"),
+        fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
+        fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*").order("class_order", { ascending: true }), [] as any[]),
+        fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as any[]),
+        fetchWithCache(OFFLINE_MODULE, "school_closures", () => supabase.from("school_closures").select("*").order("start_date", { ascending: true }), [] as any[]),
+        fetchWithCache(OFFLINE_MODULE, "teacher_class_assignments", () => supabase.from("teacher_class_assignments").select("*"), [] as any[]),
+        fetchWithCache(OFFLINE_MODULE, "teacher_classes", () => supabase.from("teacher_classes").select("*"), [] as any[]),
       ]);
 
-      if (classesRes.error) throw classesRes.error;
-      if (teachersRes.error) throw teachersRes.error;
-      if (closuresRes.error) throw closuresRes.error;
+      setShowingCachedData(
+        [settingsRes, classesRes, teachersRes, closuresRes, teacherAssignmentsRes, teacherClassesRes].some(
+          (r) => r.fromCache
+        )
+      );
 
       const classRows = classesRes.data || [];
       const classNameById = new Map<string, string>();
@@ -501,23 +505,19 @@ export default function AdminFillClassPage() {
         }
       }
 
-      if (!teacherAssignmentsRes.error) {
-        (teacherAssignmentsRes.data || []).forEach((assignment: any) => {
-          addTeacherToClass(
-            assignment.class_id || assignment.classId || assignment.class_name || assignment.className,
-            assignment.teacher_id || assignment.teacherId
-          );
-        });
-      }
+      (teacherAssignmentsRes.data || []).forEach((assignment: any) => {
+        addTeacherToClass(
+          assignment.class_id || assignment.classId || assignment.class_name || assignment.className,
+          assignment.teacher_id || assignment.teacherId
+        );
+      });
 
-      if (!teacherClassesRes.error) {
-        (teacherClassesRes.data || []).forEach((assignment: any) => {
-          addTeacherToClass(
-            assignment.class_id || assignment.classId || assignment.class_name || assignment.className,
-            assignment.teacher_id || assignment.teacherId
-          );
-        });
-      }
+      (teacherClassesRes.data || []).forEach((assignment: any) => {
+        addTeacherToClass(
+          assignment.class_id || assignment.classId || assignment.class_name || assignment.className,
+          assignment.teacher_id || assignment.teacherId
+        );
+      });
 
       (teachersRes.data || []).forEach((teacherRow: any) => {
         const teacherUuid = String(teacherRow.id || "").trim();
@@ -982,8 +982,11 @@ export default function AdminFillClassPage() {
             <h1 style={{ margin: 0 }}>Fill for Class</h1>
             <p style={{ margin: "6px 0 0", fontWeight: "bold" }}>{schoolName}</p>
             <p style={{ margin: "4px 0 0", opacity: 0.9 }}>{motto}</p>
-            <div style={{ marginTop: "8px" }}>
+            <div style={{ marginTop: "8px", display: "flex", gap: "10px", alignItems: "center" }}>
               <OfflineStatusPill online={online} pendingCount={pendingCount} syncing={syncing} />
+              {showingCachedData && (
+                <span style={{ fontSize: "12px", opacity: 0.85 }}>Showing last synced data</span>
+              )}
             </div>
             <p style={{ margin: "6px 0 0", fontSize: "13px", opacity: 0.9 }}>
               <strong>{academicYear}</strong> • <strong>{currentTerm}</strong>

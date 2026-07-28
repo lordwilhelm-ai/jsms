@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "feeding";
 
 type Student = Record<string, any>;
 type LedgerRow = Record<string, any>;
@@ -66,6 +69,7 @@ export default function StudentLedgerPage() {
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [loadingLedger, setLoadingLedger] = useState(false);
   const [loadingPage, setLoadingPage] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
 
   useEffect(() => {
     void loadPageData();
@@ -86,8 +90,8 @@ export default function StudentLedgerPage() {
       setLoadingStudents(true);
 
       const [studentsRes, settingsRes] = await Promise.all([
-        supabase.from("students").select("*"),
-        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
+        fetchWithCache(OFFLINE_MODULE, "students", () => supabase.from("students").select("*"), [] as Student[]),
+        fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
       ]);
 
       const rows = (studentsRes.data || [])
@@ -96,6 +100,7 @@ export default function StudentLedgerPage() {
 
       setStudents(rows);
       setSettingsRow(settingsRes.data || null);
+      setShowingCachedData(studentsRes.fromCache || settingsRes.fromCache);
     } catch (error) {
       console.error(error);
       alert("Failed to load students.");
@@ -196,6 +201,9 @@ export default function StudentLedgerPage() {
             <h1 style={{ margin: 0 }}>Student Ledger</h1>
             <p style={{ margin: "6px 0 0", fontWeight: "bold" }}>{schoolName}</p>
             <p style={{ margin: "4px 0 0", opacity: 0.9 }}>{motto}</p>
+            {showingCachedData && (
+              <p style={{ margin: "6px 0 0", fontSize: "12px", opacity: 0.85 }}>Showing last synced data</p>
+            )}
             <p style={{ margin: "6px 0 0", fontSize: "13px", opacity: 0.9 }}>
               <strong>{academicYear}</strong> • <strong>{currentTerm}</strong>
             </p>

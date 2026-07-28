@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "feeding";
 
 type Closure = {
   id: string;
@@ -33,6 +36,7 @@ const COLORS = {
 export default function FeedingHolidaysPage() {
   const [closures, setClosures] = useState<Closure[]>([]);
   const [loading, setLoading] = useState(false);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState("");
   const [settingsRow, setSettingsRow] = useState<SettingsRow | null>(null);
@@ -51,12 +55,13 @@ export default function FeedingHolidaysPage() {
       setLoading(true);
 
       const [closuresRes, settingsRes] = await Promise.all([
-        supabase.from("school_closures").select("*").order("start_date", { ascending: true }),
-        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
+        fetchWithCache(OFFLINE_MODULE, "school_closures", () => supabase.from("school_closures").select("*").order("start_date", { ascending: true }), [] as Closure[]),
+        fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null as any),
       ]);
 
       setClosures((closuresRes.data || []) as Closure[]);
       setSettingsRow((settingsRes.data || null) as SettingsRow | null);
+      setShowingCachedData(closuresRes.fromCache || settingsRes.fromCache);
     } catch (error) {
       console.error(error);
       alert("Failed to load holidays page.");
@@ -187,6 +192,9 @@ export default function FeedingHolidaysPage() {
             <h1 style={{ margin: 0 }}>Feeding Holidays</h1>
             <p style={{ margin: "6px 0 0", fontWeight: "bold" }}>{schoolName}</p>
             <p style={{ margin: "4px 0 0", opacity: 0.9 }}>{motto}</p>
+            {showingCachedData && (
+              <p style={{ margin: "6px 0 0", fontSize: "12px", opacity: 0.85 }}>Showing last synced data</p>
+            )}
             <p style={{ margin: "6px 0 0", fontSize: "13px", opacity: 0.9 }}>
               <strong>{academicYear}</strong> • <strong>{currentTerm}</strong>
             </p>

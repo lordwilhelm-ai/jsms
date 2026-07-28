@@ -9,6 +9,7 @@ import { notifyFeePayment } from "@/lib/jsmsNotify";
 import { getPendingByModule } from "@/lib/offline/db";
 import { queueOfflineAction } from "@/lib/offline/sync";
 import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
 import OfflineStatusPill from "@/app/components/OfflineStatusPill";
 
 const OFFLINE_MODULE = "fees";
@@ -229,6 +230,7 @@ export default function RecordPaymentPage() {
 
   const [checkingUser, setCheckingUser] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
 
   const [settingsRow, setSettingsRow] = useState<AnyRow | null>(null);
   const [classes, setClasses] = useState<AnyRow[]>([]);
@@ -324,16 +326,20 @@ export default function RecordPaymentPage() {
       }
 
       const [teachersRes, settingsRes, classesRes, studentsRes, paymentsRes] = await Promise.all([
-        supabase.from("teachers").select("*"),
-        supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-        supabase.from("classes").select("*"),
-        supabase.from("students").select("*"),
-        supabase.from("fee_payments").select("*").order("created_at", { ascending: false }),
+        fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as AnyRow[]),
+        fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
+        fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*"), [] as AnyRow[]),
+        fetchWithCache(OFFLINE_MODULE, "students", () => supabase.from("students").select("*"), [] as AnyRow[]),
+        fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
       ]);
 
       if (!active) return;
 
-      if (teachersRes.error || !teachersRes.data || teachersRes.data.length === 0) {
+      setShowingCachedData(
+        [teachersRes, settingsRes, classesRes, studentsRes, paymentsRes].some((r) => r.fromCache)
+      );
+
+      if (!teachersRes.data || teachersRes.data.length === 0) {
         router.replace("/");
         return;
       }
@@ -754,8 +760,11 @@ export default function RecordPaymentPage() {
               <div>
                 <h2 style={{ margin: 0, fontSize: "30px" }}>Record Fees</h2>
                 <p style={{ margin: "8px 0 0", color: "#d1d5db" }}>{selectedClass}</p>
-                <div style={{ marginTop: "10px" }}>
+                <div style={{ marginTop: "10px", display: "flex", gap: "10px", alignItems: "center" }}>
                   <OfflineStatusPill online={online} pendingCount={pendingCount} syncing={syncing} />
+                  {showingCachedData && (
+                    <span style={{ fontSize: "12px", opacity: 0.85, color: "#d1d5db" }}>Showing last synced data</span>
+                  )}
                 </div>
               </div>
 

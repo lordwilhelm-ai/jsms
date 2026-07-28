@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "fees";
 
 type AnyRow = Record<string, any>;
 type ModuleType = "Fees" | "Admission" | "Books" | "Uniforms";
@@ -227,18 +230,17 @@ function normalizeUniformPayment(row: AnyRow): UniversalReceipt {
   };
 }
 
-async function safeSelect(table: string) {
-  const { data, error } = await supabase
-    .from(table)
-    .select("*")
-    .order("created_at", { ascending: false });
+async function safeSelect(table: string, cacheFlags?: boolean[]) {
+  const result = await fetchWithCache(
+    OFFLINE_MODULE,
+    table,
+    () => supabase.from(table).select("*").order("created_at", { ascending: false }),
+    [] as AnyRow[]
+  );
 
-  if (error) {
-    console.warn(`${table} not loaded:`, error.message);
-    return [] as AnyRow[];
-  }
+  if (cacheFlags) cacheFlags.push(result.fromCache);
 
-  return (data || []) as AnyRow[];
+  return result.data;
 }
 
 function matchSearch(row: UniversalReceipt, query: string) {
@@ -273,6 +275,7 @@ export default function UniversalReceiptsPage() {
 
   const [checkingUser, setCheckingUser] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [settingsRow, setSettingsRow] = useState<AnyRow | null>(null);
   const [receipts, setReceipts] = useState<UniversalReceipt[]>([]);
   const [search, setSearch] = useState("");
@@ -300,11 +303,11 @@ export default function UniversalReceiptsPage() {
         return;
       }
 
-      const teachersRes = await supabase.from("teachers").select("*");
+      const teachersRes = await fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as AnyRow[]);
 
       if (!active) return;
 
-      if (teachersRes.error || !teachersRes.data?.length) {
+      if (!teachersRes.data?.length) {
         router.replace("/");
         return;
       }
@@ -328,15 +331,17 @@ export default function UniversalReceiptsPage() {
         return;
       }
 
-      const settingsRes = await supabase
-        .from("school_settings")
-        .select("*")
-        .limit(1)
-        .maybeSingle();
+      const settingsRes = await fetchWithCache(
+        OFFLINE_MODULE,
+        "school_settings",
+        () => supabase.from("school_settings").select("*").limit(1).maybeSingle(),
+        null
+      );
 
       if (!active) return;
 
       setSettingsRow(settingsRes.data || null);
+      setShowingCachedData((prev) => prev || teachersRes.fromCache || settingsRes.fromCache);
       setCheckingUser(false);
       await loadReceipts();
     }
@@ -353,18 +358,21 @@ export default function UniversalReceiptsPage() {
     setMessage("");
 
     try {
-      const universalRows = await safeSelect("universal_receipts");
+      const cacheFlags: boolean[] = [];
+      const universalRows = await safeSelect("universal_receipts", cacheFlags);
 
       const fallbackRows = universalRows.length
         ? []
         : await Promise.all([
-            safeSelect("fee_payments"),
-            safeSelect("admission_payments"),
-            safeSelect("jsms_book_payments"),
-            safeSelect("jsms_book_sales"),
-            safeSelect("jsms_uniform_payments"),
-            safeSelect("jsms_uniform_sales"),
+            safeSelect("fee_payments", cacheFlags),
+            safeSelect("admission_payments", cacheFlags),
+            safeSelect("jsms_book_payments", cacheFlags),
+            safeSelect("jsms_book_sales", cacheFlags),
+            safeSelect("jsms_uniform_payments", cacheFlags),
+            safeSelect("jsms_uniform_sales", cacheFlags),
           ]);
+
+      setShowingCachedData((prev) => prev || cacheFlags.some(Boolean));
 
       const [feeRows, admissionRows, bookPaymentRows, bookSaleRows, uniformPaymentRows, uniformSaleRows] = fallbackRows.length
         ? fallbackRows
@@ -529,6 +537,11 @@ export default function UniversalReceiptsPage() {
             <p style={{ margin: "4px 0 0", fontSize: "12px", color: COLORS.goldSoft }}>
               {academicYear || "-"} • {currentTerm || "-"}
             </p>
+            {showingCachedData && (
+              <p style={{ margin: "8px 0 0", fontSize: "12px", opacity: 0.85, color: COLORS.goldSoft }}>
+                Showing last synced data
+              </p>
+            )}
           </div>
 
           <div style={{ display: "grid", gap: "10px" }}>

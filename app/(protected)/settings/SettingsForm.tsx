@@ -3,8 +3,11 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
 import LogoUpload from "./LogoUpload";
 import SignatureUpload from "./SignatureUpload";
+
+const OFFLINE_MODULE = "settings";
 
 type SettingsRecord = {
   id?: string;
@@ -32,19 +35,25 @@ export default function SettingsForm() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [showingCachedData, setShowingCachedData] = useState(false);
 
   useEffect(() => {
     async function loadSettings() {
       setLoading(true);
       setMessage("");
 
-      const { data, error } = await supabase
-        .from("school_settings")
-        .select("*")
-        .limit(1)
-        .single();
+      // Distinct cache key from useSchoolSettings.ts's "current" — that hook
+      // selects a narrower column list, so the two shouldn't share an entry.
+      const { data, fromCache } = await fetchWithCache<SettingsRecord | null>(
+        OFFLINE_MODULE,
+        "full",
+        () => supabase.from("school_settings").select("*").limit(1).maybeSingle(),
+        null
+      );
 
-      if (!error && data) {
+      setShowingCachedData(fromCache);
+
+      if (data) {
         const settings = data as SettingsRecord;
         setRecordId(settings.id || "");
         setSchoolName(settings.school_name || "");
@@ -135,6 +144,9 @@ export default function SettingsForm() {
         gap: "18px",
       }}
     >
+      {showingCachedData && (
+        <p style={{ margin: 0, fontSize: "12px", color: "#92400e" }}>Showing last synced data</p>
+      )}
       <style>{`
         @media (max-width: 480px) {
           .settings-form-grid {

@@ -5,6 +5,9 @@ import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "fees";
 
 type AnyRow = Record<string, any>;
 type TabKey = "overview" | "fees" | "books" | "uniforms" | "receipts";
@@ -249,22 +252,21 @@ function rowMatchesStudent(row: AnyRow, student: AnyRow | null, jvsId: string, a
   return Boolean(rowName && studentName && rowName === studentName && (!rowClass || rowClass === studentClass));
 }
 
-async function optionalSelect(table: string, orderColumn?: string, ascending = false) {
-  try {
-    let query = supabase.from(table).select("*");
-    if (orderColumn) query = query.order(orderColumn, { ascending });
-    const { data, error } = await query;
+async function optionalSelect(table: string, orderColumn?: string, ascending = false, cacheFlags?: boolean[]) {
+  const result = await fetchWithCache(
+    OFFLINE_MODULE,
+    table,
+    () => {
+      let query = supabase.from(table).select("*");
+      if (orderColumn) query = query.order(orderColumn, { ascending });
+      return query;
+    },
+    [] as AnyRow[]
+  );
 
-    if (error) {
-      console.warn(`${table} skipped:`, error.message);
-      return [] as AnyRow[];
-    }
+  if (cacheFlags) cacheFlags.push(result.fromCache);
 
-    return (data || []) as AnyRow[];
-  } catch (error) {
-    console.warn(`${table} skipped:`, error);
-    return [] as AnyRow[];
-  }
+  return result.data;
 }
 
 function ActionLink({ href, label }: { href: string; label: string }) {
@@ -380,6 +382,7 @@ export default function StudentAccountsPage() {
 
   const [checkingUser, setCheckingUser] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [message, setMessage] = useState("");
 
   const [settingsRow, setSettingsRow] = useState<AnyRow | null>(null);
@@ -412,15 +415,15 @@ export default function StudentAccountsPage() {
         }
 
         const [teachersRes, settingsRes, classesRes, studentsRes] = await Promise.all([
-          supabase.from("teachers").select("*"),
-          supabase.from("school_settings").select("*").limit(1).maybeSingle(),
-          supabase.from("classes").select("*"),
-          supabase.from("students").select("*"),
+          fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as AnyRow[]),
+          fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
+          fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*"), [] as AnyRow[]),
+          fetchWithCache(OFFLINE_MODULE, "students", () => supabase.from("students").select("*"), [] as AnyRow[]),
         ]);
 
         if (!active) return;
 
-        if (teachersRes.error || !teachersRes.data || teachersRes.data.length === 0) {
+        if (!teachersRes.data || teachersRes.data.length === 0) {
           router.replace("/");
           return;
         }
@@ -444,18 +447,19 @@ export default function StudentAccountsPage() {
           return;
         }
 
-        if (settingsRes.error) throw settingsRes.error;
-        if (classesRes.error) throw classesRes.error;
-        if (studentsRes.error) throw studentsRes.error;
-
+        const cacheFlags: boolean[] = [];
         const [fees, books, uniforms, feeItems] = await Promise.all([
-          optionalSelect("fee_payments", "created_at", false),
-          optionalSelect("jsms_book_payments", "created_at", false),
-          optionalSelect("jsms_uniform_payments", "created_at", false),
-          optionalSelect("new_student_fee_items", "sort_order", true),
+          optionalSelect("fee_payments", "created_at", false, cacheFlags),
+          optionalSelect("jsms_book_payments", "created_at", false, cacheFlags),
+          optionalSelect("jsms_uniform_payments", "created_at", false, cacheFlags),
+          optionalSelect("new_student_fee_items", "sort_order", true, cacheFlags),
         ]);
 
         if (!active) return;
+
+        setShowingCachedData(
+          cacheFlags.some(Boolean) || teachersRes.fromCache || settingsRes.fromCache || classesRes.fromCache || studentsRes.fromCache
+        );
 
         const studentRows = (studentsRes.data || [])
           .filter((row) => row.active !== false)
@@ -739,6 +743,11 @@ export default function StudentAccountsPage() {
             <p style={{ margin: "4px 0 0", fontSize: "12px", color: COLORS.goldSoft }}>
               {academicYear || "-"} • {currentTerm || "-"}
             </p>
+            {showingCachedData && (
+              <p style={{ margin: "8px 0 0", fontSize: "12px", opacity: 0.85, color: COLORS.goldSoft }}>
+                Showing last synced data
+              </p>
+            )}
           </div>
 
           <div style={{ display: "grid", gap: "10px" }}>

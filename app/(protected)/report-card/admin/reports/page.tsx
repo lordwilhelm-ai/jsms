@@ -4,6 +4,20 @@ import { useEffect, useMemo, useState } from "react";
 import { FiEye, FiPrinter, FiRefreshCw } from "react-icons/fi";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "report-card";
+
+// /api/* is never cached by the service worker — offline fallback for these
+// goes through fetchWithCache's IndexedDB mirror instead, wrapping the
+// authedFetch call itself as the "fetcher".
+function fetchJsonRows(url: string) {
+  return authedFetch(url).then(async (response) => {
+    const body = await response.json();
+    if (!response.ok) return { data: null, error: body.error || "Request failed." };
+    return { data: body.rows || [], error: null };
+  });
+}
 
 const CLASS_OPTIONS = [
   "All",
@@ -1196,6 +1210,7 @@ export default function ReportCardsPage() {
   const [isPreviewWindow, setIsPreviewWindow] = useState(false);
   const [selectedClass, setSelectedClass] = useState("All");
   const [loading, setLoading] = useState(true);
+  const [showingCachedData, setShowingCachedData] = useState(false);
   const [previewMode, setPreviewMode] = useState<"none" | "student" | "class" | "all">("none");
   const [previewStudentId, setPreviewStudentId] = useState("");
   const [message, setMessage] = useState("");
@@ -1233,9 +1248,9 @@ export default function ReportCardsPage() {
       studentsRes,
       settingsRes,
       classesRes,
-      scoresRaw,
-      attendanceRaw,
-      remarksRaw,
+      scoresRes,
+      attendanceRes,
+      remarksRes,
       feeLiveRes,
       teachersRes,
       feePaymentsRes,
@@ -1243,65 +1258,47 @@ export default function ReportCardsPage() {
       holidaysRes,
       closuresRes,
     ] = await Promise.all([
-      supabase
-        .from("students")
-        .select("*")
-        .order("class_name", { ascending: true })
-        .order("full_name", { ascending: true }),
-      supabase
-        .from("school_settings")
-        .select("*")
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-      supabase
-        .from("classes")
-        .select("*")
-        .order("class_order", { ascending: true }),
-      authedFetch("/api/report-card/scores"),
-      authedFetch("/api/report-card/attendance"),
-      authedFetch("/api/report-card/cards"),
-      supabase
-        .from("jsms_report_fee_live_view")
-        .select("*"),
-      supabase
-        .from("teachers")
-        .select("*"),
-      supabase
-        .from("fee_payments")
-        .select("*"),
-      supabase
-        .from("fee_structure")
-        .select("*"),
-      supabase
-        .from("ghana_public_holidays")
-        .select("*"),
-      supabase
-        .from("school_closures")
-        .select("*"),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "students",
+        () => supabase.from("students").select("*").order("class_name", { ascending: true }).order("full_name", { ascending: true }),
+        [] as any[]
+      ),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "school_settings",
+        () => supabase.from("school_settings").select("*").order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+        null as any
+      ),
+      fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*").order("class_order", { ascending: true }), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "scores", () => fetchJsonRows("/api/report-card/scores"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "attendance", () => fetchJsonRows("/api/report-card/attendance"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "cards", () => fetchJsonRows("/api/report-card/cards"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "jsms_report_fee_live_view", () => supabase.from("jsms_report_fee_live_view").select("*"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "fee_structure", () => supabase.from("fee_structure").select("*"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "ghana_public_holidays", () => supabase.from("ghana_public_holidays").select("*"), [] as any[]),
+      fetchWithCache(OFFLINE_MODULE, "school_closures", () => supabase.from("school_closures").select("*"), [] as any[]),
     ]);
 
-    const [scoresData, attendanceData, remarksData] = await Promise.all([
-      scoresRaw.json(),
-      attendanceRaw.json(),
-      remarksRaw.json(),
-    ]);
-
-    if (studentsRes.error) setMessage(studentsRes.error.message);
-    if (!studentsRes.error) setStudents((studentsRes.data || []).filter(isActiveStudent));
-    if (!settingsRes.error) setSettings(settingsRes.data || null);
-    if (!classesRes.error) setClasses(classesRes.data || []);
-    if (scoresRaw.ok) setScores(scoresData.rows || []);
-    if (attendanceRaw.ok) setAttendance(attendanceData.rows || []);
-    if (remarksRaw.ok) setRemarks(remarksData.rows || []);
-    if (!feeLiveRes.error) setFeeLiveRows(feeLiveRes.data || []);
-    if (!teachersRes.error) setTeachers(teachersRes.data || []);
-    if (!feePaymentsRes.error) setFeePayments(feePaymentsRes.data || []);
-    if (!feeStructureRes.error) setFeeStructures(feeStructureRes.data || []);
-    setHolidayRows([
-      ...(!holidaysRes.error ? holidaysRes.data || [] : []),
-      ...(!closuresRes.error ? closuresRes.data || [] : []),
-    ]);
+    setStudents((studentsRes.data || []).filter(isActiveStudent));
+    setSettings(settingsRes.data || null);
+    setClasses(classesRes.data || []);
+    setScores(scoresRes.data || []);
+    setAttendance(attendanceRes.data || []);
+    setRemarks(remarksRes.data || []);
+    setFeeLiveRows(feeLiveRes.data || []);
+    setTeachers(teachersRes.data || []);
+    setFeePayments(feePaymentsRes.data || []);
+    setFeeStructures(feeStructureRes.data || []);
+    setHolidayRows([...(holidaysRes.data || []), ...(closuresRes.data || [])]);
+    setShowingCachedData(
+      [
+        studentsRes, settingsRes, classesRes, scoresRes, attendanceRes, remarksRes,
+        feeLiveRes, teachersRes, feePaymentsRes, feeStructureRes, holidaysRes, closuresRes,
+      ].some((r) => r.fromCache)
+    );
 
     setLoading(false);
   }
@@ -1971,6 +1968,9 @@ export default function ReportCardsPage() {
           <p className="mt-2 text-sm font-semibold text-sky-700">
             {currentTerm || "Current Term"} • {academicYear || "Academic Year"}
           </p>
+          {showingCachedData && (
+            <p className="mt-2 text-xs text-gray-400">Showing last synced data</p>
+          )}
         </div>
 
         <div className="flex flex-col gap-4 rounded-3xl bg-white p-5 shadow-sm lg:flex-row lg:items-center lg:justify-between">

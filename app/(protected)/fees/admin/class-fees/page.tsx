@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
 import Link from "next/link";
+
+const OFFLINE_MODULE = "fees";
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
@@ -18,17 +21,19 @@ export default function ClassFeesPage() {
   const [classes, setClasses] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showingCachedData, setShowingCachedData] = useState(false);
 
   useEffect(() => {
     let active = true;
     async function load() {
-      const { data, error } = await supabase.from("classes").select("*").order("class_order", { ascending: true });
+      const { data, fromCache } = await fetchWithCache(
+        OFFLINE_MODULE,
+        "classes",
+        () => supabase.from("classes").select("*").order("class_order", { ascending: true }),
+        [] as any[]
+      );
       if (!active) return;
-      if (error) {
-        setError(error.message);
-        setLoading(false);
-        return;
-      }
+      setShowingCachedData(fromCache);
       setClasses(
         (data || []).map((c: any) => ({
           id: c.id,
@@ -110,7 +115,12 @@ export default function ClassFeesPage() {
     <main style={{ padding: 24 }}>
       <div style={{ maxWidth: 1000, margin: "0 auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <h1 style={{ margin: 0 }}>Class Fees</h1>
+          <div>
+            <h1 style={{ margin: 0 }}>Class Fees</h1>
+            {showingCachedData && (
+              <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.75 }}>Showing last synced data</p>
+            )}
+          </div>
           <div style={{ display: "flex", gap: 8 }}>
             <Link href="/fees/admin" style={{ textDecoration: "none", padding: "8px 12px", background: "#f3f4f6", borderRadius: 8 }}>
               Back

@@ -5,6 +5,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "teacher-attendance";
 
 type AnyRow = Record<string, any>;
 
@@ -117,6 +120,7 @@ export default function DutyRosterPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error" | "info">("info");
+  const [showingCachedData, setShowingCachedData] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -134,11 +138,9 @@ export default function DutyRosterPage() {
           return;
         }
 
-        const teachersRes = await supabase.from("teachers").select("*");
+        const teachersRes = await fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as any[]);
 
         if (!active) return;
-
-        if (teachersRes.error) throw teachersRes.error;
 
         const allUsers = teachersRes.data || [];
 
@@ -169,6 +171,7 @@ export default function DutyRosterPage() {
 
         setTeachers(allUsers.filter((item) => isTeacherRole(getRole(item))));
         await loadRoster();
+        setShowingCachedData((prev) => prev || teachersRes.fromCache);
       } catch (error: any) {
         console.error(error);
         setMessage(error?.message || "Failed to load duty roster.");
@@ -179,14 +182,17 @@ export default function DutyRosterPage() {
     }
 
     async function loadRoster() {
-      const { data, error } = await supabase
-        .from("teacher_duty_roster")
-        .select("*")
-        .order("week_start_date", { ascending: false })
-        .order("teacher_name", { ascending: true });
+      const { data, fromCache } = await fetchWithCache(
+        OFFLINE_MODULE,
+        "teacher_duty_roster",
+        () => supabase.from("teacher_duty_roster").select("*").order("week_start_date", { ascending: false }).order("teacher_name", { ascending: true }),
+        [] as any[]
+      );
 
-      if (error) throw error;
-      if (active) setRoster(data || []);
+      if (active) {
+        setRoster(data);
+        if (fromCache) setShowingCachedData(true);
+      }
     }
 
     void loadPage();
@@ -340,6 +346,9 @@ export default function DutyRosterPage() {
                 Duty Roster
               </h1>
               <p style={headerNameStyle}>Assign multiple teachers for weekly duty</p>
+              {showingCachedData && (
+                <p style={{ margin: "4px 0 0", fontSize: "11px", opacity: 0.85 }}>Showing last synced data</p>
+              )}
             </div>
 
             <div style={headerRightStyle}>

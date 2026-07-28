@@ -5,6 +5,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { fetchWithCache } from "@/lib/offline/cachedQuery";
+
+const OFFLINE_MODULE = "teacher-attendance";
 
 type AnyRow = Record<string, any>;
 
@@ -67,6 +70,7 @@ export default function LocationSettingsPage() {
 
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error" | "info">("info");
+  const [showingCachedData, setShowingCachedData] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -84,9 +88,7 @@ export default function LocationSettingsPage() {
           return;
         }
 
-        const teachersRes = await supabase.from("teachers").select("*");
-
-        if (teachersRes.error) throw teachersRes.error;
+        const teachersRes = await fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as any[]);
 
         const allUsers = teachersRes.data || [];
 
@@ -114,13 +116,14 @@ export default function LocationSettingsPage() {
           return;
         }
 
-        const { data, error } = await supabase
-          .from("teacher_attendance_settings")
-          .select("*")
-          .limit(1)
-          .maybeSingle();
+        const { data, fromCache } = await fetchWithCache(
+          OFFLINE_MODULE,
+          "teacher_attendance_settings",
+          () => supabase.from("teacher_attendance_settings").select("*").limit(1).maybeSingle(),
+          null as any
+        );
 
-        if (error) throw error;
+        setShowingCachedData(teachersRes.fromCache || fromCache);
 
         if (data) {
           setSettingsId(String(data.id || ""));
@@ -257,6 +260,9 @@ export default function LocationSettingsPage() {
               <p style={headerNameStyle}>
                 Change school GPS location and attendance radius
               </p>
+              {showingCachedData && (
+                <p style={{ margin: "4px 0 0", fontSize: "11px", opacity: 0.85 }}>Showing last synced data</p>
+              )}
             </div>
 
             <div style={headerRightStyle}>
