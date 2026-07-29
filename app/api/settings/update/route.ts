@@ -20,6 +20,7 @@ export async function POST(request: Request) {
     const currentTerm = String(body.current_term || "").trim();
     const termBegins = body.term_begins ? String(body.term_begins) : null;
     const termEnds = body.term_ends ? String(body.term_ends) : null;
+    const reopeningDate = body.reopening_date ? String(body.reopening_date) : null;
 
     if (!schoolName) {
       return NextResponse.json(
@@ -54,6 +55,7 @@ export async function POST(request: Request) {
           current_term: currentTerm,
           term_begins: termBegins,
           term_ends: termEnds,
+          reopening_date: reopeningDate,
           updated_at: new Date().toISOString(),
         })
         .eq("id", id);
@@ -80,6 +82,7 @@ export async function POST(request: Request) {
           current_term: currentTerm,
           term_begins: termBegins,
           term_ends: termEnds,
+          reopening_date: reopeningDate,
         },
       ])
       .select("id")

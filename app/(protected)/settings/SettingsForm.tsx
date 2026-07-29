@@ -21,6 +21,7 @@ type SettingsRecord = {
   current_term?: string;
   term_begins?: string;
   term_ends?: string;
+  reopening_date?: string;
 };
 
 export default function SettingsForm() {
@@ -33,6 +34,7 @@ export default function SettingsForm() {
   const [currentTerm, setCurrentTerm] = useState("First Term");
   const [termBegins, setTermBegins] = useState("");
   const [termEnds, setTermEnds] = useState("");
+  const [reopeningDate, setReopeningDate] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -66,6 +68,7 @@ export default function SettingsForm() {
         setCurrentTerm(settings.current_term || "First Term");
         setTermBegins(settings.term_begins || "");
         setTermEnds(settings.term_ends || "");
+        setReopeningDate(settings.reopening_date || "");
       }
 
       setLoading(false);
@@ -95,6 +98,7 @@ export default function SettingsForm() {
           current_term: currentTerm,
           term_begins: termBegins || null,
           term_ends: termEnds || null,
+          reopening_date: reopeningDate || null,
         }),
       });
 
@@ -256,6 +260,25 @@ export default function SettingsForm() {
             type="date"
             value={termEnds}
             onChange={(e) => setTermEnds(e.target.value)}
+            style={inputStyle}
+          />
+        </div>
+      </div>
+
+      <div
+        className="settings-form-grid"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "16px",
+        }}
+      >
+        <div>
+          <label style={labelStyle}>Reopening Date</label>
+          <input
+            type="date"
+            value={reopeningDate}
+            onChange={(e) => setReopeningDate(e.target.value)}
             style={inputStyle}
           />
         </div>
