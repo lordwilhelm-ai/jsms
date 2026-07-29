@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { fetchAllRows } from "@/lib/supabasePagination";
 
 const FILTERABLE_COLUMNS = ["class_name", "academic_year", "term", "student_id"];
 
@@ -11,14 +12,15 @@ export async function GET(request: Request) {
     if (!auth.ok) return unauthorizedResponse(auth);
 
     const { searchParams } = new URL(request.url);
-    let query = supabaseAdmin.from("jsms_report_attendance").select("*");
 
-    for (const column of FILTERABLE_COLUMNS) {
-      const value = searchParams.get(column);
-      if (value) query = query.eq(column, value);
-    }
-
-    const { data, error } = await query;
+    const { data, error } = await fetchAllRows((from, to) => {
+      let query = supabaseAdmin.from("jsms_report_attendance").select("*").range(from, to);
+      for (const column of FILTERABLE_COLUMNS) {
+        const value = searchParams.get(column);
+        if (value) query = query.eq(column, value);
+      }
+      return query;
+    });
     if (error) throw error;
 
     return NextResponse.json({ rows: data || [] });
