@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FiEye, FiPrinter, FiRefreshCw } from "react-icons/fi";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
+import { getFullSubjectName } from "@/lib/subjectDisplayName";
 
 const CLASS_OPTIONS = [
   "All",
@@ -814,7 +815,7 @@ function ReportCardSheet({ data }: { data: ReportData }) {
   });
 
   const playroomRows = sortedScores.map((score) => ({
-    subject: cleanText(score.subject_name),
+    subject: getFullSubjectName(score.subject_name),
     mark: cleanText(score.playroom_mark || score.grade),
   }));
 
@@ -824,7 +825,7 @@ function ReportCardSheet({ data }: { data: ReportData }) {
       : "";
 
     return {
-      subject: cleanText(score.subject_name),
+      subject: getFullSubjectName(score.subject_name),
       classScore:
         score.class_score !== null && score.class_score !== undefined
           ? Number(score.class_score)

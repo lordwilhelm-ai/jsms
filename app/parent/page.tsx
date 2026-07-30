@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { getFullSubjectName } from "@/lib/subjectDisplayName";
 
 type AnyRow = Record<string, any>;
 type StudentRow = Record<string, any>;
@@ -254,7 +255,7 @@ function getScoreTotal(row: AnyRow) {
 }
 
 function getSubjectName(row: AnyRow) {
-  return cleanText(row.subject || row.subject_name || row.name);
+  return getFullSubjectName(row.subject || row.subject_name || row.name);
 }
 
 function getScoreRemark(total: unknown) {
