@@ -90,6 +90,13 @@ const softwareCards = [
     emoji: "👕",
     glow: "#a855f7",
   },
+  {
+    title: "Activity Logs",
+    description: "Who did what, and when, across the system.",
+    href: "/activity-logs",
+    emoji: "🗒️",
+    glow: "#6366f1",
+  },
 ];
 
 const sideMenuItems = [

@@ -76,6 +76,12 @@ const softwareCards = [
     href: "/uniforms",
     emoji: "👕",
   },
+  {
+    title: "Activity Logs",
+    description: "Who did what, and when, across the system.",
+    href: "/activity-logs",
+    emoji: "🗒️",
+  },
 ];
 
 const sideMenuItems = [

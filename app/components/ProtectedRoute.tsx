@@ -54,6 +54,7 @@ const ADMIN_ONLY_EXACT = [
   "/settings",
   "/income-expenditure",
   "/admission",
+  "/activity-logs",
   "/dashboard/admin",
   "/dashboard/headmaster",
 ];
