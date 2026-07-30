@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 function makeTeacherId() {
   const randomNumber = Math.floor(10000 + Math.random() * 90000);
@@ -168,6 +169,13 @@ export async function POST(request: Request) {
       await supabaseAdmin.auth.admin.deleteUser(authUserId);
       throw new Error(insertError.message);
     }
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "STAFF_CREATE",
+      details: `Added staff member "${fullName}" (${role}, username: ${username}).`,
+    });
 
     return NextResponse.json({
       message: "Teacher added successfully.",

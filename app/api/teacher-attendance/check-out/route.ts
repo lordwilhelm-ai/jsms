@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 import { validateAttendanceLocation } from "@/lib/teacherAttendanceGeofence";
 import { getGhanaDateString } from "@/lib/ghanaTime";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 function getTeacherId(row: Record<string, any>) {
   return String(row.teacher_id || row.id || "").trim();
@@ -66,6 +67,13 @@ export async function POST(request: Request) {
       .maybeSingle();
 
     if (error) throw error;
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "ATTENDANCE_CHECK_OUT",
+      details: `${actorName(auth.teacher)} checked out on ${today}.`,
+    });
 
     return NextResponse.json({ message: "Check-out recorded successfully.", attendance: data });
   } catch (error) {

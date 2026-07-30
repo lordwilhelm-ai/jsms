@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 export async function POST(request: Request) {
   try {
@@ -136,6 +137,16 @@ export async function POST(request: Request) {
     if (error) {
       throw new Error(error.message);
     }
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "CLASSES_DELETE",
+      className,
+      details: `Deleted class "${className}"${
+        dependentCount > 0 ? ` (removed ${dependentCount} teacher/subject link(s) with it)` : ""
+      }.`,
+    });
 
     return NextResponse.json({
       message: "Class deleted successfully.",

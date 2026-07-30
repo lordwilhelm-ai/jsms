@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity } from "@/lib/activityLog";
 
 // Record Payment used to insert into `fee_payments` straight from the
 // anon-key browser client, gated only by a client-side "redirect if teacher"
@@ -192,6 +193,15 @@ export async function POST(request: Request) {
 
     const { error } = await supabaseAdmin.from("fee_payments").insert([payload]);
     if (error) throw new Error(error.message);
+
+    void logActivity({
+      userName: staffName,
+      role: auth.role,
+      action: "FEES_RECORD_PAYMENT",
+      className: payload.class_name,
+      date: paymentDate,
+      details: `Recorded GHS ${amount.toFixed(2)} fee payment for ${payload.student_name} (${resolvedStudentIdValue}), receipt ${receiptNo}.`,
+    });
 
     return NextResponse.json({ message: `Payment recorded successfully. Receipt: ${receiptNo}`, payment: payload });
   } catch (err) {

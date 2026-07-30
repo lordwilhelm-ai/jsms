@@ -8,6 +8,7 @@ import {
   getGhanaEndOfWeekSunday,
   getGhanaStartOfWeekMonday,
 } from "@/lib/ghanaTime";
+import { logActivity } from "@/lib/activityLog";
 
 function getTeacherId(row: Record<string, any>) {
   return String(row.teacher_id || row.id || "").trim();
@@ -100,6 +101,13 @@ export async function POST(request: Request) {
       .maybeSingle();
 
     if (error) throw error;
+
+    void logActivity({
+      userName: teacherName,
+      role: auth.role,
+      action: "ATTENDANCE_CHECK_IN",
+      details: `${teacherName} checked in${checkInStatus === "Late" ? " (late)" : ""} on ${today}.`,
+    });
 
     return NextResponse.json({
       message:

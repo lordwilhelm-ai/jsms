@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 export async function POST(request: Request) {
   try {
@@ -86,6 +87,13 @@ export async function POST(request: Request) {
     if (error) {
       throw new Error(error.message);
     }
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "SUBJECTS_DELETE",
+      details: `Deleted subject "${subjectName || id}"${scoreCount > 0 ? ` (had ${scoreCount} recorded score(s) already on report cards)` : ""}.`,
+    });
 
     return NextResponse.json({
       message: "Subject deleted successfully.",

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 import { calculateAdminFeeding, getPreviousBalances, rebuildStudentBalancesFromLedger } from "@/lib/feedingFillClass";
+import { logActivity } from "@/lib/activityLog";
 
 // "Fill for Class" used to compute previousBalance/newBalance client-side
 // (from data fetched at page-load time), then delete-and-reinsert
@@ -196,18 +197,14 @@ export async function POST(request: Request) {
     const ateWithoutPayCount = rows.filter((row) => row.ateWithoutPay).length;
     const totalCollected = rows.reduce((sum, row) => sum + row.amountPaidToday, 0);
 
-    const { error: logError } = await supabaseAdmin.from("activity_logs").insert([
-      {
-        user_name: staffName,
-        role: "admin",
-        action: "ADMIN_EDITED_CLASS_ENTRY",
-        class_name: className,
-        date,
-        details: `Admin edited/resubmitted ${className} for ${date}. Ate-without-pay count: ${ateWithoutPayCount}`,
-        created_at: now,
-      },
-    ]);
-    if (logError) console.error("Feeding activity log insert failed:", logError);
+    void logActivity({
+      userName: staffName,
+      role: auth.role,
+      action: "FEEDING_FILL_CLASS",
+      className,
+      date,
+      details: `Filled ${className} for ${date} — ${presentCount} present, ${absentCount} absent, GHS ${totalCollected.toFixed(2)} collected, ${ateWithoutPayCount} ate without pay.`,
+    });
 
     await rebuildStudentBalancesFromLedger(academicYear);
 

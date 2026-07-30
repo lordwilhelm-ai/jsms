@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 import { insertBooksGivenAndAdjustStock, type GivenRow } from "@/lib/booksIssue";
+import { logActivity } from "@/lib/activityLog";
 
 // "Confirm books given" step of the record-payment popup, for a payment
 // that ALREADY exists on the server (either just recorded online, or an
@@ -62,6 +63,15 @@ export async function POST(request: Request) {
     }));
 
     const { oversoldBooks } = await insertBooksGivenAndAdjustStock(rows);
+
+    const bookSummary = rows.map((r) => `${r.book_name} x${r.quantity_given}`).join(", ");
+    void logActivity({
+      userName: staffName,
+      role: auth.role,
+      action: "BOOKS_ISSUE",
+      className: rows[0]?.class_name ?? null,
+      details: `Issued books to ${rows[0]?.student_name || cleanText(body?.studentId)}: ${bookSummary}.`,
+    });
 
     return NextResponse.json({ message: "Books given saved.", oversoldBooks });
   } catch (err) {

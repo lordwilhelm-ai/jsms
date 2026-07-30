@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 // Staff-only: admits an applicant into the live students database.
 // Previously called via supabase.rpc(...) straight from the browser with no
@@ -24,6 +25,13 @@ export async function POST(request: Request) {
     });
 
     if (error) throw new Error(error.message);
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "ADMISSION_ADMIT_STUDENT",
+      details: `Admitted applicant (application ${applicationId}) into the live student database.`,
+    });
 
     return NextResponse.json({ message: "Student admitted successfully." });
   } catch (error) {

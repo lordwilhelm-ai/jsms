@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity } from "@/lib/activityLog";
 
 const ALLOWED_ROLES = ["owner", "admin", "headmaster"] as const;
 
@@ -58,6 +59,13 @@ export async function POST(request: Request) {
 
     const { error } = await supabaseAdmin.from("jsms_uniform_expenses").insert(payload);
     if (error) throw new Error(error.message);
+
+    void logActivity({
+      userName: staffName,
+      role: auth.role,
+      action: "UNIFORMS_RECORD_EXPENSE",
+      details: `Recorded uniform expense: ${itemName} x${quantity} @ GHS ${unitCost.toFixed(2)} — total GHS ${totalCost.toFixed(2)}.`,
+    });
 
     return NextResponse.json({ message: "Uniform expense recorded. Profit has been recalculated." });
   } catch (err) {

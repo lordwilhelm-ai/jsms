@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 import { insertBookPaymentWithReceipt, getLastFourStudentId } from "@/lib/booksReceipts";
+import { logActivity } from "@/lib/activityLog";
 
 // Books Record Payment used to write straight to Supabase from the browser.
 // Proxied through here so it can be replayed from the offline queue and is
@@ -94,6 +95,14 @@ export async function POST(request: Request) {
       payment_note: note,
       term,
       academic_year: academicYear,
+    });
+
+    void logActivity({
+      userName: staffName,
+      role: auth.role,
+      action: "BOOKS_RECORD_PAYMENT",
+      className,
+      details: `Recorded GHS ${amountPaid.toFixed(2)} book payment (${paidFor || paymentType}) for ${studentName} (${studentId}).`,
     });
 
     if (paymentType === "specific_books" && specificBooks.length > 0) {

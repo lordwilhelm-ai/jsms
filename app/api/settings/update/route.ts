@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 export async function POST(request: Request) {
   try {
@@ -64,6 +65,13 @@ export async function POST(request: Request) {
         throw new Error(error.message);
       }
 
+      void logActivity({
+        userName: actorName(auth.teacher),
+        role: auth.role,
+        action: "SETTINGS_UPDATE",
+        details: `Updated school settings (${academicYear}, ${currentTerm}).`,
+      });
+
       return NextResponse.json({
         message: "Settings saved successfully.",
         id,
@@ -91,6 +99,13 @@ export async function POST(request: Request) {
     if (error) {
       throw new Error(error.message);
     }
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "SETTINGS_UPDATE",
+      details: `Created school settings (${academicYear}, ${currentTerm}).`,
+    });
 
     return NextResponse.json({
       message: "Settings saved successfully.",

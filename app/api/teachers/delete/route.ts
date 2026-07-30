@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 export async function POST(request: Request) {
   try {
@@ -19,7 +20,7 @@ export async function POST(request: Request) {
 
     const { data: teacher, error: teacherError } = await supabaseAdmin
       .from("teachers")
-      .select("id, role, auth_user_id")
+      .select("id, role, auth_user_id, full_name, username")
       .eq("id", id)
       .limit(1)
       .single();
@@ -64,6 +65,13 @@ export async function POST(request: Request) {
     if (deleteTeacherError) {
       throw new Error(deleteTeacherError.message);
     }
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "STAFF_DELETE",
+      details: `Deleted staff member "${teacher.full_name || teacher.username || id}" (${teacher.role}).`,
+    });
 
     return NextResponse.json({
       message: "Teacher deleted permanently.",

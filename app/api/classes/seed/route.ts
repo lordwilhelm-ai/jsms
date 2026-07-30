@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 const officialClasses = [
     { name: "Playroom 1", class_name: "Playroom 1", class_order: 1, level: "Pre-School" },
@@ -39,6 +40,13 @@ export async function POST(request: Request) {
         if (insertError) {
             throw new Error(insertError.message);
         }
+
+        void logActivity({
+            userName: actorName(auth.teacher),
+            role: auth.role,
+            action: "CLASSES_SEED_DEFAULTS",
+            details: `Reset classes to the ${officialClasses.length} official defaults.`,
+        });
 
         return NextResponse.json({
             message: "Official classes loaded successfully.",

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 import { hashPin, isValidPin } from "@/lib/kiosk/pin";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 // Teacher creation never sets a kiosk PIN, and there was previously no way
 // for an admin to set/reset one at all (hashPin() existed but was never
@@ -28,12 +29,21 @@ export async function POST(request: Request) {
 
     const pinHash = await hashPin(pin);
 
-    const { error } = await supabaseAdmin
+    const { data: teacher, error } = await supabaseAdmin
       .from("teachers")
       .update({ pin_hash: pinHash })
-      .eq("id", teacherId);
+      .eq("id", teacherId)
+      .select("full_name, username")
+      .maybeSingle();
 
     if (error) throw new Error(error.message);
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "STAFF_SET_PIN",
+      details: `Set kiosk PIN for "${teacher?.full_name || teacher?.username || teacherId}".`,
+    });
 
     return NextResponse.json({ message: "Kiosk PIN set successfully." });
   } catch (err) {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity } from "@/lib/activityLog";
 
 const ALLOWED_ROLES = ["owner", "admin", "headmaster"] as const;
 
@@ -67,6 +68,15 @@ export async function POST(request: Request) {
     ]);
 
     if (error) throw new Error(error.message);
+
+    void logActivity({
+      userName: staffName,
+      role: auth.role,
+      action: "FEEDING_MARK_RECEIVED",
+      className,
+      date,
+      details: `Marked ${className} feeding money as received for ${date} — GHS ${amountReceived.toFixed(2)} (${teacherNames || "no teacher name given"}).`,
+    });
 
     return NextResponse.json({ message: `${className} money marked as received.` });
   } catch (err) {

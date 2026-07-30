@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 export async function POST(request: Request) {
   try {
@@ -142,6 +143,13 @@ export async function POST(request: Request) {
     if (updateError) {
       throw new Error(updateError.message);
     }
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "STAFF_UPDATE",
+      details: `Updated staff member "${fullName}" (${role}, username: ${username}).`,
+    });
 
     return NextResponse.json({ message: "Teacher updated successfully." });
   } catch (error) {

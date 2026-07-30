@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 export async function POST(request: Request) {
   try {
@@ -61,6 +62,19 @@ export async function POST(request: Request) {
 
       if (insertSubjectsError) throw insertSubjectsError;
     }
+
+    const { data: teacherRow } = await supabaseAdmin
+      .from("teachers")
+      .select("full_name, username")
+      .eq("id", teacherId)
+      .maybeSingle();
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "STAFF_SAVE_ASSIGNMENTS",
+      details: `Assigned ${classIds.length} class(es) and ${subjectIds.length} subject(s) to "${teacherRow?.full_name || teacherRow?.username || teacherId}".`,
+    });
 
     return NextResponse.json({
       message: "Assignments saved successfully.",

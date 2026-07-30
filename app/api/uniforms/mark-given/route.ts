@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity } from "@/lib/activityLog";
 
 const ALLOWED_ROLES = ["owner", "admin", "headmaster"] as const;
 
@@ -57,6 +58,14 @@ export async function POST(request: Request) {
 
     const { error } = await supabaseAdmin.from("jsms_uniforms_given").insert(payload);
     if (error) throw new Error(error.message);
+
+    void logActivity({
+      userName: staffName,
+      role: auth.role,
+      action: "UNIFORMS_MARK_GIVEN",
+      className,
+      details: `Marked uniform item(s) given to ${studentName} (${studentId}): ${itemNames.join(", ")}.`,
+    });
 
     return NextResponse.json({ message: "Uniform item(s) marked as given." });
   } catch (err) {

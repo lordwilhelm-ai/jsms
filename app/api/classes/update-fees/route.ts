@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 export async function POST(request: Request) {
   try {
@@ -23,8 +24,21 @@ export async function POST(request: Request) {
     if (body.fee_monwed !== undefined) updates.fee_monwed = Number(body.fee_monwed || 0);
     if (body.fee_friday !== undefined) updates.fee_friday = Number(body.fee_friday || 0);
 
-    const { error } = await supabaseAdmin.from("classes").update(updates).eq("id", id);
+    const { data: updated, error } = await supabaseAdmin
+      .from("classes")
+      .update(updates)
+      .eq("id", id)
+      .select("class_name, name")
+      .maybeSingle();
     if (error) throw new Error(error.message);
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "CLASSES_UPDATE_FEES",
+      className: updated?.class_name || updated?.name || null,
+      details: `Updated class fees for "${updated?.class_name || updated?.name || id}".`,
+    });
 
     return NextResponse.json({ message: "Class fees updated." });
   } catch (err) {

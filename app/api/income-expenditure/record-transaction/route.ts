@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity } from "@/lib/activityLog";
 
 // Income & Expenditure used to write straight to `finance_transactions`/
 // `finance_items` from the anon-key browser client. Proxied through here so
@@ -179,6 +180,13 @@ export async function POST(request: Request) {
       .maybeSingle();
 
     if (error) throw new Error(error.message);
+
+    void logActivity({
+      userName: staffName,
+      role: auth.role,
+      action: "FINANCE_RECORD_TRANSACTION",
+      details: `Recorded ${payload.type} — "${payload.item_name}" (${payload.category || "—"}): GHS ${amount.toFixed(2)}.`,
+    });
 
     return NextResponse.json({ message: "Transaction saved.", transaction: inserted || payload });
   } catch (err) {

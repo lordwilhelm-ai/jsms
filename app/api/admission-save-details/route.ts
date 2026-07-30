@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 function text(value: unknown) {
   const clean = String(value ?? "").trim();
@@ -70,6 +71,13 @@ export async function POST(request: Request) {
     });
 
     if (error) throw new Error(error.message);
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "ADMISSION_SAVE_DETAILS",
+      details: `Saved admission details for "${studentName}" (${classApplying}).`,
+    });
 
     return NextResponse.json({ message: "Admission details saved." });
   } catch (error) {

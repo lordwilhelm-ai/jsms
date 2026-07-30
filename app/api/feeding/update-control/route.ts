@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 const ALLOWED_ROLES = ["owner", "admin", "headmaster"] as const;
 
@@ -32,6 +33,13 @@ export async function POST(request: Request) {
 
       if (error) throw new Error(error.message);
 
+      void logActivity({
+        userName: actorName(auth.teacher),
+        role: auth.role,
+        action: "FEEDING_UPDATE_CONTROL",
+        details: `Updated feeding control — fee: GHS ${feedingFee}, minimum to eat: GHS ${minimumToEat}.`,
+      });
+
       return NextResponse.json({ message: "Feeding control saved successfully.", id });
     }
 
@@ -42,6 +50,13 @@ export async function POST(request: Request) {
       .single();
 
     if (error) throw new Error(error.message);
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "FEEDING_UPDATE_CONTROL",
+      details: `Set feeding control — fee: GHS ${feedingFee}, minimum to eat: GHS ${minimumToEat}.`,
+    });
 
     return NextResponse.json({ message: "Feeding control saved successfully.", id: data.id });
   } catch (error) {

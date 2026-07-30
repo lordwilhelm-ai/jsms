@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 export async function POST(request: Request) {
   try {
@@ -44,6 +45,20 @@ export async function POST(request: Request) {
         throw new Error(insertError.message);
       }
     }
+
+    const { data: classRow } = await supabaseAdmin
+      .from("classes")
+      .select("class_name, name")
+      .eq("id", classId)
+      .maybeSingle();
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "SUBJECTS_SAVE_CLASS_LINKS",
+      className: classRow?.class_name || classRow?.name || null,
+      details: `Set ${subjectIds.length} subject(s) for class "${classRow?.class_name || classRow?.name || classId}".`,
+    });
 
     return NextResponse.json({
       message: "Class subjects saved successfully.",

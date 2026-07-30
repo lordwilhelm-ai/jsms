@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 import { insertBookPaymentWithReceipt, getLastFourStudentId } from "@/lib/booksReceipts";
 import { insertBooksGivenAndAdjustStock, type GivenRow } from "@/lib/booksIssue";
+import { logActivity } from "@/lib/activityLog";
 
 // Recording a book payment and confirming which books were given normally
 // happen as two separate calls, a few seconds apart, with the popup UI
@@ -137,6 +138,14 @@ export async function POST(request: Request) {
       const result = await insertBooksGivenAndAdjustStock(rows);
       oversoldBooks = result.oversoldBooks;
     }
+
+    void logActivity({
+      userName: staffName,
+      role: auth.role,
+      action: "BOOKS_RECORD_PAYMENT_AND_ISSUE",
+      className,
+      details: `Recorded GHS ${amountPaid.toFixed(2)} book payment and issued ${givenItems.length} item(s) for ${studentName} (${studentId}).`,
+    });
 
     return NextResponse.json({ message: "Payment and books given saved.", payment, oversoldBooks });
   } catch (err) {

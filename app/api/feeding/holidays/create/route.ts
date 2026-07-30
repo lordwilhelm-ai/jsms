@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 const ALLOWED_ROLES = ["owner", "admin", "headmaster"] as const;
 
@@ -35,6 +36,14 @@ export async function POST(request: Request) {
       .single();
 
     if (error) throw new Error(error.message);
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "FEEDING_ADD_HOLIDAY",
+      date: startDate,
+      details: `Added ${type} "${name}" from ${startDate} to ${endDate}.`,
+    });
 
     return NextResponse.json({ message: "Added successfully.", closure: data });
   } catch (error) {

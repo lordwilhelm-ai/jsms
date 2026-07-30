@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 // Record Payment's "Save Setup" used to write straight to `students` with the
 // anon-key browser client, gated only by a client-side "redirect if teacher"
@@ -55,6 +56,14 @@ export async function POST(request: Request) {
       .single();
 
     if (error) throw new Error(error.message);
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "FEES_SAVE_STUDENT_SETUP",
+      className: data?.class_name ?? null,
+      details: `Updated fee setup for ${data?.full_name || studentId} — type: ${payload.student_type}, scholarship: ${payload.scholarship_type}, arrears: GHS ${payload.arrears.toFixed(2)}.`,
+    });
 
     return NextResponse.json({ message: "Student setup saved.", student: data, payload });
   } catch (err) {

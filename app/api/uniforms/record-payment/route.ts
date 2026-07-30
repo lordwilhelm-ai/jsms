@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity } from "@/lib/activityLog";
 
 // Uniforms Record Payment used to write straight to Supabase from the
 // browser (jsms_uniform_payments/jsms_uniform_payment_items/
@@ -213,6 +214,14 @@ export async function POST(request: Request) {
       received_by: staffName,
       term,
       academic_year: academicYear,
+    });
+
+    void logActivity({
+      userName: staffName,
+      role: auth.role,
+      action: "UNIFORMS_RECORD_PAYMENT",
+      className,
+      details: `Recorded GHS ${amountPaid.toFixed(2)} uniform payment (${itemNames}) for ${studentName} (${studentId}), receipt ${receipt}.`,
     });
 
     return NextResponse.json({ message: `Uniform payment recorded. Receipt: ${receipt}`, payment: paymentData });

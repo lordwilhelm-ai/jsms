@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 // The Fee Structure admin page used to write straight to `classes` and
 // `new_student_fee_items` with the anon-key browser client, gated only by a
@@ -43,6 +44,13 @@ export async function POST(request: Request) {
       const { error } = await supabaseAdmin.from("classes").update(payload).in("id", classIds);
       if (error) throw new Error(error.message);
 
+      void logActivity({
+        userName: actorName(auth.teacher),
+        role: auth.role,
+        action: "FEES_UPDATE_STRUCTURE",
+        details: `Updated ${payload.fee_level_group} fee structure — returning: GHS ${payload.fee_returning}, lacoste: GHS ${payload.fee_lacoste}, mon-wed: GHS ${payload.fee_monwed}, friday: GHS ${payload.fee_friday}.`,
+      });
+
       return NextResponse.json({ message: "Fee structure updated.", payload });
     }
 
@@ -68,6 +76,14 @@ export async function POST(request: Request) {
           .single();
 
         if (error) throw new Error(error.message);
+
+        void logActivity({
+          userName: actorName(auth.teacher),
+          role: auth.role,
+          action: "FEES_UPDATE_STRUCTURE_ITEM",
+          details: `Updated new-student fee item "${itemName}" (${category}) to GHS ${amount.toFixed(2)}.`,
+        });
+
         return NextResponse.json({ message: `${itemName} updated.`, item: data });
       }
 
@@ -92,6 +108,14 @@ export async function POST(request: Request) {
         .single();
 
       if (error) throw new Error(error.message);
+
+      void logActivity({
+        userName: actorName(auth.teacher),
+        role: auth.role,
+        action: "FEES_ADD_STRUCTURE_ITEM",
+        details: `Added new-student fee item "${itemName}" (${category}, GHS ${amount.toFixed(2)}) to ${levelGroup}.`,
+      });
+
       return NextResponse.json({ message: `${itemName} added to ${levelGroup}.`, item: data });
     }
 
@@ -101,12 +125,22 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Item ID is required." }, { status: 400 });
       }
 
-      const { error } = await supabaseAdmin
+      const { data: removed, error } = await supabaseAdmin
         .from("new_student_fee_items")
         .update({ is_active: false })
-        .eq("id", id);
+        .eq("id", id)
+        .select("item_name, level_group")
+        .maybeSingle();
 
       if (error) throw new Error(error.message);
+
+      void logActivity({
+        userName: actorName(auth.teacher),
+        role: auth.role,
+        action: "FEES_DELETE_STRUCTURE_ITEM",
+        details: `Removed new-student fee item "${removed?.item_name || id}"${removed?.level_group ? ` from ${removed.level_group}` : ""}.`,
+      });
+
       return NextResponse.json({ message: "Item removed." });
     }
 
@@ -133,6 +167,14 @@ export async function POST(request: Request) {
         .select("*");
 
       if (error) throw new Error(error.message);
+
+      void logActivity({
+        userName: actorName(auth.teacher),
+        role: auth.role,
+        action: "FEES_SEED_STRUCTURE_DEFAULTS",
+        details: `Seeded ${insertPayload.length} default new-student fee items for ${levelGroup}.`,
+      });
+
       return NextResponse.json({
         message: `Default new student structure added for ${levelGroup}. Enter the amounts now.`,
         items: data,

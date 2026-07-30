@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 import { adjustBookQuantity } from "@/lib/booksStock";
+import { supabaseAdmin } from "@/lib/supabase-admin";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 const ALLOWED_ROLES = ["owner", "admin", "headmaster"] as const;
 
@@ -30,6 +32,15 @@ export async function POST(request: Request) {
     if (newQuantity === null) {
       return NextResponse.json({ error: "Book not found." }, { status: 404 });
     }
+
+    const { data: bookRow } = await supabaseAdmin.from("jsms_books").select("book_name").eq("id", bookId).maybeSingle();
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "BOOKS_RESTOCK",
+      details: `Restocked ${quantity} of "${bookRow?.book_name || bookId}" — new quantity: ${newQuantity}.`,
+    });
 
     return NextResponse.json({ message: "Stock updated.", quantity: newQuantity });
   } catch (err) {

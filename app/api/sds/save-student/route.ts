@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 // Fields the SDS admin UI is allowed to write on a student record. Anything
 // outside this list is dropped, even if present in the request body.
@@ -89,6 +90,14 @@ export async function POST(request: Request) {
 
       if (error) throw new Error(error.message);
 
+      void logActivity({
+        userName: actorName(auth.teacher),
+        role: auth.role,
+        action: "SDS_UPDATE_STUDENT",
+        className: className || null,
+        details: `Updated student record for "${fullName}" (${className}).`,
+      });
+
       return NextResponse.json({ message: "Student updated successfully.", student: data });
     }
 
@@ -99,6 +108,14 @@ export async function POST(request: Request) {
       .single();
 
     if (error) throw new Error(error.message);
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "SDS_ADD_STUDENT",
+      className: className || null,
+      details: `Added new student record for "${fullName}" (${className}).`,
+    });
 
     return NextResponse.json({ message: "Student added successfully.", student: data });
   } catch (error) {

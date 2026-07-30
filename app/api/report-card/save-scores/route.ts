@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 import { verifyTeacherScope } from "@/lib/teacherAssignments";
 import { checkReportCardLicense } from "@/lib/reportCardLicense";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 // Teachers write scores with the anon client today via RLS, but
 // jsms_report_scores has no INSERT/UPDATE policy permitting that — every
@@ -44,6 +45,17 @@ export async function POST(request: Request) {
       .upsert(rows, { onConflict: "student_id,academic_year,term,subject_name" });
 
     if (error) throw error;
+
+    const classNames = Array.from(new Set(rows.map((row: any) => row.class_name).filter(Boolean)));
+    const term = rows[0]?.term;
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "REPORT_CARD_SAVE_SCORES",
+      className: classNames.join(", ") || null,
+      details: `Saved ${rows.length} score row(s) for ${classNames.join(", ") || "class"}${term ? ` (${term})` : ""}.`,
+    });
 
     return NextResponse.json({ message: "Results saved successfully." });
   } catch (error) {

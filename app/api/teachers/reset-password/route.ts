@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 export async function POST(request: Request) {
   try {
@@ -25,7 +26,7 @@ export async function POST(request: Request) {
 
     const { data: teacher, error: teacherError } = await supabaseAdmin
       .from("teachers")
-      .select("auth_user_id, role")
+      .select("auth_user_id, role, full_name, username")
       .eq("id", id)
       .limit(1)
       .single();
@@ -50,6 +51,13 @@ export async function POST(request: Request) {
     if (resetError) {
       throw new Error(resetError.message);
     }
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "STAFF_RESET_PASSWORD",
+      details: `Reset login password for "${teacher.full_name || teacher.username || id}".`,
+    });
 
     return NextResponse.json({ message: "Password reset successfully." });
   } catch (error) {

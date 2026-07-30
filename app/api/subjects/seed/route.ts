@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 const officialSubjects = [
   { name: "Literacy", subject_name: "Literacy", subject_order: 1 },
@@ -48,6 +49,13 @@ export async function POST(request: Request) {
     if (insertError) throw new Error(insertError.message);
 
     await autoAssignOfficialMappings();
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "SUBJECTS_SEED_DEFAULTS",
+      details: `Reset subjects to the ${officialSubjects.length} official defaults and re-mapped them to classes.`,
+    });
 
     return NextResponse.json({
       message: "Official subjects loaded successfully.",

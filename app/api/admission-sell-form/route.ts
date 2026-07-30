@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
+import { logActivity, actorName } from "@/lib/activityLog";
 
 // Staff-only: records an in-person admission form sale. Same unguarded
 // supabase.rpc(...) gap as the other admission admin actions, closed the
@@ -35,6 +36,13 @@ export async function POST(request: Request) {
     if (error) throw new Error(error.message);
 
     const row = Array.isArray(data) ? data[0] : data;
+
+    void logActivity({
+      userName: actorName(auth.teacher),
+      role: auth.role,
+      action: "ADMISSION_SELL_FORM",
+      details: `Sold admission form to "${studentName}" (${classApplying})${row?.receipt_number ? `, receipt ${row.receipt_number}` : ""}.`,
+    });
 
     return NextResponse.json({
       message: "Form saved.",
