@@ -90,13 +90,6 @@ const softwareCards = [
     emoji: "👕",
     glow: "#a855f7",
   },
-  {
-    title: "Activity Logs",
-    description: "Who did what, and when, across the system.",
-    href: "/activity-logs",
-    emoji: "🗒️",
-    glow: "#6366f1",
-  },
 ];
 
 const sideMenuItems = [
@@ -106,6 +99,7 @@ const sideMenuItems = [
   { label: "Classes", href: "/classes", emoji: "🏫" },
   { label: "Subjects", href: "/subjects", emoji: "📚" },
   { label: "Settings", href: "/settings", emoji: "⚙️" },
+  { label: "Activity Logs", href: "/activity-logs", emoji: "🗒️" },
 ];
 
 function cleanSearch(value: string) {

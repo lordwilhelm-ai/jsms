@@ -76,12 +76,6 @@ const softwareCards = [
     href: "/uniforms",
     emoji: "👕",
   },
-  {
-    title: "Activity Logs",
-    description: "Who did what, and when, across the system.",
-    href: "/activity-logs",
-    emoji: "🗒️",
-  },
 ];
 
 const sideMenuItems = [
@@ -91,6 +85,7 @@ const sideMenuItems = [
   { label: "Classes", href: "/classes", emoji: "🏫" },
   { label: "Subjects", href: "/subjects", emoji: "📚" },
   { label: "Settings", href: "/settings", emoji: "⚙️" },
+  { label: "Activity Logs", href: "/activity-logs", emoji: "🗒️" },
 ];
 
 export default function HeadmasterDashboardPage() {
