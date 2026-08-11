@@ -700,7 +700,10 @@ export default function UploadResultsPage() {
 
           exam_raw: isPlayroomClass(row.class_name) || row.exam_raw === "" ? null : examRaw,
           exam_50: isPlayroomClass(row.class_name) ? null : exam50,
-          exam_score: isPlayroomClass(row.class_name) ? null : examRaw,
+          // exam_score is what the report card views display as "Exams (50%)"
+          // — it must hold the halved value like class_score does, not the
+          // raw out-of-100 exam mark (that's what exam_raw is already for).
+          exam_score: isPlayroomClass(row.class_name) ? null : exam50,
 
           total_score: isPlayroomClass(row.class_name) ? null : finalTotal,
           position: isPlayroomClass(row.class_name) || row.position === "" ? null : Number(row.position),
