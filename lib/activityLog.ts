@@ -7,6 +7,12 @@ type LogActivityParams = {
   className?: string | null;
   date?: string | null;
   details: string;
+  // Only set for actions the Activity Log's Undo feature knows how to
+  // reverse (see app/api/activity-logs/undo/route.ts for the dispatch
+  // table) — undoType/undoPayload are left null for everything else,
+  // which is what makes a log entry show no Undo button at all.
+  undoType?: string | null;
+  undoPayload?: Record<string, any> | null;
 };
 
 // Shared by every write route so "who did what, and when" covers the whole
@@ -24,6 +30,8 @@ export async function logActivity(params: LogActivityParams) {
         class_name: params.className ?? null,
         date: params.date ?? null,
         details: params.details,
+        undo_type: params.undoType ?? null,
+        undo_payload: params.undoPayload ?? null,
         created_at: new Date().toISOString(),
       },
     ]);

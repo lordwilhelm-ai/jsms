@@ -186,6 +186,8 @@ export async function POST(request: Request) {
       role: auth.role,
       action: "FINANCE_RECORD_TRANSACTION",
       details: `Recorded ${payload.type} — "${payload.item_name}" (${payload.category || "—"}): GHS ${amount.toFixed(2)}.`,
+      undoType: inserted?.id ? "DELETE_ROW" : null,
+      undoPayload: inserted?.id ? { table: "finance_transactions", id: inserted.id } : null,
     });
 
     return NextResponse.json({ message: "Transaction saved.", transaction: inserted || payload });

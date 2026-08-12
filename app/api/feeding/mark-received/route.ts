@@ -57,15 +57,19 @@ export async function POST(request: Request) {
 
     const staffName = getStaffDisplayName(auth.teacher);
 
-    const { error } = await supabaseAdmin.from("received_money").insert([
-      {
-        date,
-        class_name: className,
-        amount_received: amountReceived,
-        teacher_names: teacherNames,
-        received_by: staffName,
-      },
-    ]);
+    const { data: inserted, error } = await supabaseAdmin
+      .from("received_money")
+      .insert([
+        {
+          date,
+          class_name: className,
+          amount_received: amountReceived,
+          teacher_names: teacherNames,
+          received_by: staffName,
+        },
+      ])
+      .select("id")
+      .single();
 
     if (error) throw new Error(error.message);
 
@@ -76,6 +80,8 @@ export async function POST(request: Request) {
       className,
       date,
       details: `Marked ${className} feeding money as received for ${date} — GHS ${amountReceived.toFixed(2)} (${teacherNames || "no teacher name given"}).`,
+      undoType: "DELETE_ROW",
+      undoPayload: { table: "received_money", id: inserted.id },
     });
 
     return NextResponse.json({ message: `${className} money marked as received.` });

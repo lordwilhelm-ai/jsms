@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { authedFetch } from "@/lib/apiClient";
+import { supabase } from "@/lib/supabase";
 
 type LogRow = {
   id: string;
@@ -13,6 +14,9 @@ type LogRow = {
   date: string | null;
   details: string | null;
   created_at: string;
+  undo_type: string | null;
+  undone_at: string | null;
+  undone_by: string | null;
 };
 
 const PAGE_SIZE = 50;
@@ -59,6 +63,15 @@ export default function ActivityLogsPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
+  const [undoTarget, setUndoTarget] = useState<LogRow | null>(null);
+  const [undoPin, setUndoPin] = useState("");
+  const [undoError, setUndoError] = useState("");
+  const [undoBusy, setUndoBusy] = useState(false);
+  const [needsPinSetup, setNeedsPinSetup] = useState(false);
+  const [newPin, setNewPin] = useState("");
+  const [newPinConfirm, setNewPinConfirm] = useState("");
+  const [myTeacherId, setMyTeacherId] = useState("");
+
   async function loadLogs(targetPage: number) {
     setLoading(true);
     setError("");
@@ -92,8 +105,116 @@ export default function ActivityLogsPage() {
 
   useEffect(() => {
     void loadLogs(0);
+
+    (async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const authUserId = session?.user?.id;
+      if (!authUserId) return;
+
+      const { data } = await supabase
+        .from("teachers")
+        .select("id")
+        .eq("auth_user_id", authUserId)
+        .limit(1)
+        .maybeSingle();
+
+      if (data?.id) setMyTeacherId(data.id);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function openUndoModal(row: LogRow) {
+    setUndoTarget(row);
+    setUndoPin("");
+    setUndoError("");
+    setNeedsPinSetup(false);
+    setNewPin("");
+    setNewPinConfirm("");
+  }
+
+  function closeUndoModal() {
+    setUndoTarget(null);
+    setUndoPin("");
+    setUndoError("");
+    setNeedsPinSetup(false);
+    setNewPin("");
+    setNewPinConfirm("");
+  }
+
+  async function submitSetPin() {
+    setUndoError("");
+
+    if (!/^\d{4}$/.test(newPin)) {
+      setUndoError("PIN must be exactly 4 digits.");
+      return;
+    }
+    if (newPin !== newPinConfirm) {
+      setUndoError("PINs don't match.");
+      return;
+    }
+    if (!myTeacherId) {
+      setUndoError("Could not resolve your staff record — try reloading the page.");
+      return;
+    }
+
+    setUndoBusy(true);
+    try {
+      const response = await authedFetch("/api/teachers/set-pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ teacherId: myTeacherId, pin: newPin }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Failed to set PIN.");
+
+      setNeedsPinSetup(false);
+      setUndoPin(newPin);
+      setNewPin("");
+      setNewPinConfirm("");
+    } catch (err) {
+      setUndoError(err instanceof Error ? err.message : "Failed to set PIN.");
+    } finally {
+      setUndoBusy(false);
+    }
+  }
+
+  async function submitUndo() {
+    if (!undoTarget) return;
+    setUndoError("");
+
+    if (!/^\d{4}$/.test(undoPin)) {
+      setUndoError("Enter your 4-digit PIN.");
+      return;
+    }
+
+    setUndoBusy(true);
+    try {
+      const response = await authedFetch("/api/activity-logs/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ logId: undoTarget.id, pin: undoPin }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        if (result.code === "NO_PIN_SET") {
+          setNeedsPinSetup(true);
+          setUndoError("You haven't set a PIN yet — set one below to continue.");
+          return;
+        }
+        throw new Error(result.error || "Failed to undo.");
+      }
+
+      closeUndoModal();
+      void loadLogs(page);
+    } catch (err) {
+      setUndoError(err instanceof Error ? err.message : "Failed to undo.");
+    } finally {
+      setUndoBusy(false);
+    }
+  }
 
   function handleFilterSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -312,18 +433,19 @@ export default function ActivityLogsPage() {
                   <th style={{ padding: "12px 14px" }}>Who</th>
                   <th style={{ padding: "12px 14px" }}>Action</th>
                   <th style={{ padding: "12px 14px" }}>Details</th>
+                  <th style={{ padding: "12px 14px" }}>Undo</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={4} style={{ padding: "24px", textAlign: "center", color: COLORS.muted }}>
+                    <td colSpan={5} style={{ padding: "24px", textAlign: "center", color: COLORS.muted }}>
                       Loading...
                     </td>
                   </tr>
                 ) : rows.length === 0 ? (
                   <tr>
-                    <td colSpan={4} style={{ padding: "24px", textAlign: "center", color: COLORS.muted }}>
+                    <td colSpan={5} style={{ padding: "24px", textAlign: "center", color: COLORS.muted }}>
                       No activity found.
                     </td>
                   </tr>
@@ -361,6 +483,34 @@ export default function ActivityLogsPage() {
                         )}
                       </td>
                       <td style={{ padding: "12px 14px", color: COLORS.text }}>{row.details || "—"}</td>
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>
+                        {row.undone_at ? (
+                          <span style={{ fontSize: "11px", color: COLORS.muted }}>
+                            Undone by {row.undone_by || "—"}
+                            <br />
+                            {formatWhen(row.undone_at)}
+                          </span>
+                        ) : row.undo_type ? (
+                          <button
+                            type="button"
+                            onClick={() => openUndoModal(row)}
+                            style={{
+                              padding: "6px 12px",
+                              borderRadius: "8px",
+                              border: "1px solid #fecaca",
+                              background: "#fef2f2",
+                              color: "#b91c1c",
+                              fontSize: "12px",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                            }}
+                          >
+                            Undo
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: "11px", color: COLORS.muted }}>—</span>
+                        )}
+                      </td>
                     </tr>
                   ))
                 )}
@@ -419,6 +569,168 @@ export default function ActivityLogsPage() {
           </div>
         </div>
       </div>
+
+      {undoTarget && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(17,24,39,0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "16px",
+            zIndex: 50,
+          }}
+        >
+          <div
+            style={{
+              background: COLORS.card,
+              borderRadius: "16px",
+              padding: "22px",
+              width: "100%",
+              maxWidth: "420px",
+              boxShadow: "0 20px 50px rgba(0,0,0,0.25)",
+            }}
+          >
+            <h2 style={{ margin: "0 0 6px", fontSize: "18px" }}>Undo this action?</h2>
+            <p style={{ margin: "0 0 4px", fontSize: "12px", color: COLORS.muted }}>
+              {formatActionLabel(undoTarget.action)} by {undoTarget.user_name || "Unknown"}
+            </p>
+            <p
+              style={{
+                margin: "0 0 16px",
+                fontSize: "13px",
+                background: "#f9fafb",
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: "10px",
+                padding: "10px 12px",
+              }}
+            >
+              {undoTarget.details}
+            </p>
+
+            {needsPinSetup ? (
+              <>
+                <p style={{ margin: "0 0 10px", fontSize: "12px", fontWeight: 700 }}>
+                  Set a 4-digit PIN to confirm sensitive actions like this.
+                </p>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={newPin}
+                  onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))}
+                  placeholder="New PIN"
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    border: `1px solid ${COLORS.border}`,
+                    fontSize: "14px",
+                    marginBottom: "8px",
+                    letterSpacing: "4px",
+                  }}
+                />
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={newPinConfirm}
+                  onChange={(e) => setNewPinConfirm(e.target.value.replace(/\D/g, ""))}
+                  placeholder="Confirm PIN"
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    border: `1px solid ${COLORS.border}`,
+                    fontSize: "14px",
+                    marginBottom: "12px",
+                    letterSpacing: "4px",
+                  }}
+                />
+              </>
+            ) : (
+              <>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "6px" }}>
+                  Enter your PIN to confirm
+                </label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={undoPin}
+                  onChange={(e) => setUndoPin(e.target.value.replace(/\D/g, ""))}
+                  placeholder="PIN"
+                  autoFocus
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    border: `1px solid ${COLORS.border}`,
+                    fontSize: "14px",
+                    marginBottom: "12px",
+                    letterSpacing: "4px",
+                  }}
+                />
+              </>
+            )}
+
+            {undoError && (
+              <div
+                style={{
+                  background: "#fee2e2",
+                  color: "#991b1b",
+                  borderRadius: "8px",
+                  padding: "8px 10px",
+                  marginBottom: "12px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                }}
+              >
+                {undoError}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={closeUndoModal}
+                disabled={undoBusy}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: "8px",
+                  border: `1px solid ${COLORS.border}`,
+                  background: "#fff",
+                  color: COLORS.text,
+                  fontWeight: 700,
+                  fontSize: "13px",
+                  cursor: undoBusy ? "not-allowed" : "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={needsPinSetup ? submitSetPin : submitUndo}
+                disabled={undoBusy}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: "8px",
+                  border: "none",
+                  background: "#dc2626",
+                  color: "#fff",
+                  fontWeight: 700,
+                  fontSize: "13px",
+                  cursor: undoBusy ? "not-allowed" : "pointer",
+                }}
+              >
+                {undoBusy ? "Working..." : needsPinSetup ? "Set PIN & Continue" : "Confirm Undo"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

@@ -199,7 +199,11 @@ export async function POST(request: Request) {
       updated_at: now.toISOString(),
     };
 
-    const { error } = await supabaseAdmin.from("fee_payments").insert([payload]);
+    const { data: insertedPayment, error } = await supabaseAdmin
+      .from("fee_payments")
+      .insert([payload])
+      .select("id")
+      .single();
     if (error) throw new Error(error.message);
 
     void logActivity({
@@ -209,6 +213,13 @@ export async function POST(request: Request) {
       className: payload.class_name,
       date: paymentDate,
       details: `Recorded GHS ${amount.toFixed(2)} fee payment for ${payload.student_name} (${resolvedStudentIdValue}), receipt ${receiptNo}.`,
+      undoType: "DELETE_FEE_PAYMENT",
+      undoPayload: {
+        id: insertedPayment.id,
+        studentCode: resolvedStudentIdValue,
+        academicYear,
+        term,
+      },
     });
 
     return NextResponse.json({ message: `Payment recorded successfully. Receipt: ${receiptNo}`, payment: payload });
