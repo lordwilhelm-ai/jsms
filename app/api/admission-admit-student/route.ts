@@ -26,6 +26,31 @@ export async function POST(request: Request) {
 
     if (error) throw new Error(error.message);
 
+    // admit_admission_student() creates the live student row but leaves
+    // admission_term/admission_academic_year unset. getEffectiveStudentType()
+    // (lib used by the fees routes) falls back to "new" forever when those
+    // two fields are empty — so without this, every admitted student would
+    // stay tagged "new" indefinitely instead of becoming a continuing
+    // student once the term they joined in ends. Stamping them here with
+    // the term they're actually joining fixes that for good.
+    const { data: settings } = await supabaseAdmin
+      .from("school_settings")
+      .select("academic_year, current_term")
+      .maybeSingle();
+
+    if (settings?.academic_year && settings?.current_term) {
+      await supabaseAdmin
+        .from("students")
+        .update({
+          is_new: true,
+          is_new_student: true,
+          student_type: "new",
+          admission_term: settings.current_term,
+          admission_academic_year: settings.academic_year,
+        })
+        .eq("admission_application_id", applicationId);
+    }
+
     void logActivity({
       userName: actorName(auth.teacher),
       role: auth.role,

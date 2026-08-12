@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { fetchAllRows } from "@/lib/supabasePagination";
 
 type AnyRow = Record<string, any>;
 
@@ -121,11 +122,11 @@ export async function GET(request: Request) {
       classesRes,
       settingsRes,
     ] = await Promise.all([
-      supabaseAdmin.from("jsms_report_scores").select("*"),
-      supabaseAdmin.from("jsms_report_attendance").select("*"),
-      supabaseAdmin.from("jsms_report_cards").select("*"),
-      supabaseAdmin.from("jsms_report_fee_live_view").select("*"),
-      supabaseAdmin.from("fee_payments").select("*"),
+      fetchAllRows((from, to) => supabaseAdmin.from("jsms_report_scores").select("*").range(from, to)),
+      fetchAllRows((from, to) => supabaseAdmin.from("jsms_report_attendance").select("*").range(from, to)),
+      fetchAllRows((from, to) => supabaseAdmin.from("jsms_report_cards").select("*").range(from, to)),
+      fetchAllRows((from, to) => supabaseAdmin.from("jsms_report_fee_live_view").select("*").range(from, to)),
+      fetchAllRows((from, to) => supabaseAdmin.from("fee_payments").select("*").range(from, to)),
       supabaseAdmin.from("fee_structure").select("*"),
       supabaseAdmin.from("classes").select("*"),
       supabaseAdmin
