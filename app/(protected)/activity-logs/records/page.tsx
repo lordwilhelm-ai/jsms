@@ -32,18 +32,67 @@ function formatValue(value: unknown) {
   return String(value);
 }
 
-function labelFor(key: string) {
-  return key
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+function money(value: unknown) {
+  const num = Number(value ?? 0);
+  if (!Number.isFinite(num)) return "GHS 0.00";
+  return `GHS ${num.toFixed(2)}`;
+}
+
+// What actually matters to glance at differs per record type — this picks
+// the handful of fields worth showing up front (name/class, what it was
+// for, amount, date) instead of dumping every column from the table into a
+// wide grid that needed side-scrolling to even reach Edit/Delete.
+function getSummary(type: string, row: RecordRow) {
+  switch (type) {
+    case "fees":
+      return {
+        title: row.student_name || row.student_id || "Unknown student",
+        subtitle: row.class_name || "",
+        purpose: [row.term, row.academic_year].filter(Boolean).join(" • ") || "Fee payment",
+        amount: row.amount_paid,
+        date: row.payment_date,
+      };
+    case "feeding":
+      return {
+        title: row.class_name || "Unknown class",
+        subtitle: row.teacher_names || "",
+        purpose: "Feeding money received",
+        amount: row.amount_received,
+        date: row.date,
+      };
+    case "uniforms":
+      return {
+        title: row.student_name || row.student_id || "Unknown student",
+        subtitle: row.class_name || "",
+        purpose: row.item_name || "Uniform payment",
+        amount: row.amount_paid,
+        date: row.created_at,
+      };
+    case "books":
+      return {
+        title: row.student_name || row.student_id || "Unknown student",
+        subtitle: row.class_name || "",
+        purpose: row.paid_for || "Book payment",
+        amount: row.amount_paid,
+        date: row.created_at,
+      };
+    case "finance":
+      return {
+        title: row.item_name || "Unknown item",
+        subtitle: row.category || "",
+        purpose: row.type ? row.type.charAt(0).toUpperCase() + row.type.slice(1) : "Transaction",
+        amount: row.amount,
+        date: row.transaction_date,
+      };
+    default:
+      return { title: "Record", subtitle: "", purpose: "", amount: 0, date: "" };
+  }
 }
 
 export default function ManageRecordsPage() {
   const [type, setType] = useState("fees");
   const [rows, setRows] = useState<RecordRow[]>([]);
   const [fields, setFields] = useState<RecordField[]>([]);
-  const [listFields, setListFields] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -75,7 +124,6 @@ export default function ManageRecordsPage() {
       setRows(data.rows || []);
       setTotal(data.total || 0);
       setFields(data.fields || []);
-      setListFields(Object.keys(data.rows?.[0] || {}));
       setPage(targetPage);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load records.");
@@ -305,61 +353,59 @@ export default function ManageRecordsPage() {
         )}
 
         <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: "16px", overflow: "hidden" }}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-              <thead>
-                <tr style={{ background: "#f9fafb", textAlign: "left" }}>
-                  {listFields.map((key) => (
-                    <th key={key} style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
-                      {labelFor(key)}
-                    </th>
-                  ))}
-                  <th style={{ padding: "10px 12px" }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr>
-                    <td colSpan={listFields.length + 1} style={{ padding: "24px", textAlign: "center", color: COLORS.muted }}>
-                      Loading...
-                    </td>
-                  </tr>
-                ) : rows.length === 0 ? (
-                  <tr>
-                    <td colSpan={listFields.length + 1} style={{ padding: "24px", textAlign: "center", color: COLORS.muted }}>
-                      No records found.
-                    </td>
-                  </tr>
-                ) : (
-                  rows.map((row) => (
-                    <tr key={row.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
-                      {listFields.map((key) => (
-                        <td key={key} style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
-                          {formatValue(row[key])}
-                        </td>
-                      ))}
-                      <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
-                        <button
-                          type="button"
-                          onClick={() => openEdit(row)}
-                          style={{ padding: "6px 10px", borderRadius: "8px", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text, fontSize: "12px", fontWeight: 700, cursor: "pointer", marginRight: "6px" }}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openDelete(row)}
-                          style={{ padding: "6px 10px", borderRadius: "8px", border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+          {loading ? (
+            <div style={{ padding: "32px", textAlign: "center", color: COLORS.muted, fontSize: "13px" }}>Loading...</div>
+          ) : rows.length === 0 ? (
+            <div style={{ padding: "32px", textAlign: "center", color: COLORS.muted, fontSize: "13px" }}>No records found.</div>
+          ) : (
+            rows.map((row) => {
+              const summary = getSummary(type, row);
+              return (
+                <div
+                  key={row.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: "12px",
+                    padding: "14px 16px",
+                    borderTop: `1px solid ${COLORS.border}`,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div style={{ minWidth: 0, flex: "1 1 220px" }}>
+                    <div style={{ fontWeight: 700, fontSize: "14px" }}>{summary.title}</div>
+                    <div style={{ fontSize: "12px", color: COLORS.muted }}>
+                      {summary.subtitle && <span>{summary.subtitle} • </span>}
+                      {summary.purpose}
+                    </div>
+                  </div>
+
+                  <div style={{ textAlign: "right", flex: "0 0 auto" }}>
+                    <div style={{ fontWeight: 800, fontSize: "14px", color: "#166534" }}>{money(summary.amount)}</div>
+                    <div style={{ fontSize: "11px", color: COLORS.muted }}>{formatValue(summary.date)}</div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "6px", flex: "0 0 auto" }}>
+                    <button
+                      type="button"
+                      onClick={() => openEdit(row)}
+                      style={{ padding: "7px 12px", borderRadius: "8px", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text, fontSize: "12px", fontWeight: 700, cursor: "pointer" }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openDelete(row)}
+                      style={{ padding: "7px 12px", borderRadius: "8px", border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", borderTop: `1px solid ${COLORS.border}`, fontSize: "12px", color: COLORS.muted }}>
             <span>
