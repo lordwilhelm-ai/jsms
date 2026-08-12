@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FiArrowLeft, FiRefreshCw, FiSearch } from "react-icons/fi";
 import { supabase } from "@/lib/supabase";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { fetchAllRows } from "@/lib/supabasePagination";
 
 const OFFLINE_MODULE = "report-card";
 
@@ -253,7 +254,12 @@ export default function ReportCardBillingPage() {
       fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").order("updated_at", { ascending: false }).limit(1).maybeSingle(), null as any),
       fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*").order("class_order", { ascending: true }), [] as any[]),
       fetchWithCache(OFFLINE_MODULE, "jsms_report_fee_live_view", () => supabase.from("jsms_report_fee_live_view").select("*"), [] as any[]),
-      fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*"), [] as any[]),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "fee_payments",
+        () => fetchAllRows((from, to) => supabase.from("fee_payments").select("*").range(from, to)),
+        [] as any[]
+      ),
       fetchWithCache(OFFLINE_MODULE, "fee_structure", () => supabase.from("fee_structure").select("*"), [] as any[]),
     ]);
 

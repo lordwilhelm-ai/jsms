@@ -6,6 +6,7 @@ import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/supabasePagination";
+import { isStudentActive } from "@/lib/studentStatus";
 import { notifyFeedingMoneyReceived } from "@/lib/jsmsNotify";
 import { authedFetch } from "@/lib/apiClient";
 import { queueOfflineAction } from "@/lib/offline/sync";
@@ -470,7 +471,20 @@ export default function FeedingAdminPage() {
         assignmentsRes,
       ] = await Promise.all([
         fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*").order("class_order", { ascending: true }), []),
-        fetchWithCache(OFFLINE_MODULE, "active_students", () => supabase.from("active_students").select("*"), []),
+        // The "active_students" DB view turned out not to actually filter by
+        // status (it returned graduated/inactive students too), so this
+        // queries the real table and applies the correct filter here instead
+        // of trusting the view.
+        fetchWithCache(
+          OFFLINE_MODULE,
+          "active_students",
+          () =>
+            supabase
+              .from("students")
+              .select("*")
+              .then(({ data, error }) => ({ data: (data || []).filter(isStudentActive), error })),
+          []
+        ),
         fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), []),
         fetchWithCache(OFFLINE_MODULE, `daily_entries:${today}`, () => supabase.from("daily_entries").select("*").eq("date", today), []),
         fetchWithCache(OFFLINE_MODULE, `received_money:${today}`, () => supabase.from("received_money").select("*").eq("date", today), []),

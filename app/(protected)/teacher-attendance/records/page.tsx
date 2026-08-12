@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { fetchAllRows } from "@/lib/supabasePagination";
 
 const OFFLINE_MODULE = "teacher-attendance";
 
@@ -322,13 +323,16 @@ export default function TeacherAttendanceRecordsPage() {
         OFFLINE_MODULE,
         `records:${start}_${end}`,
         () =>
-          supabase
-            .from("teacher_attendance")
-            .select("*")
-            .gte("attendance_date", start)
-            .lte("attendance_date", end)
-            .order("attendance_date", { ascending: false })
-            .order("teacher_name", { ascending: true }),
+          fetchAllRows((from, to) =>
+            supabase
+              .from("teacher_attendance")
+              .select("*")
+              .gte("attendance_date", start)
+              .lte("attendance_date", end)
+              .order("attendance_date", { ascending: false })
+              .order("teacher_name", { ascending: true })
+              .range(from, to)
+          ),
         [] as any[]
       );
 
@@ -360,13 +364,16 @@ export default function TeacherAttendanceRecordsPage() {
         OFFLINE_MODULE,
         `records:${nextStart}_${nextEnd}`,
         () =>
-          supabase
-            .from("teacher_attendance")
-            .select("*")
-            .gte("attendance_date", nextStart)
-            .lte("attendance_date", nextEnd)
-            .order("attendance_date", { ascending: false })
-            .order("teacher_name", { ascending: true }),
+          fetchAllRows((from, to) =>
+            supabase
+              .from("teacher_attendance")
+              .select("*")
+              .gte("attendance_date", nextStart)
+              .lte("attendance_date", nextEnd)
+              .order("attendance_date", { ascending: false })
+              .order("teacher_name", { ascending: true })
+              .range(from, to)
+          ),
         [] as any[]
       );
 

@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { fetchAllRows } from "@/lib/supabasePagination";
+import { isStudentActive } from "@/lib/studentStatus";
 
 const OFFLINE_MODULE = "fees";
 
@@ -345,7 +347,15 @@ export default function DebtorsPage() {
             fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
             fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*"), [] as AnyRow[]),
             fetchWithCache(OFFLINE_MODULE, "students", () => supabase.from("students").select("*"), [] as AnyRow[]),
-            fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+            fetchWithCache(
+              OFFLINE_MODULE,
+              "fee_payments",
+              () =>
+                fetchAllRows((from, to) =>
+                  supabase.from("fee_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+                ),
+              [] as AnyRow[]
+            ),
             fetchWithCache(
               OFFLINE_MODULE,
               "new_student_fee_items",
@@ -358,8 +368,24 @@ export default function DebtorsPage() {
                   .order("sort_order", { ascending: true }),
               [] as AnyRow[]
             ),
-            fetchWithCache(OFFLINE_MODULE, "jsms_book_payments", () => supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
-            fetchWithCache(OFFLINE_MODULE, "jsms_uniform_payments", () => supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+            fetchWithCache(
+              OFFLINE_MODULE,
+              "jsms_book_payments",
+              () =>
+                fetchAllRows((from, to) =>
+                  supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+                ),
+              [] as AnyRow[]
+            ),
+            fetchWithCache(
+              OFFLINE_MODULE,
+              "jsms_uniform_payments",
+              () =>
+                fetchAllRows((from, to) =>
+                  supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+                ),
+              [] as AnyRow[]
+            ),
           ]);
 
         if (!active) return;
@@ -396,7 +422,7 @@ export default function DebtorsPage() {
 
         setSettingsRow(settingsRes.data || null);
         setClasses(classesRes.data || []);
-        setStudents(studentsRes.data || []);
+        setStudents((studentsRes.data || []).filter(isStudentActive));
         setFeePayments(feePaymentsRes.data || []);
         setNewStudentItems(newItemsRes.data || []);
         setBookPayments(bookPaymentsRes.data || []);

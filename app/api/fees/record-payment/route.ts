@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 import { logActivity } from "@/lib/activityLog";
+import { isStudentActive } from "@/lib/studentStatus";
 
 // Record Payment used to insert into `fee_payments` straight from the
 // anon-key browser client, gated only by a client-side "redirect if teacher"
@@ -126,6 +127,13 @@ export async function POST(request: Request) {
 
     if (!student) {
       return NextResponse.json({ error: "Student record not found." }, { status: 404 });
+    }
+
+    if (!isStudentActive(student)) {
+      return NextResponse.json(
+        { error: "This student is marked inactive and cannot receive new fee payments." },
+        { status: 400 }
+      );
     }
 
     const { data: classRows, error: classError } = await supabaseAdmin.from("classes").select("*");

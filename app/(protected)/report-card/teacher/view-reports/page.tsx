@@ -6,6 +6,7 @@ import { FiEye, FiPrinter, FiRefreshCw } from "react-icons/fi";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
 import { getFullSubjectName } from "@/lib/subjectDisplayName";
+import { fetchAllRows } from "@/lib/supabasePagination";
 
 const CLASS_OPTIONS = [
   "All",
@@ -1371,9 +1372,7 @@ export default function ReportCardsPage() {
       supabase
         .from("teachers")
         .select("*"),
-      supabase
-        .from("fee_payments")
-        .select("*"),
+      fetchAllRows((from, to) => supabase.from("fee_payments").select("*").range(from, to)),
       supabase
         .from("fee_structure")
         .select("*"),

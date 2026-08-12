@@ -4,6 +4,7 @@ import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 import { insertBookPaymentWithReceipt, getLastFourStudentId } from "@/lib/booksReceipts";
 import { insertBooksGivenAndAdjustStock, type GivenRow } from "@/lib/booksIssue";
 import { logActivity } from "@/lib/activityLog";
+import { isStudentActive } from "@/lib/studentStatus";
 
 // Recording a book payment and confirming which books were given normally
 // happen as two separate calls, a few seconds apart, with the popup UI
@@ -79,6 +80,23 @@ export async function POST(request: Request) {
 
     if (!(amountPaid > 0) || amountPaid > totalAmount) {
       return NextResponse.json({ error: "Enter a valid amount paid." }, { status: 400 });
+    }
+
+    const { data: student, error: studentError } = await supabaseAdmin
+      .from("students")
+      .select("status, is_active, active, left_school")
+      .eq("student_id", studentId)
+      .maybeSingle();
+
+    if (studentError) throw new Error(studentError.message);
+    if (!student) {
+      return NextResponse.json({ error: "Student record not found." }, { status: 404 });
+    }
+    if (!isStudentActive(student)) {
+      return NextResponse.json(
+        { error: "This student is marked inactive and cannot receive new book payments." },
+        { status: 400 }
+      );
     }
 
     const staffName = getStaffDisplayName(auth.teacher);

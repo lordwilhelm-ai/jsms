@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
 import { fetchClassFeedingSnapshot } from "@/lib/offline/feedingClassData";
+import { isStudentActive } from "@/lib/studentStatus";
 
 const OFFLINE_MODULE = "feeding";
 
@@ -17,7 +18,21 @@ function getClassName(row: Record<string, any>) {
 export function buildFeedingPrefetchTasks(today: string, academicYear: string) {
   const tasks: Array<() => Promise<unknown>> = [
     () => fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*").order("class_order", { ascending: true }), []),
-    () => fetchWithCache(OFFLINE_MODULE, "active_students", () => supabase.from("active_students").select("*"), []),
+    // The "active_students" DB view turned out not to actually filter by
+    // status (it returned graduated/inactive students too), so this queries
+    // the real table and applies the correct filter here instead of trusting
+    // the view.
+    () =>
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "active_students",
+        () =>
+          supabase
+            .from("students")
+            .select("*")
+            .then(({ data, error }) => ({ data: (data || []).filter(isStudentActive), error })),
+        []
+      ),
     () => fetchWithCache(OFFLINE_MODULE, "students", () => supabase.from("students").select("*"), []),
     () => fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), []),
     () => fetchWithCache(OFFLINE_MODULE, `daily_entries:${today}`, () => supabase.from("daily_entries").select("*").eq("date", today), []),

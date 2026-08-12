@@ -3,6 +3,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/supabasePagination";
 
 type AnyRow = Record<string, any>;
 
@@ -246,10 +247,17 @@ function getStudentClassName(student: AnyRow, classMapById: Map<string, AnyRow>)
 }
 
 function isActiveStudent(student: AnyRow) {
-  if (typeof student.active === "boolean") return student.active;
-  if (typeof student.is_active === "boolean") return student.is_active;
-  if (typeof student.left_school === "boolean") return !student.left_school;
-  if (student.status) return !["inactive", "left", "withdrawn"].includes(stringValue(student.status).toLowerCase());
+  // No single field is trusted alone — a student with status "inactive"
+  // can still have active/is_active stored as true, so every field is
+  // checked independently rather than returning on the first boolean found.
+  if (student.active === false) return false;
+  if (student.is_active === false) return false;
+  if (student.left_school === true) return false;
+  if (student.status) {
+    return !["inactive", "left", "withdrawn", "completed", "graduated"].includes(
+      stringValue(student.status).toLowerCase()
+    );
+  }
   return true;
 }
 
@@ -406,7 +414,9 @@ export default function FeesTeacherPage() {
           supabase.from("teacher_class_assignments").select("*"),
           supabase.from("teacher_classes").select("*"),
           supabase.from("students").select("*"),
-          supabase.from("fee_payments").select("*").order("created_at", { ascending: false }),
+          fetchAllRows((from, to) =>
+            supabase.from("fee_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+          ),
           supabase.from("fee_structure").select("*"),
         ]);
 

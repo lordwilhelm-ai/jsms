@@ -9,6 +9,7 @@ import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
 import OfflineStatusPill from "@/app/components/OfflineStatusPill";
 import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { fetchAllRows } from "@/lib/supabasePagination";
 import { useModuleLoadBadge } from "@/lib/offline/useModulePrefetch";
 
 const OFFLINE_MODULE = "uniforms";
@@ -538,7 +539,10 @@ export default function UniformsPage() {
       fetchWithCache(
         OFFLINE_MODULE,
         "jsms_uniform_payments",
-        () => supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }),
+        () =>
+          fetchAllRows((from, to) =>
+            supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+          ),
         [] as UniformPayment[],
       ),
       fetchWithCache(
@@ -550,7 +554,10 @@ export default function UniformsPage() {
       fetchWithCache(
         OFFLINE_MODULE,
         "jsms_uniforms_given",
-        () => supabase.from("jsms_uniforms_given").select("*").order("created_at", { ascending: false }),
+        () =>
+          fetchAllRows((from, to) =>
+            supabase.from("jsms_uniforms_given").select("*").order("created_at", { ascending: false }).range(from, to)
+          ),
         [] as UniformGiven[],
       ),
       fetchWithCache(

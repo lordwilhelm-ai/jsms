@@ -5,6 +5,7 @@ import { FiEye, FiPrinter, FiRefreshCw } from "react-icons/fi";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { fetchAllRows } from "@/lib/supabasePagination";
 import { getFullSubjectName } from "@/lib/subjectDisplayName";
 
 const OFFLINE_MODULE = "report-card";
@@ -1277,7 +1278,12 @@ export default function ReportCardsPage() {
       fetchWithCache(OFFLINE_MODULE, "cards", () => fetchJsonRows("/api/report-card/cards"), [] as any[]),
       fetchWithCache(OFFLINE_MODULE, "jsms_report_fee_live_view", () => supabase.from("jsms_report_fee_live_view").select("*"), [] as any[]),
       fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), [] as any[]),
-      fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*"), [] as any[]),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "fee_payments",
+        () => fetchAllRows((from, to) => supabase.from("fee_payments").select("*").range(from, to)),
+        [] as any[]
+      ),
       fetchWithCache(OFFLINE_MODULE, "fee_structure", () => supabase.from("fee_structure").select("*"), [] as any[]),
       fetchWithCache(OFFLINE_MODULE, "ghana_public_holidays", () => supabase.from("ghana_public_holidays").select("*"), [] as any[]),
       fetchWithCache(OFFLINE_MODULE, "school_closures", () => supabase.from("school_closures").select("*"), [] as any[]),

@@ -10,6 +10,7 @@ import { queueOfflineAction, cancelPendingAction } from "@/lib/offline/sync";
 import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
 import OfflineStatusPill from "@/app/components/OfflineStatusPill";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { fetchAllRows } from "@/lib/supabasePagination";
 import { useModuleLoadBadge } from "@/lib/offline/useModulePrefetch";
 import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 
@@ -373,9 +374,33 @@ export default function IncomeExpenditurePage() {
                 .order("item_name", { ascending: true }),
             [] as AnyRow[]
           ),
-          fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*").order("payment_date", { ascending: false }), [] as AnyRow[]),
-          fetchWithCache(OFFLINE_MODULE, "jsms_book_payments", () => supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
-          fetchWithCache(OFFLINE_MODULE, "jsms_uniform_payments", () => supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+          fetchWithCache(
+            OFFLINE_MODULE,
+            "fee_payments",
+            () =>
+              fetchAllRows((from, to) =>
+                supabase.from("fee_payments").select("*").order("payment_date", { ascending: false }).range(from, to)
+              ),
+            [] as AnyRow[]
+          ),
+          fetchWithCache(
+            OFFLINE_MODULE,
+            "jsms_book_payments",
+            () =>
+              fetchAllRows((from, to) =>
+                supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+              ),
+            [] as AnyRow[]
+          ),
+          fetchWithCache(
+            OFFLINE_MODULE,
+            "jsms_uniform_payments",
+            () =>
+              fetchAllRows((from, to) =>
+                supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+              ),
+            [] as AnyRow[]
+          ),
           fetchWithCache(OFFLINE_MODULE, "admission_payments", () => supabase.from("admission_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
           fetchWithCache(OFFLINE_MODULE, "jsms_admission_payments", () => supabase.from("jsms_admission_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
           fetchWithCache(OFFLINE_MODULE, "book_profit_summary", () => supabase.from("book_profit_summary").select("*").limit(1).maybeSingle(), null as AnyRow | null),
@@ -492,9 +517,33 @@ export default function IncomeExpenditurePage() {
             .order("item_name", { ascending: true }),
         [] as AnyRow[]
       ),
-      fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*").order("payment_date", { ascending: false }), [] as AnyRow[]),
-      fetchWithCache(OFFLINE_MODULE, "jsms_book_payments", () => supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
-      fetchWithCache(OFFLINE_MODULE, "jsms_uniform_payments", () => supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "fee_payments",
+        () =>
+          fetchAllRows((from, to) =>
+            supabase.from("fee_payments").select("*").order("payment_date", { ascending: false }).range(from, to)
+          ),
+        [] as AnyRow[]
+      ),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_book_payments",
+        () =>
+          fetchAllRows((from, to) =>
+            supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+          ),
+        [] as AnyRow[]
+      ),
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_uniform_payments",
+        () =>
+          fetchAllRows((from, to) =>
+            supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+          ),
+        [] as AnyRow[]
+      ),
       fetchWithCache(OFFLINE_MODULE, "admission_payments", () => supabase.from("admission_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
       fetchWithCache(OFFLINE_MODULE, "jsms_admission_payments", () => supabase.from("jsms_admission_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
       fetchWithCache(OFFLINE_MODULE, "book_profit_summary", () => supabase.from("book_profit_summary").select("*").limit(1).maybeSingle(), null as AnyRow | null),

@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireStaffRole, unauthorizedResponse } from "@/lib/apiAuth";
 import { insertBookPaymentWithReceipt, getLastFourStudentId } from "@/lib/booksReceipts";
 import { logActivity } from "@/lib/activityLog";
+import { isStudentActive } from "@/lib/studentStatus";
 
 // Books Record Payment used to write straight to Supabase from the browser.
 // Proxied through here so it can be replayed from the offline queue and is
@@ -74,6 +75,27 @@ export async function POST(request: Request) {
 
     if (amountPaid > totalAmount) {
       return NextResponse.json({ error: "Amount paid cannot be more than total." }, { status: 400 });
+    }
+
+    // This route never looked the student up server-side at all — it just
+    // trusted whatever id/name/class the client sent. Re-validate against
+    // the real record so an inactive/withdrawn student can't have a new
+    // book payment recorded against them.
+    const { data: student, error: studentError } = await supabaseAdmin
+      .from("students")
+      .select("status, is_active, active, left_school")
+      .eq("student_id", studentId)
+      .maybeSingle();
+
+    if (studentError) throw new Error(studentError.message);
+    if (!student) {
+      return NextResponse.json({ error: "Student record not found." }, { status: 404 });
+    }
+    if (!isStudentActive(student)) {
+      return NextResponse.json(
+        { error: "This student is marked inactive and cannot receive new book payments." },
+        { status: 400 }
+      );
     }
 
     const staffName = getStaffDisplayName(auth.teacher);

@@ -1,5 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { fetchAllRows } from "@/lib/supabasePagination";
+import { isStudentActive } from "@/lib/studentStatus";
 
 const OFFLINE_MODULE = "fees";
 
@@ -14,11 +16,52 @@ export function buildFeesPrefetchTasks() {
     () => fetchWithCache(OFFLINE_MODULE, "teachers", () => supabase.from("teachers").select("*"), []),
     () => fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
     () => fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*"), []),
-    () => fetchWithCache(OFFLINE_MODULE, "active_students", () => supabase.from("active_students").select("*"), []),
+    // The "active_students" DB view turned out not to actually filter by
+    // status (it returned graduated/inactive students too), so this queries
+    // the real table and applies the correct filter here instead of trusting
+    // the view.
+    () =>
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "active_students",
+        () =>
+          supabase
+            .from("students")
+            .select("*")
+            .then(({ data, error }) => ({ data: (data || []).filter(isStudentActive), error })),
+        []
+      ),
     () => fetchWithCache(OFFLINE_MODULE, "students", () => supabase.from("students").select("*"), []),
-    () => fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*").order("created_at", { ascending: false }), []),
-    () => fetchWithCache(OFFLINE_MODULE, "jsms_book_payments", () => supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }), []),
-    () => fetchWithCache(OFFLINE_MODULE, "jsms_uniform_payments", () => supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }), []),
+    () =>
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "fee_payments",
+        () =>
+          fetchAllRows((from, to) =>
+            supabase.from("fee_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+          ),
+        []
+      ),
+    () =>
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_book_payments",
+        () =>
+          fetchAllRows((from, to) =>
+            supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+          ),
+        []
+      ),
+    () =>
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_uniform_payments",
+        () =>
+          fetchAllRows((from, to) =>
+            supabase.from("jsms_uniform_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+          ),
+        []
+      ),
     () =>
       fetchWithCache(
         OFFLINE_MODULE,
@@ -32,10 +75,46 @@ export function buildFeesPrefetchTasks() {
             .order("sort_order", { ascending: true }),
         []
       ),
-    () => fetchWithCache(OFFLINE_MODULE, "universal_receipts", () => supabase.from("universal_receipts").select("*").order("created_at", { ascending: false }), []),
-    () => fetchWithCache(OFFLINE_MODULE, "admission_payments", () => supabase.from("admission_payments").select("*").order("created_at", { ascending: false }), []),
-    () => fetchWithCache(OFFLINE_MODULE, "jsms_book_sales", () => supabase.from("jsms_book_sales").select("*").order("created_at", { ascending: false }), []),
-    () => fetchWithCache(OFFLINE_MODULE, "jsms_uniform_sales", () => supabase.from("jsms_uniform_sales").select("*").order("created_at", { ascending: false }), []),
+    () =>
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "universal_receipts",
+        () =>
+          fetchAllRows((from, to) =>
+            supabase.from("universal_receipts").select("*").order("created_at", { ascending: false }).range(from, to)
+          ),
+        []
+      ),
+    () =>
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "admission_payments",
+        () =>
+          fetchAllRows((from, to) =>
+            supabase.from("admission_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+          ),
+        []
+      ),
+    () =>
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_book_sales",
+        () =>
+          fetchAllRows((from, to) =>
+            supabase.from("jsms_book_sales").select("*").order("created_at", { ascending: false }).range(from, to)
+          ),
+        []
+      ),
+    () =>
+      fetchWithCache(
+        OFFLINE_MODULE,
+        "jsms_uniform_sales",
+        () =>
+          fetchAllRows((from, to) =>
+            supabase.from("jsms_uniform_sales").select("*").order("created_at", { ascending: false }).range(from, to)
+          ),
+        []
+      ),
   ];
 
   return tasks;

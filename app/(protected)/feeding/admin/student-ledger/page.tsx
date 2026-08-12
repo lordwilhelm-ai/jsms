@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { isStudentActive } from "@/lib/studentStatus";
 
 const OFFLINE_MODULE = "feeding";
 
@@ -95,7 +96,7 @@ export default function StudentLedgerPage() {
       ]);
 
       const rows = (studentsRes.data || [])
-        .filter((row) => row.active !== false)
+        .filter(isStudentActive)
         .sort((a, b) => getStudentName(a).localeCompare(getStudentName(b)));
 
       setStudents(rows);

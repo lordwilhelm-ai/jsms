@@ -11,6 +11,7 @@ import {
   type UniversalReceiptResult,
 } from "@/lib/universalReceiptSearch";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { fetchAllRows } from "@/lib/supabasePagination";
 import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
 import { useModulePrefetch } from "@/lib/offline/useModulePrefetch";
 import { buildFeesPrefetchTasks } from "@/lib/offline/prefetch/fees";
@@ -153,11 +154,18 @@ function formatDateTime(value: string) {
 }
 
 function isStudentActive(student: AnyRow) {
-  if (typeof student.active === "boolean") return student.active;
-  if (typeof student.is_active === "boolean") return student.is_active;
+  // No single field is trusted alone — status/active/is_active are all
+  // checked independently, since a student can have `status: "inactive"`
+  // while `active`/`is_active` are still stored as `true` (that mismatch is
+  // exactly what let inactive students leak into the active_students view
+  // and several boolean-only filters elsewhere in the app).
+  if (typeof student.active === "boolean" && student.active === false) return false;
+  if (typeof student.is_active === "boolean" && student.is_active === false) return false;
   if (typeof student.status === "string") {
     const status = normalizeText(student.status);
-    return status !== "inactive" && status !== "deleted" && status !== "graduated";
+    if (status === "inactive" || status === "deleted" || status === "graduated" || status === "completed") {
+      return false;
+    }
   }
   return true;
 }
@@ -301,7 +309,15 @@ export default function FeesAdminPage() {
         fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
         fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*"), [] as AnyRow[]),
         fetchWithCache(OFFLINE_MODULE, "active_students", () => supabase.from("active_students").select("*"), [] as AnyRow[]),
-        fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+        fetchWithCache(
+          OFFLINE_MODULE,
+          "fee_payments",
+          () =>
+            fetchAllRows((from, to) =>
+              supabase.from("fee_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+            ),
+          [] as AnyRow[]
+        ),
       ]);
 
       if (teachersRes.data.length === 0) {

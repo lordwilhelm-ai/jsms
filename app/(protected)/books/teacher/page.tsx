@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
+import { fetchAllRows } from "@/lib/supabasePagination";
 
 type TeacherRow = Record<string, any>;
 type ClassRow = Record<string, any>;
@@ -320,14 +321,20 @@ export default function BooksTeacherPage() {
       setLoadError(null);
 
       const [givenRes, paymentsRes] = await Promise.all([
-        supabase
-          .from("jsms_books_given")
-          .select("*")
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("jsms_book_payments")
-          .select("*")
-          .order("created_at", { ascending: false }),
+        fetchAllRows((from, to) =>
+          supabase
+            .from("jsms_books_given")
+            .select("*")
+            .order("created_at", { ascending: false })
+            .range(from, to)
+        ),
+        fetchAllRows((from, to) =>
+          supabase
+            .from("jsms_book_payments")
+            .select("*")
+            .order("created_at", { ascending: false })
+            .range(from, to)
+        ),
       ]);
 
       if (givenRes.error) throw givenRes.error;

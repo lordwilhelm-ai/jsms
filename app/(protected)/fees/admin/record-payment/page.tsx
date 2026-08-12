@@ -10,6 +10,7 @@ import { getPendingByModule } from "@/lib/offline/db";
 import { queueOfflineAction } from "@/lib/offline/sync";
 import { useOfflineStatus } from "@/lib/offline/useOfflineStatus";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { fetchAllRows } from "@/lib/supabasePagination";
 import OfflineStatusPill from "@/app/components/OfflineStatusPill";
 
 const OFFLINE_MODULE = "fees";
@@ -281,10 +282,13 @@ export default function RecordPaymentPage() {
   }
 
   async function loadFeePayments() {
-    const { data, error } = await supabase
-      .from("fee_payments")
-      .select("*")
-      .order("created_at", { ascending: false });
+    const { data, error } = await fetchAllRows((from, to) =>
+      supabase
+        .from("fee_payments")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .range(from, to)
+    );
 
     if (!error) setPayments(data || []);
   }
@@ -330,7 +334,15 @@ export default function RecordPaymentPage() {
         fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
         fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*"), [] as AnyRow[]),
         fetchWithCache(OFFLINE_MODULE, "students", () => supabase.from("students").select("*"), [] as AnyRow[]),
-        fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*").order("created_at", { ascending: false }), [] as AnyRow[]),
+        fetchWithCache(
+          OFFLINE_MODULE,
+          "fee_payments",
+          () =>
+            fetchAllRows((from, to) =>
+              supabase.from("fee_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+            ),
+          [] as AnyRow[]
+        ),
       ]);
 
       if (!active) return;

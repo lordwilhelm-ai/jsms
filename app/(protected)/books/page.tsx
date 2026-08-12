@@ -10,6 +10,8 @@ import { useModuleLoadBadge } from "@/lib/offline/useModulePrefetch";
 import OfflineStatusPill from "@/app/components/OfflineStatusPill";
 import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { fetchAllRows } from "@/lib/supabasePagination";
+import { isStudentActive } from "@/lib/studentStatus";
 import { notifyBookIssued } from "@/lib/jsmsNotify";
 
 const OFFLINE_MODULE = "books";
@@ -570,7 +572,10 @@ export default function BooksDashboardPage() {
       fetchWithCache(
         OFFLINE_MODULE,
         "jsms_book_payments",
-        () => supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }),
+        () =>
+          fetchAllRows((from, to) =>
+            supabase.from("jsms_book_payments").select("*").order("created_at", { ascending: false }).range(from, to)
+          ),
         [] as BookPayment[]
       ),
 
@@ -584,7 +589,10 @@ export default function BooksDashboardPage() {
       fetchWithCache(
         OFFLINE_MODULE,
         "jsms_books_given",
-        () => supabase.from("jsms_books_given").select("*").order("created_at", { ascending: false }),
+        () =>
+          fetchAllRows((from, to) =>
+            supabase.from("jsms_books_given").select("*").order("created_at", { ascending: false }).range(from, to)
+          ),
         [] as BookGiven[]
       ),
 
@@ -642,7 +650,11 @@ export default function BooksDashboardPage() {
       );
 
       if (result.data && result.data.length > 0) {
-        const normalized = normalizeStudents(result.data);
+        // Only the real "students" table carries status/active columns —
+        // isStudentActive() is a no-op (defaults to active) on the other
+        // fallback table names below, which don't have those fields.
+        const activeRows = result.data.filter(isStudentActive);
+        const normalized = normalizeStudents(activeRows);
 
         if (normalized.length > 0) {
           setStudents(normalized);

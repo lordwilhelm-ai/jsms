@@ -6,6 +6,7 @@ import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { isStudentActive } from "@/lib/studentStatus";
 
 const OFFLINE_MODULE = "fees";
 
@@ -462,7 +463,7 @@ export default function StudentAccountsPage() {
         );
 
         const studentRows = (studentsRes.data || [])
-          .filter((row) => row.active !== false)
+          .filter(isStudentActive)
           .sort((a, b) => {
             const classCompare = classSortValue(getClassName(a)) - classSortValue(getClassName(b));
             if (classCompare !== 0) return classCompare;

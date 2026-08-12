@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { fetchAllRows } from "@/lib/supabasePagination";
+import { isStudentActive } from "@/lib/studentStatus";
 
 const OFFLINE_MODULE = "fees";
 
@@ -297,7 +299,12 @@ export default function FeeReminderPage() {
       const [studentsRes, classesRes, paymentsRes, settingsRes, newItemsRes] = await Promise.all([
         fetchWithCache(OFFLINE_MODULE, "students", () => supabase.from("students").select("*"), [] as AnyRow[]),
         fetchWithCache(OFFLINE_MODULE, "classes", () => supabase.from("classes").select("*"), [] as AnyRow[]),
-        fetchWithCache(OFFLINE_MODULE, "fee_payments", () => supabase.from("fee_payments").select("*"), [] as AnyRow[]),
+        fetchWithCache(
+          OFFLINE_MODULE,
+          "fee_payments",
+          () => fetchAllRows((from, to) => supabase.from("fee_payments").select("*").range(from, to)),
+          [] as AnyRow[]
+        ),
         fetchWithCache(OFFLINE_MODULE, "school_settings", () => supabase.from("school_settings").select("*").limit(1).maybeSingle(), null),
         fetchWithCache(OFFLINE_MODULE, "new_student_fee_items", () => supabase.from("new_student_fee_items").select("*"), [] as AnyRow[]),
       ]);
@@ -351,7 +358,7 @@ export default function FeeReminderPage() {
 
   const allFinanceRows = useMemo<Recipient[]>(() => {
     return students
-      .filter((student) => (typeof student.active === "boolean" ? student.active : true))
+      .filter(isStudentActive)
       .map((student) => {
         const studentName = getStudentName(student);
         const studentId = getStudentId(student);
