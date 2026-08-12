@@ -222,13 +222,8 @@ export async function POST(request: Request) {
       action: "UNIFORMS_RECORD_PAYMENT",
       className,
       details: `Recorded GHS ${amountPaid.toFixed(2)} uniform payment (${itemNames}) for ${studentName} (${studentId}), receipt ${receipt}.`,
-      undoType: "DELETE_ROW",
-      undoPayload: {
-        table: "jsms_uniform_payments",
-        id: paymentData.id,
-        childTable: "jsms_uniform_payment_items",
-        childKey: "payment_id",
-      },
+      undoType: "DELETE_RECORD",
+      undoPayload: { recordType: "uniforms", id: paymentData.id },
     });
 
     return NextResponse.json({ message: `Uniform payment recorded. Receipt: ${receipt}`, payment: paymentData });

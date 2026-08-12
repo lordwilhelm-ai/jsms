@@ -45,6 +45,7 @@ const ADMIN_ONLY_PREFIXES = [
   "/teacher-attendance/location-settings",
   "/teacher-attendance/records",
   "/students",
+  "/activity-logs",
 ];
 
 const ADMIN_ONLY_EXACT = [
@@ -54,7 +55,6 @@ const ADMIN_ONLY_EXACT = [
   "/settings",
   "/income-expenditure",
   "/admission",
-  "/activity-logs",
   "/dashboard/admin",
   "/dashboard/headmaster",
 ];

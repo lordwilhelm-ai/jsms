@@ -125,13 +125,8 @@ export async function POST(request: Request) {
       action: "BOOKS_RECORD_PAYMENT",
       className,
       details: `Recorded GHS ${amountPaid.toFixed(2)} book payment (${paidFor || paymentType}) for ${studentName} (${studentId}).`,
-      undoType: "DELETE_ROW",
-      undoPayload: {
-        table: "jsms_book_payments",
-        id: payment.id,
-        childTable: "jsms_book_payment_items",
-        childKey: "payment_id",
-      },
+      undoType: "DELETE_RECORD",
+      undoPayload: { recordType: "books", id: payment.id },
     });
 
     if (paymentType === "specific_books" && specificBooks.length > 0) {

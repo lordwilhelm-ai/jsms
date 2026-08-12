@@ -259,20 +259,36 @@ export default function ActivityLogsPage() {
             </p>
           </div>
 
-          <Link
-            href="/dashboard/admin"
-            style={{
-              padding: "10px 16px",
-              borderRadius: "10px",
-              background: "#111827",
-              color: "#fff",
-              textDecoration: "none",
-              fontSize: "13px",
-              fontWeight: 700,
-            }}
-          >
-            Back to Dashboard
-          </Link>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <Link
+              href="/activity-logs/records"
+              style={{
+                padding: "10px 16px",
+                borderRadius: "10px",
+                background: COLORS.gold,
+                color: "#111827",
+                textDecoration: "none",
+                fontSize: "13px",
+                fontWeight: 700,
+              }}
+            >
+              Manage Records
+            </Link>
+            <Link
+              href="/dashboard/admin"
+              style={{
+                padding: "10px 16px",
+                borderRadius: "10px",
+                background: "#111827",
+                color: "#fff",
+                textDecoration: "none",
+                fontSize: "13px",
+                fontWeight: 700,
+              }}
+            >
+              Back to Dashboard
+            </Link>
+          </div>
         </div>
 
         <form

@@ -80,8 +80,8 @@ export async function POST(request: Request) {
       className,
       date,
       details: `Marked ${className} feeding money as received for ${date} — GHS ${amountReceived.toFixed(2)} (${teacherNames || "no teacher name given"}).`,
-      undoType: "DELETE_ROW",
-      undoPayload: { table: "received_money", id: inserted.id },
+      undoType: "DELETE_RECORD",
+      undoPayload: { recordType: "feeding", id: inserted.id },
     });
 
     return NextResponse.json({ message: `${className} money marked as received.` });
