@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
+import { fetchAllRows } from "@/lib/supabasePagination";
 
 const OFFLINE_MODULE = "feeding";
 
@@ -186,13 +187,17 @@ export default function FeedingReportsPage() {
         fetchWithCache(
           OFFLINE_MODULE,
           `daily_entries:${scopeKey}`,
-          () => {
-            let query = supabase.from("daily_entries").select("*");
-            if (reportMode === "today") query = query.eq("date", today);
-            else if (reportMode === "single") query = query.eq("date", singleDate);
-            else query = query.gte("date", startDate).lte("date", endDate);
-            return query;
-          },
+          // "range" mode can span a whole term across every class — easily
+          // past PostgREST's silent 1000-row cap — so this must paginate;
+          // "today"/"single" stay naturally small but share the same path.
+          () =>
+            fetchAllRows((from, to) => {
+              let query = supabase.from("daily_entries").select("*").range(from, to);
+              if (reportMode === "today") query = query.eq("date", today);
+              else if (reportMode === "single") query = query.eq("date", singleDate);
+              else query = query.gte("date", startDate).lte("date", endDate);
+              return query;
+            }),
           [] as EntryRow[]
         ),
         fetchWithCache(

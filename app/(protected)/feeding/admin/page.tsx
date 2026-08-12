@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/supabasePagination";
 import { notifyFeedingMoneyReceived } from "@/lib/jsmsNotify";
 import { authedFetch } from "@/lib/apiClient";
 import { queueOfflineAction } from "@/lib/offline/sync";
@@ -625,11 +626,19 @@ export default function FeedingAdminPage() {
         (date) => !isWeekend(date) && !isHoliday(date, closures)
       );
 
-      const { data: termEntries, error: entriesError } = await supabase
-        .from("daily_entries")
-        .select("*")
-        .gte("date", termBegins)
-        .lte("date", termEnds);
+      // A full term's worth of daily_entries across every class/student
+      // routinely clears PostgREST's silent 1000-row cap (hundreds of
+      // students x dozens of school days), so this must be paginated —
+      // an unbounded read here would silently undercount attendance for
+      // most students on their report card.
+      const { data: termEntries, error: entriesError } = await fetchAllRows((from, to) =>
+        supabase
+          .from("daily_entries")
+          .select("*")
+          .gte("date", termBegins)
+          .lte("date", termEnds)
+          .range(from, to)
+      );
 
       if (entriesError) throw entriesError;
 

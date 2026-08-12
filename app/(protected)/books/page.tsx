@@ -1557,88 +1557,27 @@ export default function BooksDashboardPage() {
       return;
     }
 
-    const balance = totalAmount - amountPaid;
-    const status = supplierStatus(totalAmount, amountPaid);
+    const response = await authedFetch("/api/books/supplier-purchase", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        supplierName,
+        supplierPhone: supplierForm.supplier_phone,
+        supplierReceiptNumber: supplierForm.supplier_receipt_number,
+        purchaseDate: supplierForm.purchase_date,
+        boughtOnCredit: supplierForm.bought_on_credit,
+        amountPaid,
+        paymentMethod: supplierForm.payment_method,
+        notes: supplierForm.notes,
+        items: supplierTempItems,
+      }),
+    });
 
-    const { data: purchaseData, error: purchaseError } = await supabase
-      .from("jsms_book_supplier_purchases")
-      .insert({
-        supplier_name: supplierName,
-        supplier_phone: supplierForm.supplier_phone.trim() || null,
-        supplier_receipt_number:
-          supplierForm.supplier_receipt_number.trim() || null,
-        purchase_date:
-          supplierForm.purchase_date || new Date().toISOString().slice(0, 10),
-        bought_on_credit: supplierForm.bought_on_credit,
-        total_amount: totalAmount,
-        amount_paid: amountPaid,
-        balance,
-        payment_method: supplierForm.payment_method.trim() || null,
-        payment_status: status,
-        paid_by: currentUserName,
-        notes: supplierForm.notes.trim() || null,
-      })
-      .select("*")
-      .single();
+    const result = await response.json();
 
-    if (purchaseError || !purchaseData) {
-      alert(`Could not save supplier purchase: ${purchaseError?.message || "Unknown error"}`);
+    if (!response.ok) {
+      alert(result.error || "Could not save supplier purchase.");
       return;
-    }
-
-    const itemRows = supplierTempItems.map((item) => ({
-      purchase_id: purchaseData.id,
-      book_id: null,
-      book_name: item.book_name,
-      subject: item.subject || null,
-      class_name: item.class_name,
-      quantity: numberValue(item.quantity),
-      cost_price: numberValue(item.cost_price),
-      selling_price: numberValue(item.selling_price),
-      total_cost: numberValue(item.quantity) * numberValue(item.cost_price),
-    }));
-
-    const { error: itemError } = await supabase
-      .from("jsms_book_supplier_purchase_items")
-      .insert(itemRows);
-
-    if (itemError) {
-      alert(`Supplier saved, but book items failed: ${itemError.message}`);
-      return;
-    }
-
-    for (const item of supplierTempItems) {
-      const existing = books.find((book) => {
-        return (
-          book.book_name.toLowerCase() === item.book_name.toLowerCase() &&
-          String(book.class_name || "").toLowerCase() ===
-            item.class_name.toLowerCase() &&
-          String(book.subject || "").toLowerCase() ===
-            item.subject.toLowerCase()
-        );
-      });
-
-      if (existing) {
-        await supabase
-          .from("jsms_books")
-          .update({
-            quantity: numberValue(existing.quantity) + numberValue(item.quantity),
-            cost_price: numberValue(item.cost_price),
-            selling_price: numberValue(item.selling_price),
-            supplier_name: supplierName,
-          })
-          .eq("id", existing.id);
-      } else {
-        await supabase.from("jsms_books").insert({
-          book_name: item.book_name,
-          class_name: item.class_name,
-          subject: item.subject || null,
-          quantity: numberValue(item.quantity),
-          cost_price: numberValue(item.cost_price),
-          selling_price: numberValue(item.selling_price),
-          supplier_name: supplierName,
-        });
-      }
     }
 
     setSupplierForm({
