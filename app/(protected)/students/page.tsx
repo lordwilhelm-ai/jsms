@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { authedFetch } from "@/lib/apiClient";
 import { fetchWithCache } from "@/lib/offline/cachedQuery";
 import { useModuleLoadBadge } from "@/lib/offline/useModulePrefetch";
 import ModuleDownloadBadge from "@/app/components/ModuleDownloadBadge";
@@ -273,16 +274,6 @@ export default function Students() {
     return classes.find((item) => item.id === id) || null;
   };
 
-  const getNextClass = (className: string) => {
-    const ordered = [...classes].sort((a, b) => a.class_order - b.class_order);
-    const currentIndex = ordered.findIndex((item) => item.class_name === className);
-
-    if (currentIndex === -1) return null;
-    if (currentIndex === ordered.length - 1) return null;
-
-    return ordered[currentIndex + 1];
-  };
-
   const handleAddStudent = async () => {
     if (!singleForm.firstName || !singleForm.lastName || !singleForm.classId) {
       alert("Please fill first name, last name and class.");
@@ -471,11 +462,7 @@ export default function Students() {
       return;
     }
 
-    const selectedTargetClass = promoteToClassId
-      ? getClassById(promoteToClassId)
-      : null;
-
-    if (!promoteUseAutoNext && !selectedTargetClass) {
+    if (!promoteUseAutoNext && !promoteToClassId) {
       alert("Select the class to promote to.");
       return;
     }
@@ -488,48 +475,41 @@ export default function Students() {
 
     setBusy(true);
 
+    // Runs as one server-side request instead of looping through updates in
+    // the browser — that loop used to leave the school in a half-promoted,
+    // mixed-class state if the tab closed or the connection dropped mid-way.
     try {
-      for (const student of selectedStudents) {
-        const targetClass = promoteUseAutoNext
-          ? getNextClass(student.className)
-          : selectedTargetClass;
+      const response = await authedFetch("/api/students/promote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: promoteMode,
+          studentId: promoteMode === "individual" ? promoteStudentId : undefined,
+          fromClass: promoteMode === "class" ? promoteFromClass : undefined,
+          useAutoNext: promoteUseAutoNext,
+          targetClassId: promoteUseAutoNext ? undefined : promoteToClassId,
+        }),
+      });
 
-        if (!targetClass) {
-          const { error: completeError } = await supabase
-            .from("students")
-            .update({
-              status: "Completed",
-              is_active: false,
-              active: false,
-            })
-            .eq("id", student.id);
+      const result = await response.json();
 
-          if (completeError) throw completeError;
-          continue;
-        }
-
-        const { error: updateError } = await supabase
-          .from("students")
-          .update({
-            class_id: targetClass.id,
-            class_name: targetClass.class_name,
-            status: "Active",
-            is_active: true,
-            active: true,
-          })
-          .eq("id", student.id);
-
-        if (updateError) throw updateError;
+      if (!response.ok && response.status !== 207) {
+        throw new Error(result.error || "Failed to promote students.");
       }
 
       await fetchStudents();
       setSelectedClassFilter("All");
       setSelectedStudentIds([]);
       setShowPromoteModal(false);
-      alert("Promotion completed successfully.");
+
+      if (result.failures?.length) {
+        alert(`${result.message}\n\n${result.failures.length} student(s) failed — please retry those individually.`);
+      } else {
+        alert(result.message || "Promotion completed successfully.");
+      }
     } catch (error) {
       console.error(error);
-      alert("Failed to promote students.");
+      alert(error instanceof Error ? error.message : "Failed to promote students.");
     } finally {
       setBusy(false);
     }
