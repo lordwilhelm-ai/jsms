@@ -144,7 +144,7 @@ export async function POST(request: Request) {
       const results = await Promise.all(
         chunk.map(async (item) => {
           const update = item.completed
-            ? { status: "Completed", is_active: false, active: false }
+            ? { status: "Completed", is_active: false, active: false, class_name: "Graduated" }
             : {
                 class_id: item.targetClass!.id,
                 class_name: item.targetClass!.class_name,

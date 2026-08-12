@@ -44,11 +44,11 @@ const ADMIN_ONLY_PREFIXES = [
   "/teacher-attendance/duty-roster",
   "/teacher-attendance/location-settings",
   "/teacher-attendance/records",
+  "/students",
 ];
 
 const ADMIN_ONLY_EXACT = [
   "/books",
-  "/students",
   "/classes",
   "/subjects",
   "/settings",

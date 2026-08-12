@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { authedFetch } from "@/lib/apiClient";
@@ -749,6 +750,13 @@ export default function Students() {
           >
             Promote
           </button>
+
+          <Link
+            href="/students/graduated"
+            className="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-600"
+          >
+            Graduated Students
+          </Link>
 
           {!bulkDeleteMode ? (
             <button
